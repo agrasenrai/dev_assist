@@ -1,0 +1,97 @@
+{
+  "nurses": [
+    {
+      "id": "nurse_seema_01",
+      "badge_number": "RN-4402",
+      "full_name": "Seema Patel, RN",
+      "email": "seema.patel@hospital.org",
+      "department": "ICU-B",
+      "role": "STAFF_NURSE"
+    },
+    {
+      "id": "nurse_reema_02",
+      "badge_number": "RN-5519",
+      "full_name": "Reema Roy, RN",
+      "email": "reema.roy@hospital.org",
+      "department": "ICU-B",
+      "role": "STAFF_NURSE"
+    }
+  ],
+  "shifts": [
+    {
+      "id": "shift_20261019_night",
+      "unit_id": "ICU-B",
+      "shift_type": "NIGHT",
+      "start_time": "2026-10-18T19:00:00Z",
+      "end_time": "2026-10-19T07:00:00Z",
+      "status": "HANDOFF_IN_PROGRESS"
+    }
+  ],
+  "patients": [
+    {
+      "id": "pt_101",
+      "mrn": "MRN-90210",
+      "full_name": "James Clark",
+      "room_number": "Room 304",
+      "bed_number": "A",
+      "admission_date": "2026-10-15T14:30:00Z",
+      "acuity_level": 2,
+      "allergies": "Penicillin",
+      "primary_diagnosis": "Post-op Laparoscopic Cholecystectomy"
+    },
+    {
+      "id": "pt_102",
+      "mrn": "MRN-90211",
+      "full_name": "Elena Rostova",
+      "room_number": "Room 305",
+      "bed_number": "B",
+      "admission_date": "2026-10-17T08:15:00Z",
+      "acuity_level": 1,
+      "allergies": "Latex, Sulfa",
+      "primary_diagnosis": "Severe Sepsis secondary to Pyelonephritis"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task_vital_101_01",
+      "patient_id": "pt_101",
+      "title": "Q4 Vital Signs & Neuro Check",
+      "description": "Assess BP, HR, O2 Sat, and GCS score",
+      "category": "VITAL",
+      "status": "COMPLETED",
+      "priority": "ROUTINE",
+      "scheduled_time": "2026-10-19T06:00:00Z",
+      "completed_time": "2026-10-19T06:14:30Z",
+      "source_system": "EHR_PRIMARY"
+    },
+    {
+      "id": "task_med_102_03",
+      "patient_id": "pt_102",
+      "title": "IV Vancomycin 1g Infusion",
+      "description": "Administer over 60 mins; check trough level prior to infusion",
+      "category": "MEDICATION_CHECK",
+      "status": "FLAGGED_CONFLICT",
+      "priority": "STAT",
+      "scheduled_time": "2026-10-19T06:00:00Z",
+      "source_system": "EHR_PRIMARY"
+    }
+  ],
+  "task_assignments": [
+    {
+      "id": "asgn_8812",
+      "task_id": "task_vital_101_01",
+      "nurse_id": "nurse_seema_01",
+      "shift_id": "shift_20261019_night",
+      "transfer_status": "ACTIVE",
+      "assigned_by": "CHARGE_NURSE"
+    },
+    {
+      "id": "asgn_8813",
+      "task_id": "task_med_102_03",
+      "nurse_id": "nurse_seema_01",
+      "shift_id": "shift_20261019_night",
+      "transfer_status": "CARRIED_FORWARD",
+      "assigned_by": "SEEMA_RN"
+    }
+  ]
+}
