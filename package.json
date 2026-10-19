@@ -5,10 +5,14 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:client": "npm --prefix client run dev",
+    "build:client": "npm --prefix client run build",
     "db:init": "tsx src/db/init.ts",
     "import:data": "tsx src/db/ingest.ts",
     "test:mcp": "tsx scripts/test-mcp-client.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:agent": "tsx scripts/test-agent.ts",
+    "test:chaos": "tsx scripts/test-chaos-recovery.ts",
+    "test": "npm run test:mcp && npm run test:agent && npm run test:chaos"
   },
   "repository": {
     "type": "git",
@@ -23,6 +27,8 @@
   },
   "homepage": "https://github.com/agrasenrai/dev_assist#readme",
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1153.0",
+    "@google/generative-ai": "^0.24.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.8",
