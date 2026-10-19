@@ -135,3 +135,41 @@ A crucial architectural decision confirmed for ShiftWeave is **Bidirectional Cli
 
 ## 6. Final Verdict: Why ShiftWeave Will Stand Out
 ShiftWeave is not another toy chatbot. It is a **fault-tolerant, protocol-native, bidirectional, clinically grounded workflow coordinator**. It checks every box in the hackathon rubric, complies strictly with `important.md`, and directly solves an authentic human workflow problem.
+## 5. Final Verdict: Why ShiftWeave Will Stand Out
+ShiftWeave is not another toy chatbot. It is a **fault-tolerant, protocol-native, clinically grounded workflow coordinator**. It checks every box in the hackathon rubric, complies strictly with `important.md`, and directly solves an authentic human workflow problem.
+
+
+
+##7.
+---Agrasen epic R4 catalog
+The worksheet, assembled from Epic’s public R4 catalog
+
+The Epic catalog has APIs for most of what a nurse “brain sheet” contains:
+
+Worksheet section	Epic R4 source
+Patient header	Patient (Demographics), Encounter (Patient Chart)
+Allergies	AllergyIntolerance (Patient Chart), List (Allergies)
+Diagnosis	Condition (Encounter Diagnosis), List (Hospital Problem)
+Code status	Consent (Code Status)
+Isolation / infection	Flag (Isolation), Flag (Infection)
+Lines, drains, airways	Device and Observation (Lines, Drains, Airways)
+Meds and administration	MedicationRequest, MedicationAdministration
+Orders	ServiceRequest (Orders)
+Care plan and goals	CarePlan (Inpatient CarePlan), Goal (Care Plan Goal)
+Vitals, assessments, flowsheets	Observation (Vital Signs, Assessments, Flowsheets)
+Function and diet	Observation (Activities of Daily Living), NutritionOrder
+Nursing actions, restraints	Procedure (Nursing Intervention), Procedure (Restricting Intervention)
+Handoff document	Binary / DocumentReference (Handoff), content unverified
+
+All of these are in the Epic on FHIR resource summary. I haven’t confirmed that each returns data for the sandbox test patients, so check that in the sandbox before relying on them. 
+epic
+
+“One place” and “any platform”
+IDs are system-specific. An Epic FHIR patient ID means nothing in Oracle. You need a crosswalk keyed on stable identifiers like MRN, plus NPI for practitioners if the system exposes it.
+What is portable is the FHIR R4 shape. Oracle’s Millennium list covers most of the same resource types: AllergyIntolerance, CarePlan, CareTeam, MedicationAdministration, NutritionOrder, Procedure, ServiceRequest and others. Oracle lacks the specialized Flag and Lines/Drains/Airways variants I saw in Epic. 
+oracle
+The design that gets you “all in one place”: a canonical Worksheet model, one adapter per platform (Epic, Oracle, a UKG stub), and an MCP tool like get_nurse_worksheet(patient_ref) that fans out to those APIs and merges the results. Your source_system and conflicts tables record where each piece came from and where systems disagree.
+Production needs a hospital. The open.epic subscription agreement is signed by the organization, not by individual apps. Without a hospital sponsor, you stay in the sandbox. 
+epic
+
+Epic’s APIs are also patient-centric (community reports say you resolve a patient first, then pull their data), so “everything for this nurse” would always be a fan-out you build.
