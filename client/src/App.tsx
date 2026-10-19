@@ -24,6 +24,7 @@ export const App: React.FC = () => {
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [handoffs, setHandoffs] = useState<HandoffItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [speechEnabled, setSpeechEnabled] = useState(true);
 
   // Initial greeting from Alexa+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -111,8 +112,8 @@ export const App: React.FC = () => {
       };
       setChatMessages(prev => [...prev, alexaMsg]);
 
-      // Play aloud via Browser TTS if supported
-      if ('speechSynthesis' in window) {
+      // Play aloud via Browser TTS if supported and enabled
+      if (speechEnabled && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(res.speech);
         utterance.rate = 1.05;
@@ -164,6 +165,8 @@ export const App: React.FC = () => {
           messages={chatMessages}
           onSendMessage={handleSendMessage}
           loading={loading}
+          speechEnabled={speechEnabled}
+          onToggleSpeech={() => setSpeechEnabled(prev => !prev)}
         />
 
         <ExecutionTracePanel logs={logs} />
