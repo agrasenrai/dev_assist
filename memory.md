@@ -5,7 +5,7 @@
 > **Transport**: Streamable HTTP (`StreamableHTTPServerTransport`)  
 > **Protocol**: Model Context Protocol (MCP) `2025-11-25`  
 > **Persistence**: SQLite (WAL Mode, Local-first)  
-> **Status**: Phase 0 (Setup & Tooling) in Progress
+> **Status**: Phase 8 (Submission Packaging, Friction Log & Demo) in Progress
 
 ---
 
@@ -61,10 +61,43 @@
   - [x] `src/db/schema.ts` & `src/db/init.ts` (All 11 canonical tables initialized & verified).
   - [x] `data/incoming/` drop-in directory + template JSON created.
   - [x] `src/db/ingest.ts` (Flexible ingestion pipeline with automated conflict detector).
-- [ ] **Phase 2: Swappable Provider Abstraction**: `IEHRProvider`, `MockEHRProvider`, `AlternateHospitalMock`.
-- [ ] **Phase 3: Core Workflow & Recovery Engine**: Checkpoints, idempotency, state reconciliation.
-- [ ] **Phase 4: MCP Server (9 Tools)**: Streamable HTTP transport, Zod schemas, automated test script.
-- [ ] **Phase 5: Agent & Conversational Layer**: Bedrock / Gemini tool-calling orchestrator.
-- [ ] **Phase 6: Clinical Shift Dashboard**: React + Vite UI, task board, conflict drawer, live MCP trace panel.
-- [ ] **Phase 7: Chaos Interruption & Recovery Verification**: End-to-end testing with network disconnect simulation.
-- [ ] **Phase 8: Submission & Friction Log**: `FRICTION_LOG.md` (10% bonus points capture), video demo script.
+- [x] **Phase 2: Hybrid Provider Architecture**:
+  - [x] `src/providers/types.ts` (`IEHRProvider` interface and canonical data models).
+  - [x] `src/providers/sqlite-cache-provider.ts` (Microsecond SQLite edge cache).
+  - [x] `src/providers/fhir-api-provider.ts` (Live FHIR R4 open-source / Epic REST API adapter).
+  - [x] `src/providers/index.ts` (Dynamic runtime provider manager & switcher).
+  - [x] Verified via `scripts/test-providers.ts` (100% pass).
+- [x] **Phase 3: Core Workflow & Recovery Engine**:
+  - [x] `src/services/audit.service.ts` (Structured audit logger with latency & telemetry).
+  - [x] `src/services/checkpoint.service.ts` (Atomic checkpointing with idempotency deduplication).
+  - [x] `src/services/conflict.service.ts` (Discrepancy detection & human resolution flow).
+  - [x] `src/services/recovery.service.ts` (State reconciliation, skipping committed actions).
+  - [x] Verified via `scripts/test-recovery.ts` (100% pass).
+- [x] **Phase 4: MCP Server (9 Tools over Streamable HTTP)**:
+  - [x] `src/server.ts` with official `StreamableHTTPServerTransport` (`POST /mcp`, `GET /mcp`, `DELETE /mcp`).
+  - [x] Registered all 9 canonical tools with Zod schema validation & audit logging.
+  - [x] Companion endpoints: `/health`, `/api/execution-trace`, `/api/conflicts`, `/api/provider/switch`.
+  - [x] Verified via `scripts/test-mcp-client.ts` (`npm run test:mcp` passing 100%).
+- [x] **Phase 5: Agent & Conversational Layer**:
+  - [x] `src/agent/mcp-client-bridge.ts` (Streamable HTTP JSON-RPC 2.0 client bridge with runtime `tools/list` discovery).
+  - [x] `src/agent/llm-provider.ts` (Pluggable adapters: MockAutonomousAgent $0 free runner, Google Gemini API, and AWS Bedrock Converse API for Mini Challenge).
+  - [x] `src/agent/orchestrator.ts` (Multi-turn conversational loop, safety boundaries, and interruption recovery).
+  - [x] Verified via `scripts/test-agent.ts` (`npm run test:agent` passing 100%).
+- [x] **Phase 6: Clinical Shift Dashboard (React + TypeScript)**:
+  - [x] Scaffolded React 18 + Vite + TypeScript in `client/`.
+  - [x] `ShiftHeader.tsx` (ICU-B status, Seema ➔ Reema handoff identity, provider toggle, shift timer).
+  - [x] `TaskBoard.tsx` (4-column Kanban: Pending, In Progress, Flagged Conflict, Completed with STAT indicators).
+  - [x] `ConflictReviewDrawer.tsx` (Room 305-B Vancomycin EHR vs Notes discrepancy review with human nurse sign-off).
+  - [x] `ExecutionTracePanel.tsx` (Live stream of MCP tools invoked over Streamable HTTP with latencies).
+  - [x] `AlexaVoiceSim.tsx` (Simulated Alexa+ assistant with Web Speech API audio synthesis).
+  - [x] `ChaosControlBar.tsx` (Interactive judge demo buttons: crash simulation, zero-loss recovery, provider switch).
+  - [x] Production build compiled via Vite into `client/dist` and served directly by Express on `http://localhost:3000`.
+- [x] **Phase 7: End-to-End Chaos Interruption & Recovery Verification**:
+  - [x] Built comprehensive test script `scripts/test-chaos-recovery.ts`.
+  - [x] Tested planned server crash after Checkpoint #1 commitment.
+  - [x] Verified zero duplicate task repetition upon recovery (`avoidedDuplicateStepsCount = 1`).
+  - [x] Verified bedside human conflict resolution and task status transition to `COMPLETED`.
+  - [x] Verified `npm run test:chaos` passing 100% with full audit trail in SQLite.
+- [ ] **Phase 8: Submission Packaging, Friction Log & Demo**:
+  - [ ] `FRICTION_LOG.md` (Capturing the up to 10% bonus points on MCP TypeScript SDK & Streamable HTTP).
+  - [ ] 3-Minute Video Demo Script & submission documentation.
