@@ -5,7 +5,7 @@
 > **Transport**: Streamable HTTP (`StreamableHTTPServerTransport`)  
 > **Protocol**: Model Context Protocol (MCP) `2025-11-25`  
 > **Persistence**: SQLite (WAL Mode, Local-first)  
-> **Status**: Phase 8 (Submission Packaging, Friction Log & Demo) in Progress
+> **Status**: Complete — All 8 Phases & Real-Time Voice Assistant Delivered (Ready for Hackathon Submission)
 
 ---
 
@@ -54,6 +54,8 @@
 | [`mcp.md`](file:///C:/Users/siddh/Desktop/dev_assist/mcp.md) | Protocol deep dive (Streamable HTTP, JSON-RPC 2.0, 9 tools) and React Dashboard UI integration guide. |
 | [`how_it_works.md`](file:///C:/Users/siddh/Desktop/dev_assist/how_it_works.md) | End-to-end data flow, Epic comparison, user journey, and visual UI screens walkthrough. |
 | [`goal.md`](file:///C:/Users/siddh/Desktop/dev_assist/goal.md) | Architectural separation (Alexa+ vs MCP Server), judge scorecard analysis, and winning demo strategy. |
+| [`README.md`](file:///C:/Users/siddh/Desktop/dev_assist/README.md) | Master Judges' Guide: System overview, 1-click quickstart, click-by-click demo walkthrough, and rubric comparison. |
+| [`FRICTION_LOG.md`](file:///C:/Users/siddh/Desktop/dev_assist/FRICTION_LOG.md) | Official Developer Friction Log for 10% Hackathon Bonus Points (MCP SDK, Streamable HTTP, Express 5, Bedrock). |
 
 ---
 
@@ -106,4 +108,29 @@
 - [x] **Phase 8: Submission Packaging, Friction Log & Demo**:
   - [x] `FRICTION_LOG.md` (Capturing the 10% bonus points on MCP TypeScript SDK, Streamable HTTP, Express 5, and AWS Bedrock Converse API).
   - [x] `README.md` (Comprehensive Judges' Quickstart, Architecture, Demo Guide, and Scorecard Alignment).
-  - [ ] 3-Minute Video Demo Script & recording guide.
+  - [x] 3-Minute Video Demo Script & narrative recorded in [`goal.md`](file:///C:/Users/siddh/Desktop/dev_assist/goal.md) (Section 4) and [`README.md`](file:///C:/Users/siddh/Desktop/dev_assist/README.md) (Section 5).
+- [x] **Post-Phase Enhancement: Live Voice Assistant & Microphone STT (Commit `e0a75c8`)**:
+  - [x] Upgraded `client/src/components/AlexaVoiceSim.tsx` with Web Speech API `SpeechRecognition` / `webkitSpeechRecognition`.
+  - [x] Added real-time speech input (microphone toggle, listening pulse animation, speech error fallback).
+  - [x] Added quick-action prompt chips for fast testing (Pending tasks query, recovery resumption, draft summary).
+  - [x] Seamless bidirectional loop: Audio TTS voice responses + microphone STT input.
+  - [x] Recompiled production client assets via `npm run build:client` into `client/dist/`.
+
+---
+
+## 4. Git Commit History Reference
+
+| Commit | Branch | Summary |
+| :--- | :--- | :--- |
+| `e0a75c8` | `feature/voiceassistant` (HEAD) | Enhanced `AlexaVoiceSim.tsx` with real-time Web Speech recognition (STT), mic listener & ripple animation, sample prompt chips. |
+| `7b8f6a0` | `feature/mdfiles` | Created `README.md` (Master Judges' guide), `FRICTION_LOG.md` (10% bonus points), updated `types.ts` and core docs. |
+| `1723302` | `feature/code` | 7 phases complete implementation (MCP server, 9 tools, agents, React client, services, chaos testing). |
+| `6aa2bf6` | `feature/backend` | Updated docs for hybrid SQLite edge-cache + live FHIR architecture. |
+| `b9a3adf` | `main` | Added `goal.md`, `how_it_works.md`, `memory.md`. |
+| `e91ff07` | `main` | Added `AGENTS.md`, `architecture.md`, `mcp.md`, `plan.md`. |
+| `c5e3795` | `main` | Added `field_schema.md`. |
+| `d8ef2b6` | `main` | Added `ShiftWeave_Project_Document.docx`, `important.md`, `plain_schema.md`, `schema.md`. |
+| `b7d9ac8` | `main` | Initial Streamable HTTP MCP server skeleton & ESM setup. |
+| `fc7852f` | `main` | TypeScript MCP project configuration. |
+| `6f99742` | `main` | Initial project setup. |
+
