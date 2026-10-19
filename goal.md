@@ -118,5 +118,20 @@ To win, the video must not just show code; it must tell a gripping story:
 
 ---
 
-## 5. Final Verdict: Why ShiftWeave Will Stand Out
-ShiftWeave is not another toy chatbot. It is a **fault-tolerant, protocol-native, clinically grounded workflow coordinator**. It checks every box in the hackathon rubric, complies strictly with `important.md`, and directly solves an authentic human workflow problem.
+## 5. Bidirectional Integration: External EHR Write-Back (Confirmed Architectural Decision)
+
+A crucial architectural decision confirmed for ShiftWeave is **Bidirectional Clinical Integration (Read + Write)**:
+* **Not Read-Only**: ShiftWeave does not merely query external hospital data; it actively **WRITES BACK** verified workflow outcomes to an external FHIR R4 EHR destination.
+* **Pluggable Destination**: The exact external write destination is modular and swappable (e.g., **Medplum Cloud EHR**, **Epic on FHIR Sandbox**, or **Oracle Cerner Sandbox**). While the final cloud target is configurable, the **Write-Back pipeline itself is confirmed and fully supported**.
+* **Confirmed Clinical Write Operations**:
+  1. **Bedside Verification Status Updates (`Task.Update`)**: When incoming nurse Reema bedside-verifies Room 305-B's Vancomycin order, ShiftWeave writes the status update (`completed`) with human verification notes back to the external FHIR server.
+  2. **Grounded SBAR Handoff Report (`DocumentReference` / `Communication`)**: The synthesized shift handoff document is committed to the external EHR as an official clinical handoff record.
+  3. **Custody Transfer Event (`AuditEvent` / `Provenance`)**: Transfers clinical custody with digital timestamp and nurse signatures.
+* **Tiered Write Model**:
+  * **Immediate Local Write (0.1ms)**: Absorbed by the local SQLite edge cache for instant tablet feedback and crash-proof checkpointing.
+  * **External EHR Write**: Dispatched to the external FHIR R4 cloud endpoint when network connectivity is confirmed, ensuring hospital records are permanently updated without slowing down the nurse's tablet.
+
+---
+
+## 6. Final Verdict: Why ShiftWeave Will Stand Out
+ShiftWeave is not another toy chatbot. It is a **fault-tolerant, protocol-native, bidirectional, clinically grounded workflow coordinator**. It checks every box in the hackathon rubric, complies strictly with `important.md`, and directly solves an authentic human workflow problem.

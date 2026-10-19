@@ -33,6 +33,11 @@
    * Local SQLite operates as the high-speed edge cache (~0.1ms latency) for nurse station tablets.
    * `IEHRProvider` connects to external open-source / Epic on FHIR endpoints to pull patient rosters and medication orders.
    * Guarantees 100% availability during hospital Wi-Fi drops and zero cloud latency during critical handoffs.
+7. **Bidirectional EHR Integration (Confirmed Write-Back Capability)**:
+   * ShiftWeave is bidirectional: supports both **READ** and **WRITE**.
+   * Confirmed that ShiftWeave actively writes back verified clinical outcomes (bedside task status updates `PUT /Task/:id`, human verification notes, and official SBAR shift handoff reports `POST /DocumentReference`) to the external FHIR R4 EHR tier.
+   * The external write destination is completely modular and swappable (e.g., **Medplum Cloud EHR**, **Epic on FHIR Sandbox**, or **Oracle Cerner Sandbox**). While the final cloud endpoint selection is being confirmed, the **Write-Back architecture is 100% confirmed and supported**.
+   * Dual-tier write: Immediate local SQLite write (0.1ms) for zero tablet lag + fault-tolerant queued external write to the cloud EHR.
 
 ---
 
@@ -98,6 +103,7 @@
   - [x] Verified zero duplicate task repetition upon recovery (`avoidedDuplicateStepsCount = 1`).
   - [x] Verified bedside human conflict resolution and task status transition to `COMPLETED`.
   - [x] Verified `npm run test:chaos` passing 100% with full audit trail in SQLite.
-- [ ] **Phase 8: Submission Packaging, Friction Log & Demo**:
-  - [ ] `FRICTION_LOG.md` (Capturing the up to 10% bonus points on MCP TypeScript SDK & Streamable HTTP).
-  - [ ] 3-Minute Video Demo Script & submission documentation.
+- [x] **Phase 8: Submission Packaging, Friction Log & Demo**:
+  - [x] `FRICTION_LOG.md` (Capturing the 10% bonus points on MCP TypeScript SDK, Streamable HTTP, Express 5, and AWS Bedrock Converse API).
+  - [x] `README.md` (Comprehensive Judges' Quickstart, Architecture, Demo Guide, and Scorecard Alignment).
+  - [ ] 3-Minute Video Demo Script & recording guide.

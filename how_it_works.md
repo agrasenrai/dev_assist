@@ -79,17 +79,21 @@ sequenceDiagram
     UI->>UI: Highlight Room 305-B in Yellow/Red Alert Box
     UI->>UI: Live MCP Execution Trace streams on screen
 
-    Note over Reema,UI: Step 4: Conflict Resolution
+    Note over Reema,UI: Step 4: Conflict Resolution & EHR Write-Back
     Reema->>UI: Clicks "Review Discrepancy" on Room 305-B
-    UI-->>Reema: Shows: Epic EHR says 'GIVEN' vs Nurse Notes say 'PENDING'
+    UI-->>Reema: Shows: EHR says 'GIVEN' vs Nurse Notes say 'PENDING'
     Reema->>UI: Verifies physically with patient & clicks "Confirm Administered"
     UI->>MCP: tools/call: acknowledge_task
-    MCP->>Cache: Update Task Status & Save Audit Entry
+    MCP->>Cache: 1. Update SQLite Local Edge Cache (Immediate 0.1ms)
+    MCP->>EHR: 2. External EHR WRITE: PUT /fhir/R4/Task/task_med_102 (Status: Completed)
+    Note over MCP,EHR: Confirmed Write committed to Cloud EHR!
 
-    Note over Reema,UI: Step 5: Handoff Sign-off
+    Note over Reema,UI: Step 5: Handoff Sign-off & SBAR Document Write
     Reema->>UI: Clicks "Sign-off & Accept Shift Handoff"
     UI->>MCP: tools/call: create_handoff_draft (Idempotent Commit)
-    MCP-->>UI: Handoff Finalized!
+    MCP->>Cache: Save Handoff to SQLite & commit checkpoint
+    MCP->>EHR: External EHR WRITE: POST /fhir/R4/DocumentReference (Official SBAR Report)
+    MCP-->>UI: Handoff Finalized & Custody Transferred!
 ```
 
 ---
