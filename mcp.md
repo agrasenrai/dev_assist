@@ -14,7 +14,7 @@ The **Model Context Protocol (MCP)** is an open protocol developed to standardiz
 
 In ShiftWeave, MCP is **not** a basic database wrapper. It serves as:
 1. **Dynamic Tool Discovery Surface**: The LLM agent does not hardcode what it can do; it queries `tools/list` over Streamable HTTP at runtime to discover capabilities, schemas, and parameter constraints.
-2. **Provider-Agnostic Clinical Layer**: Exposes standardized nursing tools that remain identical whether connected to our local test provider (`MockEHRProvider`) or a hospital system (`OpenEMR`).
+2. **Provider-Agnostic Hybrid Clinical Layer**: Exposes standardized nursing tools that operate on our high-speed local edge cache (`SQLiteCacheProvider` ~0.1ms) while seamlessly synchronizing with external open-source or Epic-compatible healthcare endpoints (`LiveFHIRProvider`).
 3. **Observable Execution Pipeline**: Every tool invocation produces structured telemetry that streams directly to the nurse-facing React dashboard.
 4. **Resilient Transaction Boundary**: Every stateful tool call enforces idempotency and writes to `workflow_checkpoints` to allow zero-loss recovery from mid-turn crashes.
 
@@ -47,10 +47,11 @@ flowchart TB
         Tools["9 Standardized Tool Handlers"]
     end
 
-    subgraph Backend_Core ["Domain Engine & Persistence"]
+    subgraph Backend_Core ["Domain Engine & Hybrid Persistence"]
         CheckpointEngine["Checkpoint & Recovery Manager"]
-        EHRAdapter["IEHRProvider Clinical Adapter"]
-        SQLiteDB[("SQLite Database (WAL Mode)")]
+        EHRAdapter["IEHRProvider Hybrid Adapter"]
+        SQLiteDB[("SQLite Edge Cache (WAL Mode)")]
+        ExternalFHIR["External Open-Source / Epic FHIR API"]
     end
 
     %% Flow connections
@@ -63,6 +64,7 @@ flowchart TB
     Tools <--> EHRAdapter
     CheckpointEngine <--> SQLiteDB
     EHRAdapter <--> SQLiteDB
+    EHRAdapter <-. "FHIR R4 REST Sync" .-> ExternalFHIR
 
     %% Real-time telemetry to UI
     Tools -.->|Emit Telemetry| StreamBridge

@@ -39,15 +39,15 @@ flowchart TB
         IdempotencyGuard["Idempotency & Duplicate Guard"]
     end
 
-    subgraph DataLayer ["5. Persistence & Event Storage Layer"]
-        SQLite[("SQLite Embedded Database (WAL Mode)")]
-        Tables["11 Tables: Tasks, Checkpoints, Conflicts, Audits..."]
+    subgraph DataLayer ["5. Local Edge Persistence & Cache Layer"]
+        SQLite[("SQLite Edge Database (WAL Mode)")]
+        Tables["11 Tables: Local Clinical Cache, Tasks, Checkpoints, Conflicts..."]
     end
 
-    subgraph IntegrationLayer ["6. Clinical EHR Integration & Abstraction Layer"]
+    subgraph IntegrationLayer ["6. Hybrid Clinical EHR Integration & Abstraction Layer"]
         Adapter["IEHRProvider Abstract Interface"]
-        MockEHR["Mock Hospital Provider (Default Demo)"]
-        OpenEMR["OpenEMR / FHIR Adapter (Interoperable Alternate)"]
+        LocalCache["Local Edge Cache Provider (Instant 0.1ms access)"]
+        LiveFHIR["Live Open-Source / Epic FHIR Adapter (REST API)"]
     end
 
     %% Connections
@@ -62,8 +62,10 @@ flowchart TB
     WorkflowRunner <--> RecoveryEngine
     RecoveryEngine <--> IdempotencyGuard
     WorkflowRunner <--> Adapter
-    Adapter --> MockEHR
-    Adapter --> OpenEMR
+    Adapter --> LocalCache
+    Adapter --> LiveFHIR
+    LiveFHIR -. "Periodic / On-Demand Sync" .-> LocalCache
+    LocalCache <--> SQLite
     IdempotencyGuard <--> SQLite
     WorkflowRunner <--> SQLite
     McpServer -. "Execution Logs" .-> TraceView
@@ -83,9 +85,12 @@ flowchart TB
 * After every successful tool invocation, intermediate state is committed as an immutable entry in `workflow_checkpoints` accompanied by an `idempotency_key`.
 * If a network failure, server crash, or client disconnect occurs, the agent does **not** blindly replay previous operations. Instead, it queries the latest checkpoint, verifies the current database truth, and resumes only the uncommitted work.
 
-### Pillar 3: Provider Abstraction & Swappability (`IEHRProvider`)
-* Clinical data sources are decoupled from the MCP server logic via an interface contract.
-* This allows ShiftWeave to effortlessly switch between a local test fixture (`MockHospitalProvider`) and external health systems (`OpenEMRProvider`) without rewriting a single line of agent prompt or MCP tool schemas, proving genuine architectural interoperability to judges.
+### Pillar 3: Hybrid Architecture & Provider Abstraction (`IEHRProvider`)
+* **The Hybrid Edge-Cache Model**:
+  * **External Layer**: Connects via FHIR R4 standard REST calls to open-source healthcare endpoints (e.g. HAPI FHIR Public Sandbox or Epic on FHIR endpoints).
+  * **Local Edge Cache Layer**: Embedded SQLite in WAL mode maintains a sub-millisecond local replica of active patient rosters, nursing shifts, task custody, and intermediate checkpoints.
+  * **Why this beats cloud-only architectures**: Hospital nurses cannot wait 5 seconds for a cloud EHR roundtrip during critical shift handoffs. If the hospital internet goes down, ShiftWeave's edge cache ensures the handoff continues without interruption.
+  * **Provider Swappability**: Switching between the local edge cache and a live external FHIR endpoint requires zero changes to the LLM agent or MCP tool schemas.
 
 ### Pillar 4: Observable Execution Trace Telemetry
 * Every tool discovery, execution latency, argument payload, returned record, and checkpoint save is written to `audit_log`.
@@ -244,19 +249,17 @@ export interface IEHRProvider {
 }
 ```
 
-#### Provider Implementations (Side-by-Side Options):
-1. **`MockEHRProvider`** (Primary Default Fixture — 100% Free & Local):
-   * Loads realistic, de-identified ICU/Med-Surg clinical scenarios (Seema $\to$ Reema handoff).
-   * Generates controlled status changes and deliberately injects realistic discrepancies (e.g., medication timing conflict in Room 305-B).
-   * **Cost & Setup**: $0, instant (runs in-memory / local SQLite).
-2. **Interoperable Provider 2 (Choose Option A or Option B)**:
-   * **Option A: `AlternateHospitalMock` (Recommended Free & Fast Alternative)**:
-     * Simulates a secondary regional hospital system exposing a distinct JSON/FHIR schema structure mapped through `IEHRProvider`.
-     * **Advantage**: Proves 100% of the MCP provider-swapping value to judges in under 5 minutes without downloading Docker images or setting up external servers.
-     * **Cost & Setup**: $0, 5 minutes.
-   * **Option B: `OpenEMRProvider` (Heavy Production Alternative)**:
-     * Connects via REST/FHIR standards to an external or Dockerized OpenEMR instance.
-     * **Tradeoff**: Requires running a multi-container Docker stack (MySQL + Apache + OpenEMR) which requires high RAM and several hours of setup time. Use only if a pre-existing live OpenEMR server is already available.
+#### Hybrid Provider Implementations:
+1. **`SQLiteCacheProvider` (Local Edge High-Speed Provider — 100% Free & Local)**:
+   * Serves as the primary operational provider during nurse shift handoffs.
+   * Accesses local SQLite cache with sub-millisecond query latency (~0.1ms).
+   * Manages nursing shift assignments (Seema $\to$ Reema), task ownership transitions, conflict flags, and checkpoints.
+   * **Advantage**: Bulletproof against hospital Wi-Fi drops or cloud EHR downtime.
+2. **`LiveFHIRProvider` (External Open-Source / Epic on FHIR REST Adapter)**:
+   * Connects via standard FHIR R4 HTTP REST calls to open-source healthcare endpoints (e.g., HAPI FHIR Public Server or Epic on FHIR Sandbox).
+   * Pulls Patient Demographics (`Patient/`), Active Diagnoses (`Condition/`), and Medication Orders (`MedicationRequest/`).
+   * Syncs this clinical foundation into the local `SQLiteCacheProvider` during shift initialization.
+   * **Advantage**: Demonstrates genuine healthcare interoperability with open industry standards and proves provider swappability to judges.
 
 ---
 

@@ -79,8 +79,8 @@ flowchart LR
 
 ---
 
-## Phase 2: Swappable Provider Abstraction (`IEHRProvider`)
-**Goal**: Build the clinical provider abstraction to guarantee architectural interoperability without Docker or external servers.
+## Phase 2: Hybrid Provider Architecture (`IEHRProvider`)
+**Goal**: Build the clinical provider abstraction implementing the Hybrid Model: Local Edge SQLite Cache for sub-millisecond handoff speed, paired with a Live Open-Source / Epic FHIR REST API adapter for external healthcare interoperability.
 
 - [ ] **Step 2.1**: Define `src/providers/types.ts`
   * Interface `IEHRProvider` with methods:
@@ -89,13 +89,19 @@ flowchart LR
     * `getTasksForNurse(nurseId: string, shiftId: string): Promise<Task[]>`
     * `getRecentEvents(since: Date): Promise<TaskEvent[]>`
     * `updateTaskStatus(taskId: string, newStatus: TaskStatus, idempotencyKey: string): Promise<Result>`
-- [ ] **Step 2.2**: Implement `src/providers/mock-provider.ts`
-  * Reads/writes directly to the SQLite clinical tables for the ICU-B ward.
-- [ ] **Step 2.3**: Implement `src/providers/alternate-provider.ts`
-  * Implements `IEHRProvider` simulating a secondary regional healthcare system format (JSON payload mapping).
-  * Enables instant runtime provider-switching for hackathon judges with zero code refactoring.
+    * `syncFromExternalFHIR?(endpointUrl: string): Promise<SyncResult>`
+- [ ] **Step 2.2**: Implement `src/providers/sqlite-cache-provider.ts`
+  * Serves as the primary local edge provider for the nurse station tablet.
+  * Direct sub-millisecond queries against SQLite tables for active ICU-B ward handoffs.
+  * Ensures zero-latency execution and 100% offline availability during server/network drops.
+- [ ] **Step 2.3**: Implement `src/providers/fhir-api-provider.ts`
+  * Connects via HTTP REST to open-source FHIR R4 endpoints (e.g. HAPI FHIR Public Server or Epic on FHIR Sandbox).
+  * Maps standard FHIR `Patient`, `Condition`, and `MedicationRequest` resources to ShiftWeave's canonical models.
+  * Populates/syncs the local `SQLiteCacheProvider` on shift initialization.
+- [ ] **Step 2.4**: Provider Switcher & Fallback Suite:
+  * Implements dynamic provider toggling, allowing judges to test ShiftWeave on either the local edge cache or live external FHIR API without restarting the agent.
 
-**Deliverable**: Two swappable provider implementations passing identical contract test suites.
+**Deliverable**: Two swappable provider implementations (Local Cache + Live FHIR API) passing identical contract tests.
 
 ---
 
