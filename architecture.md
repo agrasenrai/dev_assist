@@ -87,9 +87,13 @@ flowchart TB
 
 ### Pillar 3: Hybrid Architecture & Provider Abstraction (`IEHRProvider`)
 * **The Hybrid Edge-Cache Model**:
-  * **External Layer**: Connects via FHIR R4 standard REST calls to open-source healthcare endpoints (e.g. HAPI FHIR Public Sandbox or Epic on FHIR endpoints).
+  * **External Layer**: Connects via FHIR R4 standard REST calls to healthcare endpoints (e.g., Medplum Cloud EHR, Epic on FHIR Sandbox, or Cerner Sandbox).
   * **Local Edge Cache Layer**: Embedded SQLite in WAL mode maintains a sub-millisecond local replica of active patient rosters, nursing shifts, task custody, and intermediate checkpoints.
-  * **Why this beats cloud-only architectures**: Hospital nurses cannot wait 5 seconds for a cloud EHR roundtrip during critical shift handoffs. If the hospital internet goes down, ShiftWeave's edge cache ensures the handoff continues without interruption.
+  * **Why this beats cloud-only architectures**: Hospital nurses cannot wait 5 seconds for a cloud EHR roundtrip during critical shift handoffs. If hospital Wi-Fi drops, ShiftWeave's edge cache ensures the handoff continues without interruption.
+  * **Bidirectional Integration (Read + Write)**:
+    * **Read Operations**: Fetches patient demographics, active medication orders, and scheduled shift tasks.
+    * **Write Operations (Confirmed Architecture)**: ShiftWeave does not merely read; it actively **WRITES BACK** verified workflow outcomes to the external FHIR destination (e.g., Medplum, Epic, or Cerner sandbox). Confirmed writes include bedside verification updates (`PUT /Task/:id`), official SBAR clinical handoff documents (`POST /DocumentReference` or `/Communication`), and custody handover timestamps (`AuditEvent`).
+    * **Destination-Agnostic / Pluggable**: The external write destination is completely modular and swappable via `IEHRProvider`, while the core agentic workflow remains deterministic.
   * **Provider Swappability**: Switching between the local edge cache and a live external FHIR endpoint requires zero changes to the LLM agent or MCP tool schemas.
 
 ### Pillar 4: Observable Execution Trace Telemetry

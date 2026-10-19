@@ -100,4 +100,16 @@ export interface IEHRProvider {
 
   /** Optional: Sync external FHIR R4 bundle into local edge SQLite cache */
   syncFromExternalFHIR?(endpointUrl: string, unitId: string): Promise<{ syncedPatients: number; syncedOrders: number }>;
+
+  /** Optional: Write official clinical handoff document (SBAR) to external FHIR tier */
+  writeHandoffDocument?(
+    handoffId: string,
+    summaryMarkdown: string,
+    metadata: {
+      shiftId: string;
+      outgoingNurseId: string;
+      incomingNurseId: string;
+      carriedForwardIds: string[];
+    }
+  ): Promise<{ success: boolean; externalDocumentId?: string }>;
 }

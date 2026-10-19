@@ -184,11 +184,15 @@ ShiftWeave registers 9 specialized tools inside `src/server.ts`:
 | **2** | `get_task_details` | Query | Yes | Pulls complete clinical context, patient details, and change history. |
 | **3** | `get_task_changes` | Query | Yes | Retrieves events that occurred since a given timestamp or checkpoint. |
 | **4** | `get_handoff_context` | Query | Yes | Compiles cross-patient operational summaries and uncompleted tasks. |
-| **5** | `create_handoff_draft`| Mutation | Yes (Key) | Commits structured, grounded handoff narrative to database. |
+| **5** | `create_handoff_draft`| Mutation | Yes (Key) | Commits grounded SBAR narrative to SQLite & writes to external FHIR EHR (`DocumentReference`). |
 | **6** | `get_workflow_checkpoint` | Query | Yes | Retrieves the latest checkpoint for an in-progress or interrupted run. |
 | **7** | `save_workflow_checkpoint` | Mutation | Yes (Key) | Saves intermediate state to enable zero-loss resumption after failure. |
 | **8** | `resume_workflow` | Mutation | Yes (Key) | Reconciles database state vs checkpoint; executes only remaining steps. |
-| **9** | `acknowledge_task` | Mutation | Yes (Key) | Records explicit human sign-off, conflict resolution, or custody transfer. |
+| **9** | `acknowledge_task` | Mutation | Yes (Key) | Records explicit human sign-off; commits to SQLite & writes status update to external FHIR (`Task.Update`). |
+
+> [!NOTE]
+> **Bidirectional External EHR Integration (Read + Write)**:
+> In addition to committing to the local SQLite edge cache for sub-millisecond tablet performance, Mutation Tools (Tool 5: `create_handoff_draft` and Tool 9: `acknowledge_task`) perform external write-backs to the configured FHIR R4 EHR destination (e.g., Medplum Cloud EHR, Epic on FHIR Sandbox, or Oracle Cerner Sandbox). The external destination remains modular and pluggable.
 
 ---
 

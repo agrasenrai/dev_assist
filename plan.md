@@ -90,18 +90,20 @@ flowchart LR
     * `getRecentEvents(since: Date): Promise<TaskEvent[]>`
     * `updateTaskStatus(taskId: string, newStatus: TaskStatus, idempotencyKey: string): Promise<Result>`
     * `syncFromExternalFHIR?(endpointUrl: string): Promise<SyncResult>`
+    * `writeHandoffDocument?(handoffId: string, summary: string, metadata: Record<string, unknown>): Promise<boolean>`
 - [x] **Step 2.2**: Implement `src/providers/sqlite-cache-provider.ts`
   * Serves as the primary local edge provider for the nurse station tablet.
   * Direct sub-millisecond queries against SQLite tables for active ICU-B ward handoffs.
   * Ensures zero-latency execution and 100% offline availability during server/network drops.
-- [x] **Step 2.3**: Implement `src/providers/fhir-api-provider.ts`
-  * Connects via HTTP REST to open-source FHIR R4 endpoints (e.g. HAPI FHIR Public Server or Epic on FHIR Sandbox).
-  * Maps standard FHIR `Patient`, `Condition`, and `MedicationRequest` resources to ShiftWeave's canonical models.
+- [x] **Step 2.3**: Implement `src/providers/fhir-api-provider.ts` (Bidirectional Read + Write)
+  * Connects via HTTP REST to open-source FHIR R4 endpoints (e.g., Medplum Cloud EHR, Epic on FHIR Sandbox, or Cerner Sandbox).
+  * **Read Pipeline**: Maps standard FHIR `Patient`, `Condition`, and `MedicationRequest` resources to ShiftWeave's canonical models.
+  * **Write Pipeline (Confirmed Decision)**: Writes back bedside task verification updates (`PUT /Task/:id`) and official SBAR shift handoff records (`POST /DocumentReference` or `/Communication`). Destination is completely modular and swappable.
   * Populates/syncs the local `SQLiteCacheProvider` on shift initialization.
 - [x] **Step 2.4**: Provider Switcher & Fallback Suite:
   * Implements dynamic provider toggling, allowing judges to test ShiftWeave on either the local edge cache or live external FHIR API without restarting the agent.
 
-**Deliverable**: Two swappable provider implementations (Local Cache + Live FHIR API) passing identical contract tests.
+**Deliverable**: Bidirectional, swappable provider implementations (Local Cache + Live FHIR Read/Write API) passing identical contract tests.
 
 ---
 
@@ -224,9 +226,9 @@ flowchart LR
 ## Phase 8: Submission Packaging, Friction Log & Demo
 **Goal**: Prepare all hackathon submission assets to maximize scoring and capture the 10% bonus.
 
-- [ ] **Step 8.1**: Create `FRICTION_LOG.md`:
+- [x] **Step 8.1**: Create `FRICTION_LOG.md`:
   * Document authentic developer feedback on working with the MCP TypeScript SDK, Streamable HTTP transport, and agent skills to earn the **up to 10% bonus points** from Amazon judges.
-- [ ] **Step 8.2**: Write comprehensive `README.md`:
+- [x] **Step 8.2**: Write comprehensive `README.md`:
   * Architecture summary, step-by-step local setup (1-click run), video link, and judging checklist.
 - [ ] **Step 8.3**: Record 3-Minute Demo Video (following Section 15 of project doc):
   * **Minute 1**: Introduce Seema $\to$ Reema shift handoff, Alexa+ query, live MCP tool execution trace.
