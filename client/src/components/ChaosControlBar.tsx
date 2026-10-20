@@ -15,7 +15,7 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
     setChaosStatus("💥 Triggering simulated network drop / tablet crash mid-handoff...");
     try {
       const res = await triggerChaos('crash');
-      setChaosStatus(`⚠️ SIMULATED CRASH OCCURRED: Connection cut at step 2! Checkpoint safely committed to SQLite database.`);
+      setChaosStatus(res.message);
       await onRefreshAll();
     } catch (err: any) {
       setChaosStatus(`Error: ${err.message}`);
@@ -29,7 +29,7 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
     setChaosStatus("🔄 Reconciling SQLite state and recovering from checkpoint...");
     try {
       const res = await triggerChaos('recover');
-      setChaosStatus(`✅ ZERO-LOSS RECOVERY VERIFIED: Resumed from Checkpoint #1! Duplicate steps avoided = 1. Final handoff draft completed.`);
+      setChaosStatus(res.message);
       await onRefreshAll();
     } catch (err: any) {
       setChaosStatus(`Error: ${err.message}`);
@@ -52,7 +52,7 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
             </span>
           </div>
           <p style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '2px' }}>
-            Test non-trivial agentic recovery: intentionally sever connection mid-workflow, then resume with zero duplicated work.
+            Test non-trivial agentic recovery: inject an exception after saved tool results, then restore the durable workflow.
           </p>
         </div>
 
@@ -74,7 +74,7 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
             style={{ fontSize: '0.8rem', padding: '8px 14px' }}
           >
             <ShieldCheck size={15} />
-            <span>Resume & Recover State (0% Duplicate Work)</span>
+            <span>Resume Saved Workflow</span>
           </button>
         </div>
       </div>
@@ -82,17 +82,17 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
       {chaosStatus && (
         <div style={{
           marginTop: '12px',
-          background: chaosStatus.includes('ZERO-LOSS') ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
-          border: chaosStatus.includes('ZERO-LOSS') ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(244, 63, 94, 0.4)',
+          background: chaosStatus.startsWith('Recovered') ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
+          border: chaosStatus.startsWith('Recovered') ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(244, 63, 94, 0.4)',
           borderRadius: '8px',
           padding: '8px 12px',
           fontSize: '0.78rem',
-          color: chaosStatus.includes('ZERO-LOSS') ? '#a7f3d0' : '#fecdd3',
+          color: chaosStatus.startsWith('Recovered') ? '#a7f3d0' : '#fecdd3',
           display: 'flex',
           alignItems: 'center',
           gap: '8px'
         }}>
-          {chaosStatus.includes('ZERO-LOSS') ? <CheckCircle size={15} /> : <AlertTriangle size={15} />}
+          {chaosStatus.startsWith('Recovered') ? <CheckCircle size={15} /> : <AlertTriangle size={15} />}
           <span>{chaosStatus}</span>
         </div>
       )}

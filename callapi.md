@@ -1,5 +1,7 @@
 # ShiftWeave — Lean Epic FHIR R4 API Specification (`callapi.md`)
 
+> **Implementation note (20 October 2026):** This document includes intended design and historical claims. Use [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for current verified behavior and limitations; use [incomingapikey.md](incomingapikey.md) for corrected Epic API guidance. External write-back, production authentication, universal recovery guarantees and fixed latency claims are not established by this document.
+
 > **File Purpose**: Yeh document ShiftWeave ke liye **sirf aur sirf zaroori (Core) APIs** ko define karta hai.  
 > **Architecture Principle**: **No Over-Engineering, Zero Bloat, Zero Silent Fallbacks.**  
 > **Key Decision**: 23 APIs ke bloat ko trim karke **8 Must-Have APIs** (6 READ + 2 WRITE-BACK) par streamline kiya gaya hai taaki demo 100% fast, reliable, aur crash-proof rahe.

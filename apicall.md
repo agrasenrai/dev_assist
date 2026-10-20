@@ -1,5 +1,7 @@
 # ShiftWeave — Epic FHIR R4 API Integration & Call Map
 
+> **Implementation note (20 October 2026):** This document includes intended design and historical claims. Use [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for current verified behavior and limitations; use [incomingapikey.md](incomingapikey.md) for corrected Epic API guidance. External write-back, production authentication, universal recovery guarantees and fixed latency claims are not established by this document.
+
 > **Source Reference**: `C:\Users\siddh\Downloads\EPIC-APIS.docx` (Official open.epic FHIR R4 API Catalog)  
 > **Target System**: ShiftWeave ICU Shift Coordination & Handoff Platform  
 > **Protocol**: HL7 FHIR R4 Standard (`https://open.epic.com/Interface/FHIR`)  

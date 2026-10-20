@@ -9,10 +9,11 @@
     "build:client": "npm --prefix client run build",
     "db:init": "tsx src/db/init.ts",
     "import:data": "tsx src/db/ingest.ts",
-    "test:mcp": "tsx scripts/test-mcp-client.ts",
-    "test:agent": "tsx scripts/test-agent.ts",
-    "test:chaos": "tsx scripts/test-chaos-recovery.ts",
-    "test": "npm run test:mcp && npm run test:agent && npm run test:chaos"
+    "test:mcp": "tsx scripts/run-tests.ts mcp",
+    "test:agent": "tsx scripts/run-tests.ts agent",
+    "test:chaos": "tsx scripts/run-tests.ts chaos",
+    "test": "tsx scripts/run-tests.ts all",
+    "typecheck": "tsc --noEmit"
   },
   "repository": {
     "type": "git",

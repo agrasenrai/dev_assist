@@ -1,96 +1,72 @@
 import type { ClinicalTask, ConflictItem, AuditLogItem, HandoffItem, ProviderHealth } from './types.js';
 
-const API_BASE = 'http://localhost:3000';
-
-export async function fetchHealth(): Promise<ProviderHealth> {
-  const res = await fetch(`${API_BASE}/health`);
-  if (!res.ok) throw new Error('Health check failed');
-  return res.json();
+const API_BASE = ''; // Vite proxies /api and /health in dev; production uses the same origin.
+async function request<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(API_BASE + path, { ...(body === undefined ? {} : { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), signal: AbortSignal.timeout(90000) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `Request failed: HTTP ${response.status}`);
+  return data as T;
+}
+const workflowKey = 'shiftweave:workflow:nurse_reema_02';
+function workflowId() {
+  let id = localStorage.getItem(workflowKey);
+  if (!id) { id = `wf_run_${crypto.randomUUID()}`; localStorage.setItem(workflowKey, id); }
+  return id;
+}
+export function fetchHealth() { return request<ProviderHealth>('/health'); }
+export async function fetchTasks() { return (await request<{ tasks: ClinicalTask[] }>('/api/tasks')).tasks; }
+export async function fetchConflicts() { return (await request<{ conflicts: ConflictItem[] }>('/api/conflicts')).conflicts; }
+export async function fetchExecutionTrace() { return (await request<{ logs: AuditLogItem[] }>('/api/execution-trace')).logs; }
+export async function fetchHandoffs() { return (await request<{ handoffs: HandoffItem[] }>('/api/handoffs')).handoffs; }
+const pendingKeys = new Map<string, string>();
+function retryKey(action: string) {
+  let key = pendingKeys.get(action);
+  if (!key) { key = crypto.randomUUID(); pendingKeys.set(action, key); }
+  return key;
+}
+export async function resolveConflict(conflictId: string, resolvedBy: string, finalStatus: string, resolutionNote: string) {
+  const action = JSON.stringify({ conflictId, resolvedBy, finalStatus, resolutionNote });
+  await request(`/api/conflicts/${encodeURIComponent(conflictId)}/resolve`, { resolvedBy, finalStatus, resolutionNote,
+    human_confirmed: true, idempotency_key: retryKey(action) });
+  pendingKeys.delete(action);
+  return true;
+}
+export function switchProvider(providerId: 'sqlite-edge-cache' | 'live-fhir-api') { return request('/api/provider/switch', { providerId }); }
+export function sendChatMessage(utterance: string, nurseId = 'nurse_reema_02') {
+  const identity = `chat:${workflowId()}:${utterance}`;
+  return request<{ speech: string; workflowRunId: string; provider: string;
+    toolsExecuted: Array<{ name: string; args: Record<string, unknown>; resultSummary: string; latencyMs: number }>;
+    dashboardCard?: any }>('/api/chat', { utterance, nurseId, workflowRunId: workflowId(),
+      shiftId: 'shift_20261019_night', outgoingNurseId: 'nurse_seema_01', incomingNurseId: nurseId,
+      idempotency_key: retryKey(identity) }).then(result => { pendingKeys.delete(identity); return result; });
+}
+export function fetchConversation() {
+  const id = localStorage.getItem(workflowKey);
+  return id ? request<{ messages: Array<{ role: string; content: string; toolCall?: unknown }> }>(
+    `/api/conversations/${encodeURIComponent(id)}?nurseId=nurse_reema_02`) : Promise.resolve({ messages: [] });
+}
+export function startNewConversation() { localStorage.removeItem(workflowKey); }
+export async function acknowledgeTask(taskId: string, action: 'ACCEPT_HANDOFF' | 'FLAG_FOR_SUPERVISOR', note: string, handoffId?: string) {
+  const identity = JSON.stringify({ taskId, action, note, handoffId });
+  const result = await request(`/api/tasks/${encodeURIComponent(taskId)}/acknowledge`, { nurse_id: 'nurse_reema_02',
+    action, resolution_note: note, handoff_id: handoffId, human_confirmed: true, idempotency_key: retryKey(identity) });
+  pendingKeys.delete(identity);
+  return result;
+}
+export async function triggerChaos(action: 'crash' | 'recover') {
+  const key = 'shiftweave:chaosRun';
+  const runId = localStorage.getItem(key);
+  if (action === 'recover' && !runId) throw new Error('Start an interruption demo first');
+  const result = await request<any>('/api/chaos/simulate', { action, ...(action === 'recover' ? { workflowRunId: runId } : {}) });
+  if (result.workflowRunId) localStorage.setItem(key, result.workflowRunId);
+  return result;
 }
 
-export async function fetchTasks(): Promise<ClinicalTask[]> {
-  const res = await fetch(`${API_BASE}/api/tasks`);
-  if (!res.ok) throw new Error('Failed to fetch tasks');
-  const data = await res.json();
-  return data.tasks || [];
-}
-
-export async function fetchConflicts(): Promise<ConflictItem[]> {
-  const res = await fetch(`${API_BASE}/api/conflicts`);
-  if (!res.ok) throw new Error('Failed to fetch conflicts');
-  const data = await res.json();
-  return data.conflicts || [];
-}
-
-export async function fetchExecutionTrace(): Promise<AuditLogItem[]> {
-  const res = await fetch(`${API_BASE}/api/execution-trace`);
-  if (!res.ok) throw new Error('Failed to fetch execution trace');
-  const data = await res.json();
-  return data.logs || [];
-}
-
-export async function fetchHandoffs(): Promise<HandoffItem[]> {
-  const res = await fetch(`${API_BASE}/api/handoffs`);
-  if (!res.ok) throw new Error('Failed to fetch handoffs');
-  const data = await res.json();
-  return data.handoffs || [];
-}
-
-export async function resolveConflict(
-  conflictId: string,
-  resolvedBy = 'nurse_reema_02',
-  finalStatus = 'COMPLETED',
-  resolutionNote = 'Bedside verification confirmed by RN'
-): Promise<boolean> {
-  const res = await fetch(`${API_BASE}/api/conflicts/${conflictId}/resolve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resolvedBy, finalStatus, resolutionNote })
-  });
-  return res.ok;
-}
-
-export async function switchProvider(
-  providerId: 'sqlite-edge-cache' | 'live-fhir-api'
-): Promise<any> {
-  const res = await fetch(`${API_BASE}/api/provider/switch`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ providerId })
-  });
-  if (!res.ok) throw new Error('Failed to switch provider');
-  return res.json();
-}
-
-export async function sendChatMessage(
-  utterance: string,
-  nurseId = 'nurse_reema_02'
-): Promise<{
-  speech: string;
-  workflowRunId: string;
-  toolsExecuted: Array<{ name: string; args: Record<string, unknown>; resultSummary: string; latencyMs: number }>;
-  dashboardCard?: any;
-}> {
-  const res = await fetch(`${API_BASE}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      utterance,
-      nurseId,
-      shiftId: 'shift_20261019_night',
-      outgoingNurseId: 'nurse_seema_01',
-      incomingNurseId: 'nurse_reema_02'
-    })
-  });
-  if (!res.ok) throw new Error('Chat request failed');
-  return res.json();
-}
-
-export async function triggerChaos(action: 'crash' | 'recover'): Promise<any> {
-  const res = await fetch(`${API_BASE}/api/chaos/simulate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action })
-  });
-  return res.json();
+export async function finalizeHandoff(id: string) {
+  const identity = `finalize:${id}`;
+  const result = await request(`/api/handoffs/${encodeURIComponent(id)}/finalize`, { nurse_id: 'nurse_reema_02',
+    human_confirmed: true, idempotency_key: retryKey(identity) });
+  pendingKeys.delete(identity);
+  return result;
 }

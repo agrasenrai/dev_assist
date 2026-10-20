@@ -59,6 +59,7 @@ export class MCPClientBridge {
     };
 
     const res = await fetch(this.endpoint, {
+      signal: AbortSignal.timeout(30000),
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -82,6 +83,8 @@ export class MCPClientBridge {
     if (data.error) {
       throw new Error(`MCP initialize error: ${data.error.message}`);
     }
+
+    if (data.result?.protocolVersion !== '2025-11-25') throw new Error('Unsupported negotiated MCP protocol version');
 
     // Send initialized notification as required by MCP spec
     await this.sendNotification("notifications/initialized");
@@ -134,9 +137,11 @@ export class MCPClientBridge {
 
     if (this.sessionId) {
       headers["mcp-session-id"] = this.sessionId;
+      headers['MCP-Protocol-Version'] = '2025-11-25';
     }
 
     const res = await fetch(this.endpoint, {
+      signal: AbortSignal.timeout(30000),
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -167,9 +172,11 @@ export class MCPClientBridge {
 
     if (this.sessionId) {
       headers["mcp-session-id"] = this.sessionId;
+      headers['MCP-Protocol-Version'] = '2025-11-25';
     }
 
-    await fetch(this.endpoint, {
+    const response = await fetch(this.endpoint, {
+      signal: AbortSignal.timeout(30000),
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -178,6 +185,7 @@ export class MCPClientBridge {
         params
       })
     });
+    if (!response.ok) throw new Error(`MCP notification failed: ${response.status}`);
   }
 
   /**
@@ -188,15 +196,25 @@ export class MCPClientBridge {
       return JSON.parse(text);
     } catch {
       // Parse SSE chunk if server returned text/event-stream
-      const lines = text.split("\n").filter(l => l.startsWith("data: "));
-      if (lines.length > 0) {
-        return JSON.parse(lines[0].replace("data: ", ""));
+      const events = text.split(/\r?\n\r?\n/).map(event => event.split(/\r?\n/)
+        .filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')).filter(Boolean);
+      for (const event of events) {
+        const parsed = JSON.parse(event);
+        if (parsed.id !== undefined && (parsed.result !== undefined || parsed.error)) return parsed;
       }
-      return { raw: text };
+      throw new Error('MCP response contained no JSON-RPC result');
     }
   }
 
   getSessionId(): string | null {
     return this.sessionId;
+  }
+
+  async close(): Promise<void> {
+    if (!this.sessionId) return;
+    const response = await fetch(this.endpoint, { method: 'DELETE', signal: AbortSignal.timeout(5000),
+      headers: { 'mcp-session-id': this.sessionId, 'MCP-Protocol-Version': '2025-11-25' } });
+    this.sessionId = null;
+    if (!response.ok && response.status !== 404) throw new Error(`MCP close failed: ${response.status}`);
   }
 }

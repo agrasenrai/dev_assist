@@ -169,3 +169,11 @@ body {
 .code-font {
   font-family: 'JetBrains Mono', monospace;
 }
+
+/* Spacing used by the dashboard; no Tailwind runtime is required. */
+.p-4 { padding: 16px; }
+.p-5 { padding: 20px; }
+.mb-6 { margin-bottom: 24px; }
+.btn:disabled { cursor: not-allowed; opacity: 0.5; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.animate-spin { animation: spin 1s linear infinite; }

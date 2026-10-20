@@ -1,5 +1,6 @@
 import { db } from "../db/connection.js";
 import { randomUUID } from "crypto";
+import { canonicalJson } from './canonical-json.js';
 
 export interface CheckpointRecord {
   id: string;
@@ -31,6 +32,9 @@ export class CheckpointService {
     statePayload: Record<string, unknown>,
     idempotencyKey: string
   ): CheckpointRecord {
+    if (!idempotencyKey?.trim() || !Number.isInteger(stepIndex) || stepIndex < 1) {
+      throw new Error('Checkpoint requires a key and positive integer step index');
+    }
     // 1. Idempotency Check: Did this checkpoint already commit?
     const existing = db.prepare(`
       SELECT id, workflow_run_id AS workflowRunId, step_index AS stepIndex,
@@ -41,6 +45,10 @@ export class CheckpointService {
     `).get(idempotencyKey) as { id: string; workflowRunId: string; stepIndex: number; stepName: string; statePayload: string; idempotencyKey: string; createdAt: string } | undefined;
 
     if (existing) {
+      if (existing.workflowRunId !== workflowRunId || existing.stepIndex !== stepIndex ||
+          existing.stepName !== stepName || canonicalJson(JSON.parse(existing.statePayload)) !== canonicalJson(statePayload)) {
+        throw new Error('Checkpoint idempotency key reused for different state');
+      }
       return {
         ...existing,
         statePayload: JSON.parse(existing.statePayload)
@@ -90,7 +98,7 @@ export class CheckpointService {
              idempotency_key AS idempotencyKey, created_at AS createdAt
       FROM workflow_checkpoints
       WHERE workflow_run_id = ?
-      ORDER BY step_index DESC
+      ORDER BY step_index DESC, rowid DESC
       LIMIT 1
     `).get(workflowRunId) as { id: string; workflowRunId: string; stepIndex: number; stepName: string; statePayload: string; idempotencyKey: string; createdAt: string } | undefined;
 

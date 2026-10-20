@@ -119,3 +119,12 @@
 - details
 - latency_ms
 - timestamp
+
+## OPERATION_RECEIPTS (additive retry ledger)
+- idempotency_key (primary key)
+- operation
+- request_json
+- response_json
+- created_at
+
+The original 11 domain entities remain; this supporting table binds stable retry keys to committed requests/results.

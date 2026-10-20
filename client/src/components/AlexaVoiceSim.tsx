@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { ChatMessage } from '../types.js';
 import { Mic, MicOff, Send, Volume2, VolumeX, Sparkles, Bot, User, Radio } from 'lucide-react';
 
@@ -17,6 +17,8 @@ export const AlexaVoiceSim: React.FC<Props> = ({
   speechEnabled,
   onToggleSpeech
 }) => {
+  const recognitionRef = useRef<any>(null);
+  useEffect(() => () => recognitionRef.current?.abort(), []);
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [supportsSpeech, setSupportsSpeech] = useState(false);
@@ -47,12 +49,14 @@ export const AlexaVoiceSim: React.FC<Props> = ({
     }
 
     if (isListening) {
+      recognitionRef.current?.stop();
       setIsListening(false);
       return;
     }
 
     try {
       const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.lang = 'en-US';
@@ -202,6 +206,7 @@ export const AlexaVoiceSim: React.FC<Props> = ({
                 {m.text}
               </p>
 
+              {m.provider && <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{m.provider}</div>}
               {/* Structured Dashboard Card if attached */}
               {m.card && (
                 <div style={{

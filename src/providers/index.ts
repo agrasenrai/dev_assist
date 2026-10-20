@@ -22,6 +22,7 @@ export function getActiveProvider(): IEHRProvider {
 }
 
 export function setActiveProvider(providerId: "sqlite-edge-cache" | "live-fhir-api"): IEHRProvider {
+  if (providerId === 'live-fhir-api') throw new Error('External FHIR workflow mapping is not configured; local demo remains selected');
   const selected = providers[providerId];
   if (!selected) {
     throw new Error(`Unknown provider: ${providerId}. Available: ${Object.keys(providers).join(", ")}`);

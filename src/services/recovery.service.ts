@@ -1,6 +1,7 @@
 import { db } from "../db/connection.js";
-import { CheckpointService, type CheckpointRecord } from "./checkpoint.service.js";
-import { AuditService } from "./audit.service.js";
+import { CheckpointService } from "./checkpoint.service.js";
+import { MutationService } from "./mutation.service.js";
+import { sourceVersion } from './source-version.js';
 
 export interface RecoveryPlan {
   workflowRunId: string;
@@ -14,102 +15,35 @@ export interface RecoveryPlan {
   message: string;
 }
 
-const STANDARD_HANDOFF_STEPS = [
-  "FETCH_ASSIGNED_TASKS",
-  "DETECT_DISCREPANCIES",
-  "CALCULATE_HANDOFF_METRICS",
-  "CREATE_HANDOFF_DRAFT",
-  "NOTIFY_DASHBOARD"
-];
-
 export class RecoveryService {
   static reconcileAndResume(workflowRunId: string, idempotencyKey: string): RecoveryPlan {
-    const startTime = Date.now();
-
-    // 1. Fetch Workflow Run status
-    const run = db.prepare(`
-      SELECT id, workflow_type, initiated_by, status, error_message
-      FROM workflow_runs
-      WHERE id = ?
-    `).get(workflowRunId) as { id: string; workflow_type: string; initiated_by: string; status: string; error_message?: string } | undefined;
-
-    if (!run) {
-      return {
-        workflowRunId,
-        recoveryStatus: 'CANNOT_RECOVER',
-        resumedFromStepIndex: 0,
-        resumedStepName: 'UNKNOWN',
-        alreadyCommittedSteps: [],
-        remainingStepsToExecute: STANDARD_HANDOFF_STEPS,
-        reconciledState: {},
-        avoidedDuplicateStepsCount: 0,
-        message: `Workflow run ${workflowRunId} not found in database.`
-      };
-    }
-
-    if (run.status === 'COMPLETED') {
-      return {
-        workflowRunId,
-        recoveryStatus: 'ALREADY_COMPLETED',
-        resumedFromStepIndex: STANDARD_HANDOFF_STEPS.length,
-        resumedStepName: 'FINISHED',
-        alreadyCommittedSteps: STANDARD_HANDOFF_STEPS,
-        remainingStepsToExecute: [],
-        reconciledState: {},
-        avoidedDuplicateStepsCount: STANDARD_HANDOFF_STEPS.length,
-        message: `Workflow run ${workflowRunId} is already fully completed.`
-      };
-    }
-
-    // 2. Fetch all saved checkpoints for this run
-    const checkpoints: CheckpointRecord[] = CheckpointService.getAllCheckpoints(workflowRunId);
-    const committedStepNames = checkpoints.map(c => c.stepName);
-    const lastCheckpoint = checkpoints[checkpoints.length - 1];
-
-    // 3. Determine remaining steps to execute
-    const remainingSteps = STANDARD_HANDOFF_STEPS.filter(step => !committedStepNames.includes(step));
-    const nextStepIndex = lastCheckpoint ? lastCheckpoint.stepIndex + 1 : 1;
-    const nextStepName = remainingSteps[0] || "FINALIZE";
-
-    // 4. Merge state payloads up to the last confirmed checkpoint
-    const reconciledState: Record<string, unknown> = {};
-    for (const chk of checkpoints) {
-      Object.assign(reconciledState, chk.statePayload);
-    }
-
-    // 5. Update workflow status to IN_PROGRESS (Reconnected & Resumed)
-    db.prepare(`
-      UPDATE workflow_runs
-      SET status = 'IN_PROGRESS', error_message = NULL, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(workflowRunId);
-
-    // 6. Log Recovery Event to Audit Log
-    AuditService.log({
-      actorType: 'SYSTEM',
-      actorId: run.initiated_by,
-      action: 'WORKFLOW_INTERRUPTION_RECOVERED',
-      targetResource: `workflow_run/${workflowRunId}`,
-      outcome: 'RECOVERED',
-      details: {
-        idempotencyKey,
-        resumedFromStep: nextStepName,
-        avoidedSteps: committedStepNames,
-        remainingSteps
-      },
-      latencyMs: Date.now() - startTime
+    const run = db.prepare('SELECT status, initiated_by FROM workflow_runs WHERE id = ?').get(workflowRunId) as
+      { status: string; initiated_by: string } | undefined;
+    const checkpoint = CheckpointService.getLatestCheckpoint(workflowRunId);
+    const empty: RecoveryPlan = { workflowRunId, recoveryStatus: 'CANNOT_RECOVER', resumedFromStepIndex: 0,
+      resumedStepName: 'UNKNOWN', alreadyCommittedSteps: [], remainingStepsToExecute: [],
+      reconciledState: {}, avoidedDuplicateStepsCount: 0, message: 'No durable checkpoint found. Start a new workflow.' };
+    if (!run || !checkpoint) return empty;
+    // Reconcile the actual checkpoint and persisted mutation receipts. Do not invent a fixed list of completed steps.
+    const checkpoints = CheckpointService.getAllCheckpoints(workflowRunId);
+    const state = checkpoint.statePayload;
+    const committed = checkpoints.filter(c => c.stepName.startsWith('RESULT:')).map(c => c.stepName.slice(7));
+    const pending = state.pendingTool as { toolName?: string; arguments?: Record<string, unknown> } | undefined;
+    const key = pending?.arguments?.idempotency_key;
+    const receipt = typeof key === 'string'
+      ? db.prepare('SELECT response_json FROM operation_receipts WHERE idempotency_key = ?').get(key) : undefined;
+    const completed = run.status === 'COMPLETED';
+    const next = completed ? 'FINISHED' : pending?.toolName || 'CONTINUE_FROM_SAVED_HISTORY';
+    return MutationService.execute('RESUME_WORKFLOW', idempotencyKey, { workflowRunId }, run.initiated_by, () => {
+      if (!completed) db.prepare("UPDATE workflow_runs SET status = 'IN_PROGRESS', error_message = NULL WHERE id = ?").run(workflowRunId);
+      return { workflowRunId, recoveryStatus: completed ? 'ALREADY_COMPLETED' : 'RECOVERED',
+        resumedFromStepIndex: checkpoint.stepIndex + 1, resumedStepName: next,
+        alreadyCommittedSteps: committed, remainingStepsToExecute: completed ? [] : [next],
+        reconciledState: { ...state, pendingMutationCommitted: Boolean(receipt),
+          sourceChanged: typeof state.sourceVersion === 'string' && state.sourceVersion !== sourceVersion() },
+        avoidedDuplicateStepsCount: committed.length,
+        message: completed ? 'Workflow was already completed; no actions repeated.'
+          : `Recovered checkpoint ${checkpoint.id}; ${committed.length} committed tool results restored.` } as RecoveryPlan;
     });
-
-    return {
-      workflowRunId,
-      recoveryStatus: 'RECOVERED',
-      resumedFromStepIndex: nextStepIndex,
-      resumedStepName: nextStepName,
-      alreadyCommittedSteps: committedStepNames,
-      remainingStepsToExecute: remainingSteps,
-      reconciledState,
-      avoidedDuplicateStepsCount: committedStepNames.length,
-      message: `Successfully recovered state from Checkpoint #${checkpoints.length} (${lastCheckpoint?.stepName || 'INITIAL'}). Steps [${committedStepNames.join(', ')}] are verified and will NOT be repeated.`
-    };
   }
 }
