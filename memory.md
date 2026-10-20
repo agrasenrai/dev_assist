@@ -174,7 +174,38 @@ Untracked `install.sh` and `install.sh~` predate these fixes and were not modifi
   - **Automated Verification Suite**: Added `npm run test:epic` (`scripts/test-epic-oauth.ts`), passing all 5 test scenarios (JWT generation, live token exchange, cache hit, authorized read, explicit error surfacing).
   - **Security Invariants Preserved**: Private keys and passphrases remain strictly server-side and are completely excluded from source control (`.gitignore`).
 - **Next Pending Milestone (Step 3 Implementation)**:
-  - Step 3 (Epic Reads): Implement normalized clinical mappings for Patient, Encounter, Condition (diagnosis/problem list), AllergyIntolerance, MedicationRequest, and DocumentReference (Handoff notes) into ShiftWeave, keeping local assignments, custody, and SQLite edge-cache resilience intact.
+  - Step 3 (Epic Reads): Completed on 21 October 2026 (see below).
+
+### Epic Backend Integration Update — Step 3 (Epic Reads) COMPLETED (21 October 2026)
+
+- **Step 3 Implementation Completed & Verified Live**:
+  - Built `EpicMappingService` (`src/providers/epic-mapping.service.ts`):
+    - Normalized mappings for FHIR R4 Patient, Encounter, Condition (diagnoses / problem list), AllergyIntolerance, MedicationRequest, and DocumentReference.
+    - Resolves room/bed from the active Encounter's `location[].location.display` (e.g. `EMC Family Medicine`, `EMH Main Operating Room`) with fallback to explicit missing state (`'Not Documented in FHIR'`).
+    - Retains source IDs, timestamps (`authoredOn`, `recordedDate`), dosage units (`doseQuantity.unit`), and clinical status.
+    - Implemented `resolveDocumentContent` supporting both inline base64 data and linked `/Binary/{id}` references.
+    - Implemented `getPatientClinicalContext` aggregating core resources in parallel with per-resource isolation.
+  - Updated `LiveFHIRProvider` (`src/providers/fhir-api-provider.ts`):
+    - Replaced deliberate configuration errors with live sandbox implementations for `ping()`, `getPatientsByUnit()`, `getTasksForNurse()`, `getTaskDetails()`, and `getPatientClinicalContext()`.
+    - Protected write-back safety boundary: `updateTaskStatus()` explicitly rejects remote writes with an informative audit log and error, keeping nursing custody and task status changes durably committed in ShiftWeave local edge cache.
+  - **Automated Verification Suite (`npm run test:epic-reads`)**:
+    - Ran all 8 test scenarios against live Epic sandbox:
+      1. Ping to CapabilityStatement metadata (HTTP 200).
+      2. Unified clinical context fetch for Camila Lopez (`erXuFYUfucBZaryVksYEcMg3`): 10 encounters, 1 condition (PCOS `euDDjG6i1-OkhZii5APxOiw3`), 1 medication order (drospirenone-ethinyl estradiol / YAZ 3-0.02 MG tablet), 1 document reference.
+      3. Patient roster resolution via `getPatientsByUnit` (Camila Lopez, Derrick Lin, Desiree Powell).
+      4. Nursing tasks derived from live medication orders (`sourceSystem: 'EPIC_FHIR_R4'`).
+      5. Single task detail resolution with linked patient demographics.
+      6. Document inline base64 content decoding.
+      7. Task write-back safety guardrail enforcement.
+      8. Explicit error surfacing on non-existent patient (Epic OperationOutcome 404 propagated with zero silent fallback).
+  - **Regression Verification**:
+    - `npm run typecheck`: Passed with 0 errors (strict `exactOptionalPropertyTypes: true` satisfied).
+    - `npm test`: **All 73 isolated database checks passed**.
+    - `npm run test:epic`: All 5 Step 2 OAuth checks passed.
+    - `npm run test:epic-reads`: All 8 Step 3 reads checks passed.
+- **Next Milestone (Step 4 of Roadmap / AWS Bedrock Integration)**:
+  - Step 4 (Handoff integration): Combine imported Epic clinical context with local nursing assignments, conflict detection, and custody state, keeping field authority clear and external IDs namespaced.
+  - Mini challenge: Connect AWS Bedrock Converse API adapter (`@aws-sdk/client-bedrock-runtime`).
 
 
 
