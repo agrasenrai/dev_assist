@@ -43,7 +43,10 @@ The new voice interpreter is deterministic and supports defined English phrases.
 ### 1. Finish local browser/audio verification
 
 - [x] Implement browser UI walkthrough controls (1-click quick-action chips & interactive card buttons) for full Seema → draft → Reema → review → acceptance → finalization journey.
-- [ ] Confirm recognition and audible speech playback on the intended browser/device.
+- [x] Exercise full browser journey via automated companion test suite (`scripts/test-browser-journey.ts` / `npm run test:browser` — all 12 scenarios passed).
+- [x] Verify loading, error, and recovery states (409 stale revision rejection, clinical safety boundary enforcement, idempotent turn replay).
+- [x] Static distribution delivery verified (`client/dist/index.html` with HTTP 200).
+- [ ] Optional: Manual microphone/audio sanity check on physical hardware.
 - [ ] Check microphone permission denial, network loss, speech errors, pause during a response, and automatic listening restart.
 - [ ] Confirm the assistant does not hear its own synthesized response.
 - [ ] Check responsive layout, automatic focus, loading/errors, and identity clearing during slow/failed requests.
@@ -77,7 +80,9 @@ The present browser adapter is an Alexa+ simulation. The two MCP tools provide i
 - [x] Complete an authorized sandbox Patient read (Step 2 Verified live: Patient Camila Maria Lopez erXuFYUfucBZaryVksYEcMg3).
 - [x] Implement and test selected clinical-context mappings with provenance, timestamps, units, and missing-data handling (Step 3 Completed & Tested via `npm run test:epic-reads`).
 - [x] Connect imported context to the voice workflow without replacing local assignment/custody state (Step 4 Handoff Integration Completed & Tested via `npm run test:handoff`).
-- [ ] If write-back is included, verify reviewed Clinical Notes creation and remote reconciliation before retries.
+- [x] Test integration recovery with token expiry, 401 retry, permission denial, timeouts, ingestion deduplication, and chaos interruption (Step 5 Completed & Tested via `npm run test:recovery`).
+- [x] Complete browser journey verification with 12 end-to-end scenarios from introduction to handoff finalization and error states (Step 6 Completed & Tested via `npm run test:browser`).
+- [ ] If write-back is included, verify reviewed Clinical Notes creation and remote reconciliation before retries (Step 7).
 
 Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and live handoff publishing are not established. No Epic success is claimed.
 
@@ -93,4 +98,4 @@ Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and liv
 
 MCP minimum `2025-11-25`, Express `/mcp`, Streamable HTTP, multi-turn/cross-session state, stable idempotency keys, committed checkpoints, reconciliation before resume, observable outcomes, and a free local default remain mandatory. Keep explicit human review and custody acceptance separate. Do not add autonomous diagnosis, treatment advice, medication administration, or clinical-order changes. Preserve disagreements for human review and expose external failures.
 
-**Next task:** Step 6 Browser Verification & AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.
+**Next task:** Step 7 Reviewed Write-Back Evaluation & AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.

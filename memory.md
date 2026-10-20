@@ -273,7 +273,47 @@ Untracked `install.sh` and `install.sh~` predate these fixes and were not modifi
     - `npm run test:handoff`: All 9 Step 4 integration checks passed.
     - `npm run test:recovery`: All 7 Step 5 recovery checks passed.
 - **Next Milestone (Step 6 of Roadmap / AWS Bedrock Integration)**:
-  - Step 6: Browser verification (exercise chat/voice, draft review, discrepancy resolution, explicit custody acceptance, finalization, refresh, and resume in browser).
+  - Step 6 (Browser Verification): Completed on 21 October 2026 (see below).
+
+### Epic Backend & Browser Journey Update — Step 6 (Browser Verification) COMPLETED (21 October 2026)
+
+- **Step 6 Implementation Completed & Verified Live**:
+  - **Browser Journey & Voice Test Automation (`scripts/test-browser-journey.ts`)**:
+    - Built comprehensive end-to-end integration test exercising the complete Seema-to-Reema nurse workflow via the Express API and Streamable HTTP MCP transport:
+      1. *Frontend static distribution serving*: Verified `GET /` serves `index.html` from `client/dist` with HTTP 200.
+      2. *Initial display state*: Verified `GET /api/voice/:sessionId` returns clean initial prompt greeting without a prior nurse context.
+      3. *Seema Patel introduction*: Spoken turn `"Hi, I am Seema"` successfully resolved nurse identity (Seema Patel, RN), retrieved 2 assigned tasks, 1 unfinished, and 1 unresolved discrepancy.
+      4. *Room task explanation*: Spoken turn `"Explain room 305"` retrieved Elena Rostova's IV Vancomycin 1g Infusion task details with status `IN_PROGRESS` and priority `STAT`.
+      5. *Discrepancy review*: Spoken turn `"Review discrepancies"` detailed Elena Rostova's Room 305 EHR vs Shift Notes discrepancy.
+      6. *Staging and confirming discrepancy resolution*: Spoken turn `"Resolve discrepancy in room 305 in progress because verified with pharmacy"` staged pending confirmation; confirmed via `"Yes confirm"`, committing the resolution note and local status without touching Epic EHR.
+      7. *Handoff preparation with custody invariance*: Spoken turn `"Prepare my handoff for Reema"` drafted handoff for incoming nurse Reema; verified that custody invariant was strictly maintained (Seema remains assigned nurse).
+      8. *Identity switch to incoming nurse*: Spoken turn `"Hi, I am Reema"` switched active nurse context to Reema Roy, RN, clearing previous turn history and displaying 1 incoming handoff candidate.
+      9. *Explicit two-party custody acceptance*: Spoken turn `"Accept all handoff tasks"` staged confirmation; confirmed via `"Yes confirm"`, transitioning previous assignments to `TRANSFERRED` and incoming assignments to `ACTIVE` in SQLite.
+      10. *Local handoff finalization*: Spoken turn `"Finalize handoff"` staged confirmation; confirmed via `"Yes confirm"`, finalizing handoff with human sign-off timestamp and `externalSync: 'NOT_REQUESTED'`.
+      11. *Session termination & security clearing*: Spoken turn `"End my session"` cleared nurse identity, purged sensitive clinical display, and reset session state.
+      12. *Browser error and recovery states*: Verified HTTP 409 Conflict rejection on stale revision, refusal of autonomous clinical diagnosis/prescription requests, and idempotent exact-response replay on turn retry.
+  - **Runtime & Resilience Fixes**:
+    - Fixed `src/server.ts` Express error middleware: Added `if (res.headersSent) return _next(error);` to guard against double-send header exceptions during socket teardown or client cancellations.
+    - Hardened `src/agent/mcp-client-bridge.ts`: Wrapped session close `DELETE /mcp` fetch call in a try/catch to gracefully handle `ECONNRESET` during rapid test server shutdowns.
+    - Fixed `src/services/handoff.service.ts` custody transfer query: Ensured all active assignments for outgoing nurse/tasks are updated to `TRANSFERRED` upon batch custody acceptance.
+    - Verified client build: `npm run build:client` built cleanly in 9.51s with Vite + TypeScript (`client/dist`).
+  - **Documented Limitations**:
+    - The voice interpreter is a deterministic clinical workflow parser supporting defined English phrases, not a generalized freeform conversational NLP engine or multilingual parser.
+    - Clinical safety boundaries are absolute: Medication administrations, diagnostic interpretations, and EHR order adjustments are strictly rejected.
+    - Name selection (`"I am Seema"`) is local demonstration context, not production multi-factor nurse authentication.
+    - External EHR write-back is blocked in the external sandbox; custody and finalization states remain within the local edge cache.
+  - **Regression Verification**:
+    - `npm run typecheck`: Passed with 0 errors.
+    - `npm test`: **All 73 isolated database checks passed**.
+    - `npm run test:epic`: All 5 Step 2 OAuth checks passed.
+    - `npm run test:epic-reads`: All 8 Step 3 reads checks passed.
+    - `npm run test:handoff`: All 9 Step 4 integration checks passed.
+    - `npm run test:recovery`: All 7 Step 5 recovery checks passed.
+    - `npm run test:browser`: All 12 Step 6 browser journey checks passed.
+- **Next Milestone (Step 7: Reviewed Write-Back Evaluation & AWS Bedrock Adapter)**:
+  - Step 7: Reviewed write-back evaluation against target environment's payload and permissions.
+  - Step 8: Submission packaging (friction log, demo video, final documentation).
+
   - AWS Bedrock Converse API Adapter: Pluggable `@aws-sdk/client-bedrock-runtime` for hackathon mini challenge.
 
 

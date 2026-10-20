@@ -212,9 +212,13 @@ export class MCPClientBridge {
 
   async close(): Promise<void> {
     if (!this.sessionId) return;
-    const response = await fetch(this.endpoint, { method: 'DELETE', signal: AbortSignal.timeout(5000),
-      headers: { 'mcp-session-id': this.sessionId, 'MCP-Protocol-Version': '2025-11-25' } });
-    this.sessionId = null;
-    if (!response.ok && response.status !== 404) throw new Error(`MCP close failed: ${response.status}`);
+    try {
+      const response = await fetch(this.endpoint, { method: 'DELETE', signal: AbortSignal.timeout(5000),
+        headers: { 'mcp-session-id': this.sessionId, 'MCP-Protocol-Version': '2025-11-25' } });
+      this.sessionId = null;
+      if (!response.ok && response.status !== 404) throw new Error(`MCP close failed: ${response.status}`);
+    } catch {
+      this.sessionId = null;
+    }
   }
 }

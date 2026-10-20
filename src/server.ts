@@ -696,6 +696,7 @@ app.post('/api/chaos/simulate', async (req, res) => {
 });
 
 app.use((error: unknown, req: Request, res: Response, _next: express.NextFunction) => {
+  if (res.headersSent) return _next(error);
   const message = error instanceof Error ? error.message : String(error);
   AuditService.log({ actorType: 'SYSTEM', actorId: 'http', action: 'HTTP:ERROR', targetResource: req.path,
     outcome: 'FAILURE', details: { message } });

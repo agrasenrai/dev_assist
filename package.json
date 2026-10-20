@@ -17,7 +17,8 @@
     "test:epic": "tsx scripts/test-epic-oauth.ts",
     "test:epic-reads": "tsx scripts/test-epic-reads.ts",
     "test:handoff": "tsx scripts/test-handoff-integration.ts",
-    "test:recovery": "tsx scripts/test-integration-recovery.ts"
+    "test:recovery": "tsx scripts/test-integration-recovery.ts",
+    "test:browser": "tsx scripts/test-browser-journey.ts"
   },
   "repository": {
     "type": "git",

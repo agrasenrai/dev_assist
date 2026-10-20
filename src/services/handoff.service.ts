@@ -108,7 +108,7 @@ export class HandoffService {
         const source = db.prepare(`SELECT id FROM task_assignments WHERE task_id = ? AND nurse_id = ? AND shift_id = ?
           AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`).get(args.task_id, handoff.outgoing_nurse_id, handoff.shift_id) as { id: string } | undefined;
         if (!source) throw new Error('Task custody has changed; refresh the handoff');
-        db.prepare("UPDATE task_assignments SET transfer_status = 'TRANSFERRED' WHERE id = ?").run(source.id);
+        db.prepare("UPDATE task_assignments SET transfer_status = 'TRANSFERRED' WHERE task_id = ? AND nurse_id = ? AND shift_id = ? AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')").run(args.task_id, handoff.outgoing_nurse_id, handoff.shift_id);
         db.prepare(`INSERT INTO task_assignments (id, task_id, nurse_id, shift_id, assigned_by)
           VALUES (?, ?, ?, ?, ?)`).run(randomUUID(), args.task_id, args.nurse_id, handoff.shift_id, args.nurse_id);
         db.prepare("UPDATE handoffs SET status = 'UNDER_REVIEW' WHERE id = ?").run(args.handoff_id);

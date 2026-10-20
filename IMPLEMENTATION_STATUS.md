@@ -56,5 +56,38 @@ See `incomingapikey.md` for the corrected API-selection guidance and `AGENTS.md`
   - Obtained Non-Production Client ID: `ccc8c11f-4af0-4caf-b981-848012aab1a2`.
   - Application settings: Application Audience: Backend Systems (Backend), Use Case: General, SMART on FHIR Version: R4, SMART Scope Version: SMART v2 configured, FHIR ID Generation Scheme: Use Unconstrained FHIR IDs.
   - Private key secured locally at `./keys/private_key.pem`.
-  - Live data retrieval, token exchange, and write-back remain pending implementation in Steps 2 & 3.
+  - **Step 2: Backend OAuth & Authorized Sandbox Read (Completed 21 October 2026)**:
+  - RFC 7523 RS384 client assertion generation with in-memory caching and 60-second expiration buffer.
+  - Live token exchange verified against Epic OAuth endpoint (`https://fhir.epic.com/interconnect-fhir-oauth/oauth2/token`).
+  - First authorized sandbox read verified: Camila Maria Lopez (`erXuFYUfucBZaryVksYEcMg3`).
+  - Verified via `npm run test:epic` (5/5 checks passed).
+- **Step 3: Epic Clinical Reads & Canonical Mapping (Completed 21 October 2026)**:
+  - `EpicMappingService` maps Patient, Encounter locations, Conditions (diagnoses), Allergies, MedicationRequests, and DocumentReferences.
+  - Resolves room/bed from active Encounter location; inline and Binary document content decoded.
+  - Protected bedside write-back boundary with audit logging.
+  - Verified via `npm run test:epic-reads` (8/8 checks passed).
+- **Step 4: Handoff Integration & Field Authority (Completed 21 October 2026)**:
+  - `FieldAuthorityService` establishes strict single-source-of-truth boundaries between EHR data and local ShiftWeave custody/discrepancies.
+  - Namespaced external identifiers (`epic:Patient:...`, `epic:MedicationRequest:...`).
+  - Synthesizes grounded SBAR handoff narrative integrating live Epic context while strictly preserving custody invariants and two-party human review.
+  - Verified via `npm run test:handoff` (9/9 checks passed).
+- **Step 5: Integration Recovery & Chaos Resilience (Completed 21 October 2026)**:
+  - Automatic token cache refresh on expiry; transparent HTTP 401 retry against live Epic sandbox.
+  - Surfacing of permission denial, timeouts with `AbortSignal`, and idempotent ingestion deduplication.
+  - Chaos interruption recovery: reconciles committed checkpoints and updated source records before resuming.
+  - Verified via `npm run test:recovery` (7/7 checks passed).
+- **Step 6: Browser & Voice Journey Verification (Completed 21 October 2026)**:
+  - Full Seema-to-Reema clinical workflow exercised via `scripts/test-browser-journey.ts`:
+    * Frontend static distribution serving (`index.html`).
+    * Initial display state retrieval.
+    * Nurse introduction (`"Hi, I am Seema"`).
+    * Task and room inspection (`"Explain room 305"`).
+    * Discrepancy review and staged confirmation (`"Resolve discrepancy in room 305..."` -> `"Yes confirm"`).
+    * Handoff preparation with custody invariance (`"Prepare my handoff for Reema"`).
+    * Identity switch to incoming nurse (`"Hi, I am Reema"`).
+    * Explicit spoken custody acceptance (`"Accept all handoff tasks"` -> `"Yes confirm"`).
+    * Finalization sign-off (`"Finalize handoff"` -> `"Yes confirm"`).
+    * Session termination (`"End my session"`).
+    * Error states: HTTP 409 stale revision rejection, clinical boundary refusal, and idempotent turn replay.
+  - Verified via `npm run test:browser` (12/12 checks passed).
 
