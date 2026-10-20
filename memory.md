@@ -204,8 +204,46 @@ Untracked `install.sh` and `install.sh~` predate these fixes and were not modifi
     - `npm run test:epic`: All 5 Step 2 OAuth checks passed.
     - `npm run test:epic-reads`: All 8 Step 3 reads checks passed.
 - **Next Milestone (Step 4 of Roadmap / AWS Bedrock Integration)**:
-  - Step 4 (Handoff integration): Combine imported Epic clinical context with local nursing assignments, conflict detection, and custody state, keeping field authority clear and external IDs namespaced.
-  - Mini challenge: Connect AWS Bedrock Converse API adapter (`@aws-sdk/client-bedrock-runtime`).
+  - Step 4 (Handoff integration): Completed on 21 October 2026 (see below).
+
+### Epic Backend Integration Update — Step 4 (Handoff Integration & Field Authority) COMPLETED (21 October 2026)
+
+- **Step 4 Implementation Completed & Verified Live**:
+  - Built `FieldAuthorityService` (`src/services/field-authority.service.ts`):
+    - Defined `FIELD_AUTHORITY_MATRIX` separating single-source-of-truth boundaries:
+      * **EHR Authority (`EPIC_FHIR_R4`)**: Patient demographics, primary diagnoses (problem list), documented allergies, and physician medication orders.
+      * **Local ShiftWeave Authority (`LOCAL_SHIFTWEAVE`)**: Bedside nursing custody, shift assignments, execution status (`PENDING`, `IN_PROGRESS`, `COMPLETED`), escalation notes, and discrepancy resolutions.
+    - Implemented external identifier namespacing: `namespaceId('epic', resourceType, id)` generating clean, unambiguous IDs (e.g. `epic:Patient:erXuFYUfucBZaryVksYEcMg3`, `epic:MedicationRequest:ePDJ.zsf3Jfg2.MKkAMgW9EcIbsaiB.y-OTrPS5v2h8Q3`) preventing collision with local synthetic keys.
+    - Implemented bidirectional ID parsing (`parseNamespacedId`) and external ID validation (`isExternalId`).
+  - Enhanced `HandoffService` (`src/services/handoff.service.ts`):
+    - Grounded SBAR handoff narrative (`buildIntegratedHandoffNarrative`): Integrates live Epic clinical context (Camila Lopez / `erXuFYUfucBZaryVksYEcMg3`) alongside local bedside assignments.
+    - SBAR structure preserves: `## Situation`, `## Clinical Context (Epic on FHIR R4)` with namespaced IDs, `## Recorded Bedside Workflow State (ShiftWeave Local Authority)`, `## Assessment & Discrepancies`, and `## Workflow Follow-up & Custody`.
+    - Preserved custody invariants: Drafting proposes candidate tasks only; custody remains strictly with outgoing nurse until explicit incoming nurse acceptance.
+    - Two-party human review gate: Unresolved discrepancies block acceptance and finalization until verified by a human nurse.
+    - Local sign-off finalization: Finalizing handoffs records `acknowledged_at` locally with `externalSync: 'NOT_REQUESTED'`.
+  - Updated MCP tools in `src/server.ts`:
+    - `get_handoff_context`: Exposes `field_authority` matrix to agent orchestrators.
+    - `create_handoff_draft`: Supports optional `epic_clinical_context` parameter.
+  - **Automated Verification Suite (`npm run test:handoff`)**:
+    - Ran all 9 test scenarios in `scripts/test-handoff-integration.ts`:
+      1. Field Authority Matrix boundary checks (8 boundaries verified).
+      2. Namespacing and bidirectional parsing.
+      3. Grounded handoff draft synthesis with live Epic clinical context (Camila Lopez).
+      4. Grounded SBAR narrative and snapshot inspection.
+      5. Custody invariance on draft creation.
+      6. Discrepancy gate enforcement (unresolved conflict blocks acceptance).
+      7. Explicit custody acceptance (previous assignment `TRANSFERRED`, new assignment `ACTIVE`).
+      8. Local handoff finalization.
+      9. Retention of immutable local history (`task_events`, audit records).
+  - **Regression Verification**:
+    - `npm run typecheck`: Passed with 0 errors.
+    - `npm test`: **All 73 isolated database checks passed**.
+    - `npm run test:epic`: All 5 Step 2 OAuth checks passed.
+    - `npm run test:epic-reads`: All 8 Step 3 reads checks passed.
+    - `npm run test:handoff`: All 9 Step 4 integration checks passed.
+- **Next Milestone (Step 5: Integration Recovery / AWS Bedrock Adapter)**:
+  - Step 5 (Integration Recovery): Test expired tokens, permission denial, timeouts, changed source records, and interruptions during import.
+  - AWS Bedrock Converse API Adapter: Pluggable `@aws-sdk/client-bedrock-runtime` for hackathon mini challenge.
 
 
 

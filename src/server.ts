@@ -229,6 +229,7 @@ export function createShiftWeaveServer(): McpServer {
                 pending_count: pendingTasks.length,
                 conflicts_count: conflictedTasks.length
               },
+              field_authority: (await import('./services/field-authority.service.js')).FIELD_AUTHORITY_MATRIX,
               pending_tasks: pendingTasks,
               conflicted_tasks: conflictedTasks,
               active_conflicts: unresolvedConflicts
@@ -249,10 +250,11 @@ export function createShiftWeaveServer(): McpServer {
       shift_id: z.string().describe("Shift identifier"),
       summary_markdown: z.string().describe("Grounded clinical handoff narrative"),
       carried_forward_task_ids: z.array(z.string()).describe("List of task IDs transferred to incoming nurse"),
-      idempotency_key: z.string().describe("UUIDv4 idempotency key preventing duplicate draft creation")
+      idempotency_key: z.string().describe("UUIDv4 idempotency key preventing duplicate draft creation"),
+      epic_clinical_context: z.array(z.any()).optional().describe("Imported Epic FHIR R4 clinical context to ground SBAR narrative")
     },
     async (args) => {
-      const result = HandoffService.createDraft(args);
+      const result = HandoffService.createDraft(args as any);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     }
   );

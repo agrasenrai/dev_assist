@@ -6,6 +6,7 @@ export type TransferStatus = 'ACTIVE' | 'CARRIED_FORWARD' | 'TRANSFERRED' | 'UNA
 
 export interface Patient {
   id: string;
+  namespacedId?: string;
   mrn: string;
   fullName: string;
   roomNumber: string;
@@ -50,6 +51,7 @@ export interface Task {
   scheduledTime: string;
   completedTime?: string | null;
   sourceSystem: string;
+  namespacedId?: string;
   transferStatus?: TransferStatus;
   assignedNurseId?: string;
   createdAt?: string;

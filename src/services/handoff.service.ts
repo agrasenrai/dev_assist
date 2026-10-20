@@ -1,10 +1,13 @@
 import { db } from '../db/connection.js';
 import { randomUUID } from 'crypto';
 import { MutationService } from './mutation.service.js';
+import type { EpicClinicalContext } from '../providers/epic-mapping.service.js';
+import { FieldAuthorityService, FIELD_AUTHORITY_MATRIX } from './field-authority.service.js';
 
 export interface HandoffDraftInput {
   outgoing_nurse_id: string; incoming_nurse_id: string; shift_id: string;
   summary_markdown: string; carried_forward_task_ids: string[]; idempotency_key: string;
+  epic_clinical_context?: EpicClinicalContext[] | undefined;
 }
 export class HandoffService {
   static finalize(handoffId: string, nurseId: string, key: string, humanConfirmed: boolean) {
@@ -47,14 +50,42 @@ export class HandoffService {
         const conflicts = db.prepare("SELECT task_id FROM conflicts WHERE status = 'UNRESOLVED'").all() as Array<{ task_id: string }>;
         const unresolved = conflicts.filter(c => ids.includes(c.task_id)).length;
         const id = `handoff_${randomUUID()}`;
-        const summary = `## Situation\n${tasks.length} assigned workflow tasks.\n\n## Background\nSource: local recorded task/assignment data.\n\n## Recorded workflow state\n` +
-          tasks.map(task => `- ${task.patientName} (${task.roomNumber}): ${task.title} — ${task.status}`).join('\n') +
-          `\n\n## Workflow follow-up\n${unresolved} unresolved documentation discrepancies. Human review and explicit custody acceptance required. No clinical recommendations generated.`;
+        const outgoingNurse = db.prepare('SELECT full_name, department FROM nurses WHERE id = ?').get(args.outgoing_nurse_id) as { full_name: string; department: string } | undefined;
+        const incomingNurse = db.prepare('SELECT full_name FROM nurses WHERE id = ?').get(args.incoming_nurse_id) as { full_name: string } | undefined;
+
+        let summary = args.summary_markdown;
+        if (!summary || (args.epic_clinical_context && args.epic_clinical_context.length > 0)) {
+          if (args.epic_clinical_context && args.epic_clinical_context.length > 0) {
+            summary = FieldAuthorityService.buildIntegratedHandoffNarrative({
+              outgoingNurseName: outgoingNurse?.full_name || args.outgoing_nurse_id,
+              incomingNurseName: incomingNurse?.full_name || args.incoming_nurse_id,
+              shiftUnit: outgoingNurse?.department || 'Clinical Unit',
+              tasks: tasks.map(t => ({ id: t.id, title: t.title, status: t.status, priority: 'ROUTINE', patientName: t.patientName, roomNumber: t.roomNumber })),
+              carriedForwardIds: args.carried_forward_task_ids,
+              unresolvedConflictsCount: unresolved,
+              epicContext: args.epic_clinical_context,
+            });
+          } else {
+            summary = `## Situation\n${tasks.length} assigned workflow tasks.\n\n## Background\nSource: local recorded task/assignment data.\n\n## Recorded workflow state\n` +
+              tasks.map(task => `- ${task.patientName} (${task.roomNumber}): ${task.title} — ${task.status}`).join('\n') +
+              `\n\n## Workflow follow-up\n${unresolved} unresolved documentation discrepancies. Human review and explicit custody acceptance required. No clinical recommendations generated.`;
+          }
+        }
+
+        const snapshotData = {
+          tasks,
+          carriedForwardIds: args.carried_forward_task_ids,
+          ...(args.epic_clinical_context && args.epic_clinical_context.length > 0 ? {
+            epicClinicalContext: args.epic_clinical_context,
+            fieldAuthority: FIELD_AUTHORITY_MATRIX,
+          } : {})
+        };
+
         // Drafting proposes candidates only. Human acceptance performs the actual custody transfer.
         db.prepare(`INSERT INTO handoffs (id, shift_id, outgoing_nurse_id, incoming_nurse_id,
           summary_markdown, data_snapshot, unresolved_conflicts_count) VALUES (?, ?, ?, ?, ?, ?, ?)`)
           .run(id, args.shift_id, args.outgoing_nurse_id, args.incoming_nurse_id, summary,
-            JSON.stringify({ tasks, carriedForwardIds: args.carried_forward_task_ids }), unresolved);
+            JSON.stringify(snapshotData), unresolved);
         return { handoff_id: id, status: 'DRAFT', carried_forward_count: args.carried_forward_task_ids.length,
           unresolved_conflicts_count: unresolved, requires_review: true, external_sync: 'NOT_REQUESTED' };
       });

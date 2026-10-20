@@ -76,7 +76,7 @@ The present browser adapter is an Alexa+ simulation. The two MCP tools provide i
 - [x] Implement backend JWT signing, token exchange, expiry handling, and explicit failures (Step 2 Completed & Tested via `npm run test:epic`).
 - [x] Complete an authorized sandbox Patient read (Step 2 Verified live: Patient Camila Maria Lopez erXuFYUfucBZaryVksYEcMg3).
 - [x] Implement and test selected clinical-context mappings with provenance, timestamps, units, and missing-data handling (Step 3 Completed & Tested via `npm run test:epic-reads`).
-- [ ] Connect imported context to the voice workflow without replacing local assignment/custody state.
+- [x] Connect imported context to the voice workflow without replacing local assignment/custody state (Step 4 Handoff Integration Completed & Tested via `npm run test:handoff`).
 - [ ] If write-back is included, verify reviewed Clinical Notes creation and remote reconciliation before retries.
 
 Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and live handoff publishing are not established. No Epic success is claimed.
@@ -93,4 +93,4 @@ Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and liv
 
 MCP minimum `2025-11-25`, Express `/mcp`, Streamable HTTP, multi-turn/cross-session state, stable idempotency keys, committed checkpoints, reconciliation before resume, observable outcomes, and a free local default remain mandatory. Keep explicit human review and custody acceptance separate. Do not add autonomous diagnosis, treatment advice, medication administration, or clinical-order changes. Preserve disagreements for human review and expose external failures.
 
-**Next task:** Step 4 Handoff integration (combine imported Epic clinical context with local nursing assignments, conflict detection, and custody state) / Connect AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.
+**Next task:** Step 5 Integration Recovery (test expired tokens, permission denial, timeouts, changed source records, and interruptions during import) / Connect AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.

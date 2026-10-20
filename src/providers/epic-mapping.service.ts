@@ -1,5 +1,6 @@
 import { EpicOAuthService } from './epic-oauth.service.js';
 import type { Patient, Task, TaskPriority, TaskStatus } from './types.js';
+import { FieldAuthorityService } from '../services/field-authority.service.js';
 
 export interface EpicClinicalContext {
   patient: Patient;
@@ -140,6 +141,7 @@ export class EpicMappingService {
 
     return {
       id,
+      namespacedId: FieldAuthorityService.namespaceId('epic', 'Patient', id),
       mrn,
       fullName,
       roomNumber,
@@ -189,6 +191,7 @@ export class EpicMappingService {
 
     const task: Task = {
       id,
+      namespacedId: FieldAuthorityService.namespaceId('epic', 'MedicationRequest', id),
       patientId,
       ...(patientName ? { patientName } : {}),
       ...(roomNumber ? { roomNumber } : {}),

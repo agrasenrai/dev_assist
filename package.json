@@ -15,7 +15,8 @@
     "test": "tsx scripts/run-tests.ts all",
     "typecheck": "tsc --noEmit",
     "test:epic": "tsx scripts/test-epic-oauth.ts",
-    "test:epic-reads": "tsx scripts/test-epic-reads.ts"
+    "test:epic-reads": "tsx scripts/test-epic-reads.ts",
+    "test:handoff": "tsx scripts/test-handoff-integration.ts"
   },
   "repository": {
     "type": "git",
