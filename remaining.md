@@ -93,4 +93,4 @@ Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and liv
 
 MCP minimum `2025-11-25`, Express `/mcp`, Streamable HTTP, multi-turn/cross-session state, stable idempotency keys, committed checkpoints, reconciliation before resume, observable outcomes, and a free local default remain mandatory. Keep explicit human review and custody acceptance separate. Do not add autonomous diagnosis, treatment advice, medication administration, or clinical-order changes. Preserve disagreements for human review and expose external failures.
 
-**Next task:** Step 5 Integration Recovery (test expired tokens, permission denial, timeouts, changed source records, and interruptions during import) / Connect AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.
+**Next task:** Step 6 Browser Verification & AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.

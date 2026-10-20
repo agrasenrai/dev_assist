@@ -242,7 +242,38 @@ Untracked `install.sh` and `install.sh~` predate these fixes and were not modifi
     - `npm run test:epic-reads`: All 8 Step 3 reads checks passed.
     - `npm run test:handoff`: All 9 Step 4 integration checks passed.
 - **Next Milestone (Step 5: Integration Recovery / AWS Bedrock Adapter)**:
-  - Step 5 (Integration Recovery): Test expired tokens, permission denial, timeouts, changed source records, and interruptions during import.
+  - Step 5 (Integration Recovery): Completed on 21 October 2026 (see below).
+
+### Epic Backend Integration Update — Step 5 (Integration Recovery) COMPLETED (21 October 2026)
+
+- **Step 5 Implementation Completed & Verified Live**:
+  - **Token Expiry & Recovery**:
+    - Verified in-memory token cache expiry handling: automatically detects expired cached tokens and fetches fresh credentials from Epic OAuth endpoint.
+    - Verified HTTP 401 Unauthorized handling: `authorizedFetch` catches 401 from Epic sandbox, re-authenticates via `getAccessToken(true)`, and transparently retries the request with the fresh token.
+  - **Permission Denial & Scope Boundaries**:
+    - Invalid or unauthorized FHIR queries surface explicit HTTP error statuses and OperationOutcome payloads with zero silent fallback to local/mock data, logging `outcome: 'FAILURE'` to `AuditService`.
+  - **Timeout Handling**:
+    - Verified network timeout behavior via `AbortSignal.timeout(ms)`. Catches timeout/abort errors and surfaces explicit messages without process hangs.
+  - **Deduplication & Interruption Resumption**:
+    - Ingestion pipeline (`importIncomingData`): Idempotent hashing prevents duplicate records across patients, nurses, shifts, and tasks on repeated or interrupted runs.
+    - Stable idempotency keys: Verified exact deduplication for mutations (`HandoffService.createDraft`); reusing keys with identical payload returns the exact saved result from `operation_receipts`.
+    - Key reuse guard: Reusing an idempotency key with a changed payload throws an explicit error (`Idempotency key was already used for a different request`).
+  - **Workflow Interruption Recovery with Source Reconciliation**:
+    - Injected chaos interruption during multi-step agent orchestration.
+    - Verified durable checkpoint commitment before crash.
+    - Simulated external source record updates in SQLite during interruption.
+    - Resuming via fresh orchestrator (`resume_workflow`) detected `sourceChanged: true`, refreshed reads, reconciled against updated source values, and avoided duplicate draft creation.
+  - **Automated Verification Suite (`npm run test:recovery`)**:
+    - Ran all 7 test scenarios in `scripts/test-integration-recovery.ts` covering token expiry, 401 retry, permission denial, timeout, ingestion deduplication, retry key payload guards, and chaos recovery.
+  - **Regression Verification**:
+    - `npm run typecheck`: Passed with 0 errors.
+    - `npm test`: **All 73 isolated database checks passed**.
+    - `npm run test:epic`: All 5 Step 2 OAuth checks passed.
+    - `npm run test:epic-reads`: All 8 Step 3 reads checks passed.
+    - `npm run test:handoff`: All 9 Step 4 integration checks passed.
+    - `npm run test:recovery`: All 7 Step 5 recovery checks passed.
+- **Next Milestone (Step 6 of Roadmap / AWS Bedrock Integration)**:
+  - Step 6: Browser verification (exercise chat/voice, draft review, discrepancy resolution, explicit custody acceptance, finalization, refresh, and resume in browser).
   - AWS Bedrock Converse API Adapter: Pluggable `@aws-sdk/client-bedrock-runtime` for hackathon mini challenge.
 
 

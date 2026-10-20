@@ -56,14 +56,15 @@ async function runHandoffIntegrationVerification() {
   const camilaContext = await EpicMappingService.getPatientClinicalContext(testPatientId);
   console.log(`  Retrieved live context for ${camilaContext.patient.fullName}: ${camilaContext.medicationOrders.length} med order(s), ${camilaContext.conditions.length} condition(s).`);
 
-  // Ensure unfinished candidate task is assigned to outgoing nurse
+  // Ensure unfinished candidate task is assigned to outgoing nurse and baseline state is reset
   const outgoingNurseId = 'nurse_seema_01';
   const incomingNurseId = 'nurse_reema_02';
   const shiftId = 'shift_20261019_night';
   const candidateTaskId = 'task_med_102_03';
 
-  // Mark task as IN_PROGRESS so it qualifies as an unfinished carry-forward candidate
+  db.prepare("UPDATE task_assignments SET nurse_id = ?, transfer_status = 'ACTIVE' WHERE task_id = ?").run(outgoingNurseId, candidateTaskId);
   db.prepare("UPDATE tasks SET status = 'IN_PROGRESS' WHERE id = ?").run(candidateTaskId);
+  db.prepare("UPDATE conflicts SET status = 'UNRESOLVED' WHERE task_id = ?").run(candidateTaskId);
 
   const draftKey = randomUUID();
   const draftResult = HandoffService.createDraft({
