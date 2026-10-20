@@ -253,3 +253,21 @@ flowchart LR
 | **Phase 7** | Chaos Testing & Provider Swap Demo | 1.5 hours| $0.00 | ✅ COMPLETED |
 | **Phase 8** | Friction Log & Submission Packaging | 1.5 hours| $0.00 | 🔄 IN PROGRESS |
 | **Total** | **End-to-End Production Ready Submission** | **~16 hours** | **$0.00** | **On Schedule** |
+
+---
+
+## 3. Epic on FHIR Integration Addendum (October 2026)
+
+### Milestone 1: Epic Backend App Registration & Key Hosting (COMPLETED)
+- **Status**: Completed on 20 October 2026.
+- **Application Configuration Profile**:
+  - **Application Audience**: Backend Systems (Backend)
+  - **Use Case**: General
+  - **SMART on FHIR Version**: R4
+  - **SMART Scope Version**: SMART v2 configured (with fine-grained `.rs` read/search permissions)
+  - **FHIR ID Generation Scheme**: Use Unconstrained FHIR IDs (standard Epic sandbox default)
+  - **Non-Production JWK Set URL**: `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`
+  - **Non-Production Client ID**: `ccc8c11f-4af0-4caf-b981-848012aab1a2`
+  - **Private Key Storage**: Retained locally at `./keys/private_key.pem`
+- **Next Milestone**: Milestone 2: Backend OAuth Token Exchange (JWT signing via RS384, client assertion exchange against Epic OAuth token endpoint).
+

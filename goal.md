@@ -229,3 +229,20 @@ Production needs a hospital. The open.epic subscription agreement is signed by t
 epic
 
 Epic’s APIs are also patient-centric (community reports say you resolve a patient first, then pull their data), so “everything for this nurse” would always be a fan-out you build.
+
+---
+
+## 8. Milestone Record — Step 1: Epic Backend Registration & Public JWKS (Completed 20 October 2026)
+
+- **Status**: **COMPLETED** (Step 1 on Roadmap).
+- **Application Audience**: Backend Systems (Backend)
+- **Use Case**: General
+- **SMART on FHIR Version**: R4
+- **SMART Scope Version**: SMART v2 (modern HL7 standard with fine-grained `.rs` capability)
+- **FHIR ID Generation Scheme**: Use Unconstrained FHIR IDs (standard Epic sandbox default, full fidelity with native IDs)
+- **Non-Production JWK Set URL**: `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`
+- **Public Key Specification**: RSA 2048-bit, `alg: "RS384"`, `use: "sig"`
+- **Non-Production Client ID**: `ccc8c11f-4af0-4caf-b981-848012aab1a2`
+- **Private Key Storage**: Retained locally and securely at `./keys/private_key.pem` (PKCS#8 encrypted, excluded from source control)
+- **Next Action**: Step 2 (Backend OAuth JWT signing & access token exchange against `https://fhir.epic.com/interconnect-fhir-oauth/oauth2/token`).
+

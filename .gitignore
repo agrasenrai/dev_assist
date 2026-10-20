@@ -1,5 +1,12 @@
-﻿node_modules/
+node_modules/
 .env
 # SQLite transient WAL sidecars
 data/*.db-wal
 data/*.db-shm
+
+# Private keys, certificates and secrets
+keys/
+*.pem
+*.key
+jwks.json
+
