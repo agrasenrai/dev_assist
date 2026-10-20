@@ -120,3 +120,13 @@ The shared demo database was not used for mutating verification. No live Epic wr
 At this update, the working branch is `feature/api`. The earlier Incoming API guide was pushed as commit `ad7fd85`. The subsequent rules/skill updates and implementation fixes remain local and uncommitted; this memory update is also local.
 
 Untracked `install.sh` and `install.sh~` predate these fixes and were not modified. Keep them out of any fixes commit unless explicitly requested. Recheck Git status before committing or pushing, and do not treat this dated snapshot as current remote state.
+
+### Epic Backend Registration update — 20 October 2026
+
+- Completed Step 1 of the integration roadmap (Epic Backend Application Registration).
+- Configured settings: Application Audience: Backend Systems (Backend), Use Case: General, SMART on FHIR Version: R4, SMART Scope Version: SMART v2 configured, FHIR ID Generation Scheme: Use Unconstrained FHIR IDs.
+- Published and verified live public JWKS endpoint on GitHub Pages: `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`.
+- Non-Production Client ID issued by Epic: `ccc8c11f-4af0-4caf-b981-848012aab1a2`.
+- Private key retained locally at `./keys/private_key.pem` with matching RS384 public key.
+- Next pending integration step is Step 2 (OAuth 2.0 Client Assertion JWT signing & token exchange).
+

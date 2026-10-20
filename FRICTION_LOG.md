@@ -208,7 +208,45 @@ We designed the **ShiftWeave Hybrid Model** (`IEHRProvider`):
 | **Web Routing** | Express 5 `path-to-regexp` v8 wildcard crash (`*`) | Route-agnostic fallback middleware for SPA serving |
 | **AWS Integration** | Schema divergence between MCP and Bedrock Converse API | Runtime schema transformer in `BedrockLLMProvider` |
 | **Clinical EHR** | High cloud latency and restricted public sandbox writes | Hybrid Edge Cache (SQLite WAL) + queued FHIR writes |
+| **Epic JWKS & Scopes** | Zero-login HTTPS hosting requirement & SMART v1 vs v2 scope ambiguity | GitHub Pages static JWKS hosting + SMART v2 `.rs` granular permissions |
+
+---
+
+## Log Item 7: Epic on FHIR Backend Registration, JWKS Hosting, and SMART Scope Selection
+
+### 7.1 The Friction Point
+When transitioning from synthetic local mocks to real Epic on FHIR sandbox integration, registering a machine-to-machine application (Backend Systems OAuth 2.0 with Private Key JWT Assertion - RFC 7523) presented several architectural friction points:
+1. **Public HTTPS Requirement for JWKS Without Authentication:** Epic requires that the public JSON Web Key Set (`jwks.json`) be hosted at a publicly reachable, stable HTTPS URL with zero login or basic auth barriers. For a developer working locally, exposing localhost via transient tunnels (e.g. ngrok) creates unstable, ephemeral endpoints that break Epic's asynchronous key fetching.
+2. **SMART Scope Version Ambiguity (SMART v1 vs SMART v2):** In the Epic Build Apps portal, developers must choose between SMART v1 (broad `system/Resource.read`) and SMART v2 (fine-grained CRUDX `.cruds` / `.rs` scopes). Epic displays a warning that SMART v2 is only supported in Epic versions Nov 2024+, leading to confusion over whether selecting SMART v2 limits data access or breaks in the sandbox.
+3. **FHIR ID Generation Scheme (Constrained vs Unconstrained):** Epic prompts between "Use 64-Character-Limited FHIR IDs for USCDI FHIR Resources" and "Use Unconstrained FHIR IDs." Developers must ensure their database schema handles varying identifier lengths without truncation errors.
+
+### 7.2 Root Cause Analysis
+* **JWKS Hosting:** Epic's OAuth token endpoint (`oauth2/token`) verifies client assertion JWTs by querying the registered `Non-Production JWK Set URL` directly from Epic's cloud infrastructure. If the URL is behind a corporate VPN, auth gate, or temporary localhost tunnel, token exchange fails with `invalid_client`.
+* **SMART v2 Capabilities:** SMART v2 does not restrict data fields; rather, it introduces fine-grained action specifiers (`r` = read, `s` = search, `c` = create, `u` = update, `d` = delete). Epic's developer sandbox (`fhir.epic.com`) runs the latest release and fully supports SMART v2, whereas the warning applies strictly to older on-premise hospital environments.
+* **FHIR IDs:** Official HL7 FHIR specifies `id` as `[A-Za-z0-9\-\.]{1,64}`. However, Epic's sandbox test fixtures frequently use native unconstrained identifiers (e.g. `erXuFYUfucBZPVZEIC5nnzg3`). Enforcing custom truncation logic creates unnecessary friction.
+
+### 7.3 Our Resolution & Configuration
+1. **Decoupled Key Hosting via GitHub Pages:**
+   * Generated an RSA 2048-bit key pair locally (`RS384` algorithm, unique `kid`).
+   * Encrypted and retained `private-key.pem` strictly on the local machine (`./keys/private_key.pem`, added to `.gitignore`).
+   * Published ONLY the public `jwks.json` to a dedicated public GitHub repository deployed via GitHub Pages at:
+     `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`
+   * Provides 100% uptime, zero cost, native HTTPS, and instant public accessibility without exposing the development backend.
+2. **Standard-Compliant Configuration Profile in Epic Portal:**
+   * **Application Audience:** Backend Systems (Backend)
+   * **Use Case:** General
+   * **SMART on FHIR Version:** R4
+   * **SMART Scope Version:** SMART v2 configured (enabling modern `.rs` read+search permissions)
+   * **FHIR ID Generation Scheme:** Use Unconstrained FHIR IDs (seamless compatibility with Epic sandbox test patients)
+   * **Non-Production JWK Set URL:** `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`
+   * **Non-Production Client ID:** `ccc8c11f-4af0-4caf-b981-848012aab1a2`
+   * **Saved State:** Successfully saved under **Save & Ready for Sandbox**
+
+### 7.4 Recommendation for Epic & Hackathon Teams
+* In developer tutorials, explicitly recommend GitHub Pages as the simplest, zero-cost method for hosting static non-production JWKS files for backend system development.
+* Clarify in the Build Apps UI that the SMART v2 Nov 2024 warning does not apply to the developer sandbox, reassuring builders that SMART v2 is fully functional in sandbox testing.
 
 ---
 
 *This friction log reflects authentic, hands-on engineering challenges overcome while delivering ShiftWeave for the Amazon Developer Hackathon (Alexa+ Track).*
+

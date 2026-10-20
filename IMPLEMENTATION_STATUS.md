@@ -46,3 +46,15 @@ Local tests do not verify live AWS/Gemini calls, Epic compatibility, production 
 - Record the submission demo and confirm submission assets. A friction log may earn up to 10%; no award is guaranteed.
 
 See `incomingapikey.md` for the corrected API-selection guidance and `AGENTS.md` for mandatory project constraints.
+
+## Completed Epic integration milestones
+
+- **Step 1: Epic Registration & Public JWKS Publishing (Completed 20 October 2026)**:
+  - Generated RSA-2048 key pair with RS384 algorithm and unique kid.
+  - Public JWKS set verified live at `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`.
+  - Registered Backend Systems application on Epic on FHIR (`fhir.epic.com`).
+  - Obtained Non-Production Client ID: `ccc8c11f-4af0-4caf-b981-848012aab1a2`.
+  - Application settings: Application Audience: Backend Systems (Backend), Use Case: General, SMART on FHIR Version: R4, SMART Scope Version: SMART v2 configured, FHIR ID Generation Scheme: Use Unconstrained FHIR IDs.
+  - Private key secured locally at `./keys/private_key.pem`.
+  - Live data retrieval, token exchange, and write-back remain pending implementation in Steps 2 & 3.
+
