@@ -2,6 +2,20 @@
 
 Updated 20 October 2026.
 
+## Voice workspace update — 20 October 2026
+
+The user requested a voice-operated nurse workflow: introduce the nurse by name, speak grounded answers, and automatically display matching details. The demo has no login page; name selection is demo context, not authentication. The browser still requires an initial microphone permission/start action.
+
+Implemented `VoiceService` with scoped tasks, incoming candidates, discrepancy explanation, named-recipient drafts, spoken review/acceptance/finalization, cancellation, identity clearing, and session end. Voice turns have durable checkpoints, atomic mutation receipts, revision checks, and exact-request retries. Confirmation expires after five minutes or changes to the scoped records.
+
+Added MCP tools `voice_turn` and `get_voice_display` (11 tools total) and the browser companion voice endpoints. The browser uses MCP for voice turns. Cloud-model tool lists exclude these confirmation entry points. The new mounted `VoiceWorkspace` replaces the former interactive dashboard; legacy components remain in the repository.
+
+Added a browser recognition/synthesis hook, display polling, microphone state/errors, text fallback, and persisted uncertain-request retry handling. This is an English deterministic voice demo, not verified general NLP, Hindi/Hinglish support, or an actual Alexa+ integration.
+
+Verification: root typecheck passed; 73 isolated checks passed, including 23 new voice checks. The first frontend build exposed a missing default App export; the export was fixed and a build recheck started. Browser/audio verification and the actual Alexa+/Epic integrations remain outstanding.
+
+See [remaining.md](remaining.md) for the detailed completed-work inventory, current verification results, and ordered next steps. The voice changes are local on `feature/debug` and have not been committed/pushed with the earlier `cf49dea` baseline.
+
 ## Mandatory context
 
 Read `AGENTS.md`, `important.md`, and `.agents/skills/hackathon-guidelines/SKILL.md` for every repository task. The skill's `references/project-context.md` maps architecture, schema, API documents and historical contradictions.

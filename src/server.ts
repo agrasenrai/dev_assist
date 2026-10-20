@@ -16,6 +16,15 @@ import { ConflictService } from "./services/conflict.service.js";
 import { RecoveryService } from "./services/recovery.service.js";
 import { HandoffService } from "./services/handoff.service.js";
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
+import { MCPClientBridge } from "./agent/mcp-client-bridge.js";
+import { VoiceService } from "./services/voice.service.js";
+
+const voiceInput = z.object({
+  session_id: z.string().uuid(),
+  utterance: z.string().trim().min(1).max(2000),
+  expected_revision: z.number().int().nonnegative(),
+  idempotency_key: z.string().uuid()
+});
 
 dotenv.config();
 
@@ -370,6 +379,15 @@ export function createShiftWeaveServer(): McpServer {
     }
   );
 
+  server.tool('voice_turn',
+    'Local synthetic-data voice workflow. Pass the human transcript verbatim, a stable display session UUID, ' +
+    'the latest display revision, and a retry UUID. Returns speech and matching display data. Name selection is not authentication. ' +
+    'Never invent a human confirmation. Read get_voice_display to restore a session.',
+    voiceInput.shape, async args => ({ content: [{ type: 'text', text: JSON.stringify(VoiceService.turn(args)) }] }));
+  server.tool('get_voice_display', 'Read the saved voice session and current nurse-scoped display. No login or live Epic access.',
+    { session_id: z.string().uuid() }, async args => ({
+      content: [{ type: 'text', text: JSON.stringify(VoiceService.read(args.session_id)) }]
+    }));
   return server;
 }
 
@@ -498,6 +516,25 @@ app.delete("/mcp", async (req: Request, res: Response): Promise<void> => {
 // =========================================================================
 // REST API COMPANION ENDPOINTS FOR REACT DASHBOARD
 // =========================================================================
+
+// Browser voice input traverses the same MCP transport as an external voice host.
+app.post('/api/voice', async (req, res) => {
+  const input = voiceInput.parse(req.body);
+  const bridge = new MCPClientBridge(localMcpEndpoint());
+  try {
+    await bridge.initialize();
+    const tools = await bridge.listTools();
+    if (!tools.some(tool => tool.name === 'voice_turn')) throw new Error('Voice workflow tool is unavailable');
+    const result = await bridge.callTool('voice_turn', input);
+    if (result.isError) throw new Error(result.content[0]?.text || 'Voice workflow failed');
+    res.json(JSON.parse(result.content[0]!.text));
+  } finally {
+    await bridge.close();
+  }
+});
+app.get('/api/voice/:sessionId', (req, res) => {
+  res.json(VoiceService.read(z.string().uuid().parse(req.params.sessionId)));
+});
 
 /** Health check endpoint */
 app.get("/health", async (_req, res) => {
