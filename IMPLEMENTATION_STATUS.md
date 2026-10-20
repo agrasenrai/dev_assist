@@ -90,4 +90,13 @@ See `incomingapikey.md` for the corrected API-selection guidance and `AGENTS.md`
     * Session termination (`"End my session"`).
     * Error states: HTTP 409 stale revision rejection, clinical boundary refusal, and idempotent turn replay.
   - Verified via `npm run test:browser` (12/12 checks passed).
+- **Step 7: Reviewed Write-Back Evaluation (Completed 21 October 2026)**:
+  - Evaluated `DocumentReference.Create (Clinical Notes)` permissions against live Epic sandbox (`https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/DocumentReference`).
+  - Proved that Backend Systems non-production client credentials receive read/search scopes (`system/DocumentReference.r`, `.s`); write scopes (`system/DocumentReference.c`) are restricted (HTTP 403 Forbidden surfaced explicitly).
+  - Built `EpicWriteBackService` with US Core FHIR R4 clinical notes payload construction (LOINC `11506-3`, base64 attachments).
+  - Enforced safety gates: explicit human review confirmation, zero unresolved conflicts, and accepted custody before write-back.
+  - Implemented durable external sync state machine (`NOT_REQUESTED`, `PENDING`, `SYNCED`, `FAILED`, `UNCERTAIN`) in SQLite `handoffs` table.
+  - Implemented remote reconciliation before retry to verify remote commits and prevent duplicate records on network timeouts.
+  - Added Express endpoint `POST /api/handoffs/:id/publish-note` and registered 12th MCP tool `publish_reviewed_handoff_note`.
+  - Verified via `npm run test:writeback` (8/8 checks passed).
 

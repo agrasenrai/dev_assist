@@ -205,10 +205,61 @@ export class EpicOAuthService {
   }
 
   /**
+   * Returns current cached token details (for scope and expiry inspection).
+   */
+  static getCachedToken(): CachedToken | null {
+    return this.cachedToken;
+  }
+
+  /**
    * Clears in-memory token cache (useful for testing or forced revocation).
    */
   static clearCache(): void {
     this.cachedToken = null;
+  }
+
+  /**
+   * Executes an authorized FHIR R4 HTTP request against Epic sandbox and returns the raw Response.
+   * Handles Bearer authorization header injection and 401 transparent token refresh.
+   */
+  static async authorizedFetchResponse(
+    resourcePath: string,
+    options: RequestInit = {}
+  ): Promise<Response> {
+    const config = this.getConfig();
+    const token = await this.getAccessToken();
+
+    const cleanPath = resourcePath.replace(/^\//, '');
+    const fullUrl = cleanPath.startsWith('http')
+      ? cleanPath
+      : `${config.fhirBaseUrl.replace(/\/$/, '')}/${cleanPath}`;
+
+    const headers = {
+      Accept: 'application/fhir+json',
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    };
+
+    let response = await fetch(fullUrl, {
+      ...options,
+      headers,
+      signal: options.signal || AbortSignal.timeout(20000),
+    });
+
+    if (response.status === 401) {
+      const freshToken = await this.getAccessToken(true);
+      const retryHeaders = {
+        ...headers,
+        Authorization: `Bearer ${freshToken}`,
+      };
+      response = await fetch(fullUrl, {
+        ...options,
+        headers: retryHeaders,
+        signal: options.signal || AbortSignal.timeout(20000),
+      });
+    }
+
+    return response;
   }
 
   /**

@@ -15,6 +15,7 @@ import { CheckpointService } from "./services/checkpoint.service.js";
 import { ConflictService } from "./services/conflict.service.js";
 import { RecoveryService } from "./services/recovery.service.js";
 import { HandoffService } from "./services/handoff.service.js";
+import { EpicWriteBackService } from "./services/epic-writeback.service.js";
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
 import { MCPClientBridge } from "./agent/mcp-client-bridge.js";
 import { VoiceService } from "./services/voice.service.js";
@@ -390,6 +391,29 @@ export function createShiftWeaveServer(): McpServer {
     { session_id: z.string().uuid() }, async args => ({
       content: [{ type: 'text', text: JSON.stringify(VoiceService.read(args.session_id)) }]
     }));
+  server.tool(
+    'publish_reviewed_handoff_note',
+    'Publishes a human-reviewed handoff note to external FHIR R4 EHR as a DocumentReference. Requires explicit human confirmation, accepted custody, and zero unresolved discrepancies.',
+    {
+      handoff_id: z.string().describe('Target handoff identifier'),
+      nurse_id: z.string().describe('Nurse authorizing external publication'),
+      human_confirmed: z.literal(true).describe('Explicit human confirmation'),
+      idempotency_key: z.string().describe('UUIDv4 token ensuring idempotent execution'),
+      patient_id: z.string().optional().describe('Target patient identifier'),
+      execution_mode: z.enum(['live', 'mock', 'simulate_uncertain']).optional().describe('Execution environment')
+    },
+    async (args) => {
+      const result = await EpicWriteBackService.publishReviewedNote({
+        handoffId: args.handoff_id,
+        nurseId: args.nurse_id,
+        idempotencyKey: args.idempotency_key,
+        humanConfirmed: args.human_confirmed,
+        patientId: args.patient_id,
+        executionMode: args.execution_mode
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+  );
   return server;
 }
 
@@ -619,7 +643,9 @@ app.get("/api/handoffs", (_req, res) => {
     SELECT h.id, h.shift_id AS shiftId, h.outgoing_nurse_id AS outgoingNurseId,
            n1.full_name AS outgoingNurseName, h.incoming_nurse_id AS incomingNurseId,
            n2.full_name AS incomingNurseName, h.status, h.summary_markdown AS summaryMarkdown,
-           h.data_snapshot AS structuredSnapshot, h.created_at AS createdAt
+           h.data_snapshot AS structuredSnapshot, h.created_at AS createdAt,
+           h.external_sync_status AS externalSyncStatus, h.external_resource_id AS externalResourceId,
+           h.external_sync_error AS externalSyncError, h.external_synced_at AS externalSyncedAt
     FROM handoffs h
     LEFT JOIN nurses n1 ON n1.id = h.outgoing_nurse_id
     LEFT JOIN nurses n2 ON n2.id = h.incoming_nurse_id
@@ -631,6 +657,31 @@ app.get("/api/handoffs", (_req, res) => {
 app.post('/api/handoffs/:id/finalize', (req, res) => {
   const input = z.object({ nurse_id: z.string().min(1), idempotency_key: z.string().min(1), human_confirmed: z.literal(true) }).parse(req.body);
   res.json(HandoffService.finalize(String(req.params.id), input.nurse_id, input.idempotency_key, input.human_confirmed));
+});
+
+/** Publish human-reviewed handoff note as external FHIR DocumentReference */
+app.post('/api/handoffs/:id/publish-note', async (req, res) => {
+  const input = z.object({
+    nurse_id: z.string().min(1),
+    idempotency_key: z.string().min(1),
+    human_confirmed: z.boolean(),
+    patient_id: z.string().optional(),
+    execution_mode: z.enum(['live', 'mock', 'simulate_uncertain']).optional(),
+  }).parse(req.body);
+
+  try {
+    const result = await EpicWriteBackService.publishReviewedNote({
+      handoffId: String(req.params.id),
+      nurseId: input.nurse_id,
+      idempotencyKey: input.idempotency_key,
+      humanConfirmed: input.human_confirmed,
+      patientId: input.patient_id,
+      executionMode: input.execution_mode,
+    });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 /** Resolve a clinical conflict from the review drawer */

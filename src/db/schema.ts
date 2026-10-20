@@ -119,6 +119,11 @@ CREATE TABLE IF NOT EXISTS handoffs (
     unresolved_conflicts_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     acknowledged_at TIMESTAMP,
+    external_sync_status TEXT NOT NULL DEFAULT 'NOT_REQUESTED' CHECK(external_sync_status IN ('NOT_REQUESTED', 'PENDING', 'SYNCED', 'FAILED', 'UNCERTAIN')),
+    external_resource_id TEXT,
+    external_sync_error TEXT,
+    external_synced_at TIMESTAMP,
+    external_sync_payload TEXT,
     FOREIGN KEY (shift_id) REFERENCES shifts(id),
     FOREIGN KEY (outgoing_nurse_id) REFERENCES nurses(id),
     FOREIGN KEY (incoming_nurse_id) REFERENCES nurses(id)
@@ -175,5 +180,12 @@ CREATE TABLE IF NOT EXISTS operation_receipts (
 export function initializeDatabase() {
   console.log("Initializing ShiftWeave SQLite database tables...");
   db.exec(createTablesSQL);
+
+  // Safe migration for durable external sync columns on existing databases
+  try { db.exec("ALTER TABLE handoffs ADD COLUMN external_sync_status TEXT NOT NULL DEFAULT 'NOT_REQUESTED'"); } catch {}
+  try { db.exec("ALTER TABLE handoffs ADD COLUMN external_resource_id TEXT"); } catch {}
+  try { db.exec("ALTER TABLE handoffs ADD COLUMN external_sync_error TEXT"); } catch {}
+  try { db.exec("ALTER TABLE handoffs ADD COLUMN external_synced_at TIMESTAMP"); } catch {}
+  try { db.exec("ALTER TABLE handoffs ADD COLUMN external_sync_payload TEXT"); } catch {}
   console.log("All 11 canonical tables initialized successfully.");
 }

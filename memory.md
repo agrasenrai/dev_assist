@@ -310,11 +310,53 @@ Untracked `install.sh` and `install.sh~` predate these fixes and were not modifi
     - `npm run test:handoff`: All 9 Step 4 integration checks passed.
     - `npm run test:recovery`: All 7 Step 5 recovery checks passed.
     - `npm run test:browser`: All 12 Step 6 browser journey checks passed.
-- **Next Milestone (Step 7: Reviewed Write-Back Evaluation & AWS Bedrock Adapter)**:
-  - Step 7: Reviewed write-back evaluation against target environment's payload and permissions.
+### Epic Backend & EHR Write-Back Update — Step 7 (Reviewed Write-Back Evaluation) COMPLETED (21 October 2026)
+
+  - **Live Epic Sandbox Scope & Permission Findings**: and probed `POST /api/FHIR/R4/DocumentReference` against test patient Camila Lopez (`erXuFYUfucBZaryVksYEcMg3`).
+    - Epic Sandbox confirmed scopes: `system/Patient.r`, `system/DocumentReference.r`, `system/DocumentReference.s`, `system/Condition.r`, `system/Condition.s`, `system/MedicationRequest.r`, `system/MedicationRequest.s`, `system/MedicationAdministration.r`, `system/MedicationAdministration.s`, `system/AllergyIntolerance.r`, `system/AllergyIntolerance.s`.
+    - Probing `POST /DocumentReference` returned **HTTP 403 Forbidden**: Backend Systems non-production client credentials receive read/search scopes only; clinical write scopes (`system/DocumentReference.c`) are not granted for automated backend accounts in this public sandbox tier.
+    - Result: As mandated by `incomingapikey.md` and `goal.md`, this sandbox restriction is surfaced explicitly with zero false success claims.
+  - **Durable External Sync State Machine**:
+    - Extended `handoffs` table with 5 durable columns: `external_sync_status: 'NOT_REQUESTED' | 'PENDING' | 'SYNCED' | 'FAILED' | 'UNCERTAIN'`, `external_resource_id`, `external_sync_error`, `external_synced_at`, `external_sync_payload`.
+    - Added safe automatic schema migrations in `initializeDatabase()` in `src/db/schema.ts`.
+  - **US Core FHIR R4 DocumentReference Payload Construction**:
+    - Implemented `EpicWriteBackService.buildDocumentReferencePayload()` creating strictly conformant US Core clinical notes with LOINC `11506-3` Progress note code, US-Core `clinical-note` category, base64 text attachments, and patient/author provenance.
+  - **Safety & Invariant Gates**:
+    - *Human Review Gate*: Rejects unconfirmed requests (`human_confirmed: false`) with `"Explicit human review and confirmation is required before publishing external clinical notes"`.
+    - *Discrepancy Gate*: Rejects publication on handoffs with unresolved conflicts (`unresolved_conflicts_count > 0`).
+    - *Custody Gate*: Requires incoming nurse to have accepted active custody (`transfer_status = 'ACTIVE'`) before publishing clinical notes.
+    - *Local Finalization Invariant*: Proved that local sign-off marks `status = 'FINALIZED'` while `external_sync_status` remains strictly `'NOT_REQUESTED'`. Local finalization is never represented as external publication.
+  - **Network Ambiguity & Remote Reconciliation Before Retry**:
+    - Network timeouts/aborts durably transition state to `UNCERTAIN` with explicit warning surfaced.
+    - Before retrying or re-issuing a write, `EpicWriteBackService.reconcileRemoteNote()` queries remote EHR records to verify if the note was already committed remotely.
+    - If found remotely: recovers remote resource ID, updates local status to `SYNCED`, and avoids creating duplicate clinical notes in the hospital EHR.
+  - **API & Protocol Integration**:
+    - Added Express endpoint `POST /api/handoffs/:id/publish-note` with Zod schema validation and error surfacing.
+    - Registered 12th MCP tool: `publish_reviewed_handoff_note` (with human mutation protection excluded from autonomous agent toolsets).
+    - Updated `verify-workflows.ts` to assert 12 discovered MCP tools.
+  - **Automated Verification Suite (`scripts/test-writeback.ts` / `npm run test:writeback`)**:
+    - Ran all 8 test scenarios on an isolated temporary SQLite database:
+      1. Live Epic sandbox scope evaluation and HTTP 403 Forbidden surfacing.
+      2. US Core FHIR R4 DocumentReference payload validation.
+      3. Explicit human review gate enforcement (`human_confirmed: false` rejected).
+      4. Discrepancy gate enforcement (unresolved conflict blocks publishing).
+      5. Custody acceptance gate enforcement (custody required before write-back).
+      6. Local finalization invariant (local sign-off is not external publication).
+      7. Ambiguous network outcome & durable `UNCERTAIN` state handling.
+      8. Remote reconciliation before retry (duplicate note prevention and state recovery).
+  - **Regression Verification**:
+    - `npm run typecheck`: Passed with 0 errors.
+    - `npm test`: **All 73 isolated database checks passed** (including 12 MCP tools discovery).
+    - `npm run test:epic`: All 5 Step 2 OAuth checks passed.
+    - `npm run test:epic-reads`: All 8 Step 3 reads checks passed.
+    - `npm run test:handoff`: All 9 Step 4 integration checks passed.
+    - `npm run test:recovery`: All 7 Step 5 recovery checks passed.
+    - `npm run test:browser`: All 12 Step 6 browser journey checks passed.
+    - `npm run test:writeback`: All 8 Step 7 write-back checks passed.
+    - `npm run build:client`: Clean Vite production build passed.
+
+- **Next Milestone**:
+
   - Step 8: Submission packaging (friction log, demo video, final documentation).
-
   - AWS Bedrock Converse API Adapter: Pluggable `@aws-sdk/client-bedrock-runtime` for hackathon mini challenge.
-
-
 

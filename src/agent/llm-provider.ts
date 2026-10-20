@@ -117,7 +117,7 @@ export class GeminiLLMProvider implements ILLMProvider {
   async decideNextStep(messages: AgentMessage[], tools: MCPToolDefinition[], context?: Record<string, unknown>): Promise<AgentTurnResult> {
     if (!this.apiKey) throw new Error('Gemini selected but GEMINI_API_KEY is missing. Select mock explicitly for local mode.');
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    const declarations: FunctionDeclaration[] = tools.filter(t => !['acknowledge_task', 'resume_workflow', 'save_workflow_checkpoint', 'voice_turn', 'get_voice_display'].includes(t.name))
+    const declarations: FunctionDeclaration[] = tools.filter(t => !['acknowledge_task', 'resume_workflow', 'save_workflow_checkpoint', 'voice_turn', 'get_voice_display', 'publish_reviewed_handoff_note'].includes(t.name))
       .map(t => ({ name: t.name, description: t.description, parameters: t.inputSchema as unknown as FunctionDeclarationSchema }));
     const model = new GoogleGenerativeAI(this.apiKey).getGenerativeModel({
       model: this.modelName, systemInstruction: safety + '\nTrusted context: ' + JSON.stringify(context),
@@ -141,7 +141,7 @@ export class BedrockLLMProvider implements ILLMProvider {
     const { BedrockRuntimeClient, ConverseCommand } = await import('@aws-sdk/client-bedrock-runtime');
     // Use the SDK credential chain (including profiles/roles), rather than only environment credentials.
     const client = new BedrockRuntimeClient({ region: this.region, requestHandler: { requestTimeout: 30000 } });
-    const tools: Tool[] = availableTools.filter(t => !['acknowledge_task', 'resume_workflow', 'save_workflow_checkpoint', 'voice_turn', 'get_voice_display'].includes(t.name))
+    const tools: Tool[] = availableTools.filter(t => !['acknowledge_task', 'resume_workflow', 'save_workflow_checkpoint', 'voice_turn', 'get_voice_display', 'publish_reviewed_handoff_note'].includes(t.name))
       .map(t => ({ toolSpec: { name: t.name, description: t.description, inputSchema: { json: JSON.parse(JSON.stringify(t.inputSchema)) } } }));
     try {
       const response = await client.send(new ConverseCommand({ modelId: this.modelId,

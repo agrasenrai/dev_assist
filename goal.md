@@ -36,7 +36,7 @@ These checks establish the tested local behavior only. Live Epic authentication,
 | 7. Reviewed write-back (conditional scope) | Evaluate Clinical Notes creation against the target environment's payload and permissions. Require explicit human approval, durable external sync state, returned resource IDs, and remote reconciliation before retries. | A reviewed note is confirmed remotely; ambiguous outcomes remain visibly uncertain. Local finalization alone is not external publication. |
 | 8. Submission packaging | Update status documents and stale claims, verify setup instructions, record the demo, and retain a factual friction log. | Reproducible repository, demo video, accurate README, and evidence aligned with the judging criteria. |
 
-**Next concrete milestone:** Step 7: Reviewed write-back evaluation against target environment's payload and permissions & AWS Bedrock adapter → Step 8: Submission packaging.
+**Next concrete milestone:** Step 8: Submission packaging & AWS Bedrock Converse API adapter for mini challenge.
 
 ### Requirements preserved throughout
 

@@ -82,7 +82,7 @@ The present browser adapter is an Alexa+ simulation. The two MCP tools provide i
 - [x] Connect imported context to the voice workflow without replacing local assignment/custody state (Step 4 Handoff Integration Completed & Tested via `npm run test:handoff`).
 - [x] Test integration recovery with token expiry, 401 retry, permission denial, timeouts, ingestion deduplication, and chaos interruption (Step 5 Completed & Tested via `npm run test:recovery`).
 - [x] Complete browser journey verification with 12 end-to-end scenarios from introduction to handoff finalization and error states (Step 6 Completed & Tested via `npm run test:browser`).
-- [ ] If write-back is included, verify reviewed Clinical Notes creation and remote reconciliation before retries (Step 7).
+- [x] Reviewed Write-Back Evaluation (Step 7 Completed: Live Epic sandbox scopes evaluated; DocumentReference.Create HTTP 403 write restriction surfaced; durable sync states, explicit human review, and remote reconciliation before retries verified via `npm run test:writeback`).
 
 Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and live handoff publishing are not established. No Epic success is claimed.
 
@@ -98,4 +98,4 @@ Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and liv
 
 MCP minimum `2025-11-25`, Express `/mcp`, Streamable HTTP, multi-turn/cross-session state, stable idempotency keys, committed checkpoints, reconciliation before resume, observable outcomes, and a free local default remain mandatory. Keep explicit human review and custody acceptance separate. Do not add autonomous diagnosis, treatment advice, medication administration, or clinical-order changes. Preserve disagreements for human review and expose external failures.
 
-**Next task:** Step 7 Reviewed Write-Back Evaluation & AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.
+**Next task:** Step 8 Submission Packaging & AWS Bedrock Converse API adapter (`.env` credentials, model ID) for the mini challenge.
