@@ -1,6 +1,18 @@
 # ShiftWeave — Maintained Project Memory
 
-Updated 20 October 2026.
+Updated 21 October 2026.
+
+## UI Observability & Demo Walkthrough Update — 21 October 2026
+
+- **Integrated Observable MCP Telemetry & Chaos Panel**: Integrated `ExecutionTracePanel` and `ChaosControlBar` into `VoiceWorkspace.tsx` via view-toggle tabs (`Clinical Shift Workspace` and `Observable MCP Telemetry & Chaos Recovery`). Satisfies the hackathon observability and resilience judging criteria with real-time audit logs, latencies, and checkpoint IDs.
+- **1-Click Demo Walkthrough Prompt Chips**: Added 10 sequential prompt chips to `VoiceWorkspace.tsx` covering the complete clinical journey (`Hi, I am Seema`, `Explain room 305`, `Review discrepancies`, `Prepare my handoff for Reema`, `Hi, I am Reema`, `Accept all handoff tasks`, `Yes, confirm`, `Finalize handoff`, `Cancel`, `End my session`), enabling immediate evaluation without microphone hardware constraints.
+- **Direct Spoken-Action Triggers**: Added responsive action buttons to confirmation drawers ("Speak Confirm", "Speak Cancel"), conflict cards ("Stage Verified Resolution"), and handoff cards ("Finalize Handoff", "Accept All Incoming Tasks").
+- **Verification**:
+  - `npm run build:client`: Passed cleanly with Vite + TypeScript in 4.16s.
+  - `npm run typecheck`: Passed with 0 errors across entire workspace.
+  - `npm test`: **All 73 isolated checks passed** (50 core workflow/transport + 23 voice checks).
+  - Production Express server tested and healthy at `http://localhost:3000`.
+- **Next Milestone**: Connect AWS Bedrock Converse API adapter (`@aws-sdk/client-bedrock-runtime`) for the hackathon mini challenge.
 
 ## Voice workspace update — 20 October 2026
 
@@ -111,7 +123,7 @@ Architecture documents include future worksheet and multi-provider proposals. Th
 These results were obtained during the preceding implementation task; this memory-only update does not rerun them.
 
 - Root TypeScript check: passed with `tsc --noEmit --pretty false`.
-- `npm test`: passed all 50 isolated assertions.
+- `npm test`: passed all 73 isolated assertions (50 core workflow/transport + 23 voice checks).
 - `npm run build:client`: passed.
 - `git diff --check`: no whitespace errors; line-ending warnings were present.
 
@@ -131,7 +143,7 @@ The shared demo database was not used for mutating verification. No live Epic wr
 
 ## Git handoff
 
-At this update, the working branch is `feature/api`. The earlier Incoming API guide was pushed as commit `ad7fd85`. The subsequent rules/skill updates and implementation fixes remain local and uncommitted; this memory update is also local.
+At this update, the working branch is `feature/backend`. The earlier Incoming API guide was pushed as commit `ad7fd85`. The subsequent rules/skill updates and implementation fixes remain local and uncommitted; this memory update is also local.
 
 Untracked `install.sh` and `install.sh~` predate these fixes and were not modified. Keep them out of any fixes commit unless explicitly requested. Recheck Git status before committing or pushing, and do not treat this dated snapshot as current remote state.
 

@@ -224,3 +224,25 @@ body {
 .btn:disabled { cursor: not-allowed; opacity: 0.5; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .animate-spin { animation: spin 1s linear infinite; }
+
+
+/* Enhanced Interactive Voice Controls & Telemetry Layout */
+.voice-confirm-actions { display: flex; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.voice-chips-container { margin: 16px 0 24px; }
+.voice-chips-label { font-size: 11px; font-weight: 700; color: #06b6d4; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; display: block; }
+.voice-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.voice-chip { background: rgba(15, 23, 42, 0.85); color: #cbd5e1; border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 20px; padding: 6px 14px; font-size: 12px; cursor: pointer; transition: all 0.15s ease; font-family: inherit; }
+.voice-chip:hover:not(:disabled) { background: rgba(6, 182, 212, 0.15); border-color: #22d3ee; color: #ffffff; transform: translateY(-1px); }
+.voice-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.voice-chip-primary { border-color: rgba(6, 182, 212, 0.5); color: #67e8f9; }
+.voice-chip-danger { border-color: rgba(244, 63, 94, 0.4); color: #fda4af; }
+.voice-chip-danger:hover:not(:disabled) { background: rgba(244, 63, 94, 0.15); border-color: #f43f5e; color: #ffffff; }
+
+.voice-btn-sm { font-size: 0.75rem; padding: 5px 10px; border-radius: 6px; }
+.voice-card-actions { margin-top: 10px; display: flex; gap: 8px; }
+
+.voice-view-toggle { display: flex; gap: 8px; margin: 20px 0; border-bottom: 1px solid #1e293b; padding-bottom: 12px; }
+.voice-tab-btn { background: transparent; border: none; color: #94a3b8; font-size: 14px; font-weight: 600; padding: 6px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; font-family: inherit; }
+.voice-tab-btn:hover { color: #ffffff; background: rgba(255, 255, 255, 0.05); }
+.voice-tab-btn.active { color: #06b6d4; background: rgba(6, 182, 212, 0.12); }
+.voice-telemetry-container { display: flex; flex-direction: column; gap: 20px; margin: 20px 0; }

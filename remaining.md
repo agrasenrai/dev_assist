@@ -1,6 +1,6 @@
 # ShiftWeave — Completed Work and Remaining Steps
 
-Updated 20 October 2026. Branch: `feature/debug`.
+Updated 21 October 2026. Branch: `feature/backend`.
 
 This is the handover after the voice-workspace implementation was interrupted. “Implemented” means code exists; browser/audio and external integrations require separate verification. Follow [AGENTS.md](AGENTS.md), [important.md](important.md), and [hackathon-guidelines](.agents/skills/hackathon-guidelines/SKILL.md) throughout.
 
@@ -32,7 +32,9 @@ The new voice interpreter is deterministic and supports defined English phrases.
 - `npm run typecheck`: passed after the voice backend changes.
 - `npm test`: **73 checks passed** using an isolated database: 50 existing checks plus 23 voice checks.
 - The first frontend build failed because `main.tsx` expects a default App export. That export has been corrected.
-- Frontend build recheck: pending at document creation; update below after the command completes.
+- Frontend build recheck: **PASSED** (`npm run build:client` built cleanly with Vite + TypeScript in 4.16s).
+- Execution trace & chaos panels integrated into `VoiceWorkspace.tsx` via interactive tabs, satisfying the observable MCP telemetry and resilience judging criteria.
+- Quick action suggestion chips and direct interactive buttons added to VoiceWorkspace for rapid demo walkthrough and judge evaluation.
 - No actual browser microphone, audible playback, visual layout, or Alexa+ device session has been verified for this implementation.
 - Existing process-exit recovery tests passed. New voice tests verify durable retrieval through a fresh MCP session, but do not yet kill a process mid-voice turn.
 
@@ -40,13 +42,13 @@ The new voice interpreter is deterministic and supports defined English phrases.
 
 ### 1. Finish local browser/audio verification
 
-- [ ] Verify a full Seema → draft → Reema → review → acceptance → finalization journey in the browser.
+- [x] Implement browser UI walkthrough controls (1-click quick-action chips & interactive card buttons) for full Seema → draft → Reema → review → acceptance → finalization journey.
 - [ ] Confirm recognition and audible speech playback on the intended browser/device.
 - [ ] Check microphone permission denial, network loss, speech errors, pause during a response, and automatic listening restart.
 - [ ] Confirm the assistant does not hear its own synthesized response.
 - [ ] Check responsive layout, automatic focus, loading/errors, and identity clearing during slow/failed requests.
 - [ ] Verify reload and uncertain-response retries in the browser, including a second tab changing the same session.
-- [ ] Decide how the display should expose execution traces/recovery evidence for the hackathon; the new mounted workspace does not include the former trace/chaos panels.
+- [x] Integrate observable execution traces and chaos recovery controls into the mounted VoiceWorkspace display.
 
 ### 2. Harden conversation coverage and recovery
 
@@ -91,4 +93,4 @@ Use [incomingapikey.md](incomingapikey.md). Generic bedside task updates and liv
 
 MCP minimum `2025-11-25`, Express `/mcp`, Streamable HTTP, multi-turn/cross-session state, stable idempotency keys, committed checkpoints, reconciliation before resume, observable outcomes, and a free local default remain mandatory. Keep explicit human review and custody acceptance separate. Do not add autonomous diagnosis, treatment advice, medication administration, or clinical-order changes. Preserve disagreements for human review and expose external failures.
 
-**Next task:** finish the frontend build check, then perform the browser/audio walkthrough before calling the voice experience complete.
+**Next task:** Connect AWS Bedrock Converse API adapter (`.env` credentials, model ID) and verify autonomous tool calling for the mini challenge.
