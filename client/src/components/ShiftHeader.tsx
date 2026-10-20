@@ -45,11 +45,11 @@ export const ShiftHeader: React.FC<Props> = ({ health, onRefresh, onToggleProvid
                 fontWeight: 600
               }}>
                 <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
-                ICU-B Live
+                ICU-B Demo
               </span>
             </div>
             <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-              Autonomous Shift Handoff, Clinical Discrepancy Isolation & Zero-Loss Recovery
+              Nursing Workflow Coordination & Durable Handoff Recovery
             </p>
           </div>
         </div>
@@ -91,7 +91,7 @@ export const ShiftHeader: React.FC<Props> = ({ health, onRefresh, onToggleProvid
           >
             <Database size={14} color={isEdge ? "#06b6d4" : "#10b981"} />
             <span>
-              {isEdge ? 'SQLite Edge Cache (~0.1ms)' : 'Live FHIR API (Epic R4)'}
+              {isEdge ? 'Local SQLite demo data' : 'External FHIR adapter'}
             </span>
           </button>
 

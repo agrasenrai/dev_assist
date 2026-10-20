@@ -1,8 +1,64 @@
 # ShiftWeave — Project Goal, Architectural Boundary & Winning Strategy
 
+> **Implementation note (20 October 2026):** This document includes intended design and historical claims. Use [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for current verified behavior and limitations; use [incomingapikey.md](incomingapikey.md) for corrected Epic API guidance. External write-back, production authentication, universal recovery guarantees and fixed latency claims are not established by this document.
+
 > **Target Track**: Amazon Developer Hackathon — Alexa+ Track  
 > **Core Spec**: MCP Protocol `2025-11-25` over Streamable HTTP (`StreamableHTTPServerTransport`)  
 > **Key Question Addressed**: What is the exact boundary between Alexa+ and our MCP Server, and is this a winning idea?
+
+---
+
+## Current completion roadmap — 20 October 2026
+
+This roadmap takes precedence over historical completion and write-back claims below. Follow [AGENTS.md](AGENTS.md), [important.md](important.md), and [hackathon-guidelines](.agents/skills/hackathon-guidelines/SKILL.md) at every implementation step. Consult relevant architecture/schema/API documents before changes and [incomingapikey.md](incomingapikey.md) for Epic API selection.
+
+### Verified local baseline
+
+Checks run on 20 October 2026 against the current working tree:
+
+- `npm run typecheck`: passed.
+- `npm test`: all 50 isolated workflow checks passed, including retry deduplication, human custody acceptance, source reconciliation, and fresh-process recovery after a committed draft loses its response.
+- `npm run build:client`: passed.
+- The test and build reruns passed outside the sandbox after local network/file permissions blocked the initial attempts. Tests used an isolated database.
+
+These checks establish the tested local behavior only. Live Epic authentication, data retrieval, and write-back remain unimplemented/unverified. Browser interaction, microphone behavior, live optional models, production authorization, and arbitrary distributed failures are not established by these checks. Re-run affected checks after implementation changes.
+
+### Ordered remaining work
+
+| Step | Work | Completion evidence |
+| --- | --- | --- |
+| 1. Epic registration | Publish the public JWKS at a stable public HTTPS URL without authentication; register the non-production URL and obtain the non-production client ID. Keep the matching private key secure and use separate production keys. Select APIs using `incomingapikey.md`. | The URL serves the expected public key set and the app configuration is saved. Neither is assumed completed yet. |
+| 2. Backend OAuth | Implement JWT signing, token exchange, expiry handling, and explicit authentication errors. Keep private keys and tokens server-side and out of source control/logs. | Obtain an actual sandbox access token and complete an authorized read. |
+| 3. Epic reads | Replace the external adapter's deliberate configuration errors with verified Patient, Encounter, allergy, medication, and document mappings. Follow linked Binary content when needed; verify roster/location support. | Actual responses retain source IDs, timestamps, units, and explicit missing-data/error states. |
+| 4. Handoff integration | Combine imported Epic clinical context with local assignments, acknowledgements, conflicts, and custody state. Define field authority and namespace external identifiers. | A grounded handoff uses retrieved data while retaining local history and provenance. |
+| 5. Integration recovery | Test expired tokens, permission denial, timeouts, changed source records, and interruptions during import. Persist workflow progress and stable retry keys. | Resume reconciles committed state and avoids duplicate local mutations or false success for the tested cases. |
+| 6. Browser verification | Exercise chat/voice, draft review, discrepancy resolution, explicit custody acceptance, finalization, refresh, and resume. Verify loading and error states. | The complete Seema-to-Reema journey works in the browser, with limitations documented. |
+| 7. Reviewed write-back (conditional scope) | Evaluate Clinical Notes creation against the target environment's payload and permissions. Require explicit human approval, durable external sync state, returned resource IDs, and remote reconciliation before retries. | A reviewed note is confirmed remotely; ambiguous outcomes remain visibly uncertain. Local finalization alone is not external publication. |
+| 8. Submission packaging | Update status documents and stale claims, verify setup instructions, record the demo, and retain a factual friction log. | Reproducible repository, demo video, accurate README, and evidence aligned with the judging criteria. |
+
+**Next concrete milestone:** registered JWKS → sandbox token → one verified Patient/Encounter read. Expand the adapter incrementally while preserving the passing local workflow checks.
+
+### Requirements preserved throughout
+
+- **Transport:** Agent-to-MCP traffic uses minimum protocol `2025-11-25` and `StreamableHTTPServerTransport` on Express `/mcp`. Epic adapters use the provider's FHIR HTTP interface.
+- **Agent depth:** Preserve multi-turn and cross-session context, durable checkpoints, runtime discovery, and observable execution traces.
+- **Durability:** Workflow steps/mutations require stable `idempotency_key` values and committed `workflow_checkpoints`. Reconcile database state before resuming; verify ambiguous remote commits before retrying. Local deduplication does not guarantee remote deduplication.
+- **Human control:** Drafting, acknowledgement, escalation, discrepancy resolution, custody acceptance, and final sign-off remain distinct. Unfinished work does not automatically transfer to the incoming nurse.
+- **Clinical boundary:** Nursing coordination, task tracking, and grounded synthesis only. No autonomous diagnosis, treatment recommendations, medication administration, or order modifications. Preserve conflicting evidence in `conflicts` for human review.
+- **Free default:** SQLite, Express, mock providers, and the deterministic mock agent remain runnable locally at $0. Gemini is optional; Bedrock remains a modular optional adapter for the AWS mini challenge.
+- **Honest outcomes:** Clearly distinguish local, mock, live Epic, failed, missing, and pending results. No silent fallback or unsupported success/latency/zero-loss claims.
+
+### Integration and submission boundaries
+
+Generic nursing tasks stay local until the target hospital's supported task workflow is verified. Episode Checklist and Community Resource Task APIs are not interchangeable generic bedside task interfaces. Reviewed Clinical Notes creation is a candidate write-back, not proof of dedicated Epic Handoff updates.
+
+Backend OAuth authenticates the application; real clinical deployment additionally needs nurse authentication, authorization, and target hospital configuration. The sandbox does not establish customer-environment access.
+
+The demo should show grounded handoff preparation, a sourced discrepancy, explicit human review/custody acceptance, and recovery with actual checkpoints and audit outcomes. Describe browser voice/chat as an Alexa+ simulation unless a genuine integration is verified. The dashboard interruption control injects an exception; process-exit recovery is tested separately. Do not demonstrate unimplemented provider swapping or write-back as successful live behavior.
+
+Package evidence for idea quality, technical implementation, coherent design, and credible impact. Document optional AWS integration only to the extent verified. The friction log may earn up to 10%; it is not a guaranteed award.
+
+Reference for implementing Epic backend authentication: [Epic OAuth documentation](https://fhir.epic.com/Documentation?docId=patientfacingfhirapps&section=AutomaticClientDistribution). Re-check current official requirements before implementation.
 
 ---
 

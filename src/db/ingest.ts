@@ -1,4 +1,7 @@
 import fs from "fs";
+import { createHash } from 'crypto';
+import { z } from 'zod';
+import { MutationService } from '../services/mutation.service.js';
 import path from "path";
 import dotenv from "dotenv";
 import { db } from "./connection.js";
@@ -9,6 +12,9 @@ dotenv.config();
 const incomingDir = process.env.INCOMING_DATA_DIR || "./data/incoming";
 
 interface HospitalDataPayload {
+  conflicts?: Array<{ id: string; task_id: string; conflict_type: string; system_a_name: string; system_a_val: string;
+    system_b_name: string; system_b_val: string; resolution_note?: string }>;
+
   nurses?: Array<{
     id: string;
     badge_number: string;
@@ -198,22 +204,11 @@ export function importIncomingData() {
         });
         totalTasks++;
 
-        // Automated Conflict Detection
-        if (t.status === "FLAGGED_CONFLICT") {
-          const conflictId = `conf_${t.id}`;
-          insertConflict.run({
-            id: conflictId,
-            task_id: t.id,
-            conflict_type: "STATUS_MISMATCH",
-            system_a_name: "EHR Primary Core",
-            system_a_val: "COMPLETED (Logged 06:10)",
-            system_b_name: "Nurse Shift Notes",
-            system_b_val: "PENDING (Awaiting pharmacy delivery)",
-            resolution_note: "Discrepancy detected during incoming handoff preparation"
-          });
-          totalConflicts++;
-        }
       }
+    }
+    for (const conflict of payload.conflicts || []) {
+      insertConflict.run({ resolution_note: null, ...conflict });
+      totalConflicts++;
     }
 
     // 5. Task Assignments
@@ -234,10 +229,23 @@ export function importIncomingData() {
       const content = fs.readFileSync(fullPath, "utf-8");
       const data: HospitalDataPayload = JSON.parse(content);
       console.log(`Processing file: ${file}...`);
-      ingestTransaction(data);
+      const envelope = z.object({ nurses: z.array(z.object({ id: z.string().min(1) }).passthrough()).optional(),
+        patients: z.array(z.object({ id: z.string().min(1), acuity_level: z.number().int().min(1).max(5) }).passthrough()).optional(),
+        tasks: z.array(z.object({ id: z.string().min(1), patient_id: z.string().min(1), status: z.enum(['PENDING','IN_PROGRESS','COMPLETED','CANCELLED','FLAGGED_CONFLICT']) }).passthrough()).optional(),
+        conflicts: z.array(z.object({ id: z.string().min(1), task_id: z.string().min(1), system_a_name: z.string().min(1),
+          system_a_val: z.string().min(1), system_b_name: z.string().min(1), system_b_val: z.string().min(1) }).passthrough()).optional()
+      }).passthrough();
+      envelope.parse(data);
+      for (const task of data.tasks || []) {
+        if (task.status === 'FLAGGED_CONFLICT' && !data.conflicts?.some(c => c.task_id === task.id)) {
+          throw new Error(`Flagged task ${task.id} requires explicit source conflict records`);
+        }
+      }
+      const key = 'ingest:' + createHash('sha256').update(content).digest('hex');
+      MutationService.execute('IMPORT_DATA', key, data, 'SYSTEM', () => { ingestTransaction(data); return { imported: file }; });
       console.log(`Successfully ingested ${file}`);
     } catch (err) {
-      console.error(`Failed to ingest ${file}:`, err);
+      throw new Error(`Failed to ingest ${file}`, { cause: err });
     }
   }
 

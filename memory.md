@@ -1,136 +1,122 @@
-# ShiftWeave — Project Memory & Progress Log
+# ShiftWeave — Maintained Project Memory
 
-> **Project**: ShiftWeave — AI-Powered Nursing Shift Handoff & Workflow Recovery  
-> **Track**: Amazon Developer Hackathon — Alexa+ Track  
-> **Transport**: Streamable HTTP (`StreamableHTTPServerTransport`)  
-> **Protocol**: Model Context Protocol (MCP) `2025-11-25`  
-> **Persistence**: SQLite (WAL Mode, Local-first)  
-> **Status**: Complete — All 8 Phases & Real-Time Voice Assistant Delivered (Ready for Hackathon Submission)
+Updated 20 October 2026.
 
----
+## Mandatory context
 
-## 1. Context & Key Decisions So Far
+Read `AGENTS.md`, `important.md`, and `.agents/skills/hackathon-guidelines/SKILL.md` for every repository task. The skill's `references/project-context.md` maps architecture, schema, API documents and historical contradictions.
 
-### Architectural & Project Decisions
-1. **Zero-Cost & Local Execution ($0.00)**:
-   * 100% free, local-first stack. No mandatory paid cloud services, no Docker overhead.
-   * SQLite embedded database with WAL mode for microsecond latency.
-   * Node.js + Express with `@modelcontextprotocol/sdk` over Streamable HTTP (`POST /mcp`).
-   * Pluggable LLM: Gemini Free API / Local Mock by default; AWS Bedrock Converse API toggle for the hackathon mini-challenge.
-2. **Clinical Safety Boundary**:
-   * Pure nursing workflow coordination, task visibility, and handoff synthesis.
-   * **Strictly NO autonomous clinical diagnosis or medication/treatment changes.**
-   * Discrepancies between EHR and nurse notes are flagged into `conflicts` and require human verification.
-3. **Resilience & Interruption Recovery**:
-   * Uses `workflow_runs`, `workflow_checkpoints`, and UUIDv4 `idempotency_key`s.
-   * Interrupted workflows query state prior to retrying, ensuring committed actions are **never duplicated**.
-4. **Data Strategy (Teammate Data Ready)**:
-   * Will not hand-craft synthetic datasets.
-   * A flexible Ingestion & Mapping Pipeline (`src/db/ingest.ts`) ingests clinical data from `./data/incoming/` once provided by teammate.
-5. **Rules & Compliance Enforced**:
-   * Built workspace rule [`AGENTS.md`](file:///C:/Users/siddh/Desktop/dev_assist/AGENTS.md) and skill [`.agents/skills/hackathon-guidelines/SKILL.md`](file:///C:/Users/siddh/Desktop/dev_assist/.agents/skills/hackathon-guidelines/SKILL.md) to guarantee compliance with `important.md` on every step.
-6. **Hybrid Edge-Cache Model (Local SQLite + External FHIR API)**:
-   * Local SQLite operates as the high-speed edge cache (~0.1ms latency) for nurse station tablets.
-   * `IEHRProvider` connects to external open-source / Epic on FHIR endpoints to pull patient rosters and medication orders.
-   * Guarantees 100% availability during hospital Wi-Fi drops and zero cloud latency during critical handoffs.
-7. **Bidirectional EHR Integration (Confirmed Write-Back Capability)**:
-   * ShiftWeave is bidirectional: supports both **READ** and **WRITE**.
-   * Confirmed that ShiftWeave actively writes back verified clinical outcomes (bedside task status updates `PUT /Task/:id`, human verification notes, and official SBAR shift handoff reports `POST /DocumentReference`) to the external FHIR R4 EHR tier.
-   * The external write destination is completely modular and swappable (e.g., **Medplum Cloud EHR**, **Epic on FHIR Sandbox**, or **Oracle Cerner Sandbox**). While the final cloud endpoint selection is being confirmed, the **Write-Back architecture is 100% confirmed and supported**.
-   * Dual-tier write: Immediate local SQLite write (0.1ms) for zero tablet lag + fault-tolerant queued external write to the cloud EHR.
+Preserve MCP minimum `2025-11-25` over Streamable HTTP at `/mcp`, multi-turn durable state, idempotent checkpointed mutations, actual traces, explicit discrepancy review, clinical boundaries and the free local default. Bedrock remains optional.
 
----
+## Current implementation
 
-## 2. Master Specification Documents Created
+Read [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) before making completion claims.
 
-| Document | Purpose |
-| :--- | :--- |
-| [`important.md`](file:///C:/Users/siddh/Desktop/dev_assist/important.md) | Official Hackathon rules, Streamable HTTP mandate, judging criteria, and friction log guidelines. |
-| [`field_schema.md`](file:///C:/Users/siddh/Desktop/dev_assist/field_schema.md) | Pure canonical list of all 11 database entities and field names. |
-| [`schema.md`](file:///C:/Users/siddh/Desktop/dev_assist/schema.md) | Full technical schema with SQLite DDL, TypeScript models, and Zod validator schemas for all 9 tools. |
-| [`plain_schema.md`](file:///C:/Users/siddh/Desktop/dev_assist/plain_schema.md) | Conceptual database blueprint with Big Format ER diagrams and field tables. |
-| [`architecture.md`](file:///C:/Users/siddh/Desktop/dev_assist/architecture.md) | Comprehensive system architecture with side-by-side free & fast alternatives. |
-| [`plan.md`](file:///C:/Users/siddh/Desktop/dev_assist/plan.md) | 8-phase actionable implementation roadmap with external data ingestion. |
-| [`mcp.md`](file:///C:/Users/siddh/Desktop/dev_assist/mcp.md) | Protocol deep dive (Streamable HTTP, JSON-RPC 2.0, 9 tools) and React Dashboard UI integration guide. |
-| [`how_it_works.md`](file:///C:/Users/siddh/Desktop/dev_assist/how_it_works.md) | End-to-end data flow, Epic comparison, user journey, and visual UI screens walkthrough. |
-| [`goal.md`](file:///C:/Users/siddh/Desktop/dev_assist/goal.md) | Architectural separation (Alexa+ vs MCP Server), judge scorecard analysis, and winning demo strategy. |
-| [`README.md`](file:///C:/Users/siddh/Desktop/dev_assist/README.md) | Master Judges' Guide: System overview, 1-click quickstart, click-by-click demo walkthrough, and rubric comparison. |
-| [`FRICTION_LOG.md`](file:///C:/Users/siddh/Desktop/dev_assist/FRICTION_LOG.md) | Official Developer Friction Log for 10% Hackathon Bonus Points (MCP SDK, Streamable HTTP, Express 5, Bedrock). |
+The default is a synthetic-data SQLite demo. Conversations and pending tool intent survive fresh orchestrators/processes. Local mutation receipts prevent duplicate retries and detect changed request payloads. Source changes trigger read reconciliation. Human conflict resolution, custody acceptance and local finalization are separate.
 
----
+Gemini/Bedrock adapters use native function/tool messages and explicit errors. Nurse-facing summaries and drafts use recorded facts. Live model calls are unverified.
 
-## 3. Implementation Progress Tracker
+Epic operational mapping, authentication and external note publishing are not configured. `incomingapikey.md` corrects older API assumptions. Local success must never be labelled Epic sync.
 
-- [x] **Foundation Phase**: Guidelines, Schemas, Architecture, Protocol Specs, and Plans.
-- [x] **Phase 0: Setup & Dependencies**: Installed `better-sqlite3`, `dotenv`, `@types/better-sqlite3`, configured scripts in `package.json`, `.env.example`, `.env`. *(DONE)*
-- [x] **Phase 1: Database & Ingestion Pipeline**:
-  - [x] `src/db/connection.ts` (SQLite + WAL mode + Foreign Keys).
-  - [x] `src/db/schema.ts` & `src/db/init.ts` (All 11 canonical tables initialized & verified).
-  - [x] `data/incoming/` drop-in directory + template JSON created.
-  - [x] `src/db/ingest.ts` (Flexible ingestion pipeline with automated conflict detector).
-- [x] **Phase 2: Hybrid Provider Architecture**:
-  - [x] `src/providers/types.ts` (`IEHRProvider` interface and canonical data models).
-  - [x] `src/providers/sqlite-cache-provider.ts` (Microsecond SQLite edge cache).
-  - [x] `src/providers/fhir-api-provider.ts` (Live FHIR R4 open-source / Epic REST API adapter).
-  - [x] `src/providers/index.ts` (Dynamic runtime provider manager & switcher).
-  - [x] Verified via `scripts/test-providers.ts` (100% pass).
-- [x] **Phase 3: Core Workflow & Recovery Engine**:
-  - [x] `src/services/audit.service.ts` (Structured audit logger with latency & telemetry).
-  - [x] `src/services/checkpoint.service.ts` (Atomic checkpointing with idempotency deduplication).
-  - [x] `src/services/conflict.service.ts` (Discrepancy detection & human resolution flow).
-  - [x] `src/services/recovery.service.ts` (State reconciliation, skipping committed actions).
-  - [x] Verified via `scripts/test-recovery.ts` (100% pass).
-- [x] **Phase 4: MCP Server (9 Tools over Streamable HTTP)**:
-  - [x] `src/server.ts` with official `StreamableHTTPServerTransport` (`POST /mcp`, `GET /mcp`, `DELETE /mcp`).
-  - [x] Registered all 9 canonical tools with Zod schema validation & audit logging.
-  - [x] Companion endpoints: `/health`, `/api/execution-trace`, `/api/conflicts`, `/api/provider/switch`.
-  - [x] Verified via `scripts/test-mcp-client.ts` (`npm run test:mcp` passing 100%).
-- [x] **Phase 5: Agent & Conversational Layer**:
-  - [x] `src/agent/mcp-client-bridge.ts` (Streamable HTTP JSON-RPC 2.0 client bridge with runtime `tools/list` discovery).
-  - [x] `src/agent/llm-provider.ts` (Pluggable adapters: MockAutonomousAgent $0 free runner, Google Gemini API, and AWS Bedrock Converse API for Mini Challenge).
-  - [x] `src/agent/orchestrator.ts` (Multi-turn conversational loop, safety boundaries, and interruption recovery).
-  - [x] Verified via `scripts/test-agent.ts` (`npm run test:agent` passing 100%).
-- [x] **Phase 6: Clinical Shift Dashboard (React + TypeScript)**:
-  - [x] Scaffolded React 18 + Vite + TypeScript in `client/`.
-  - [x] `ShiftHeader.tsx` (ICU-B status, Seema ➔ Reema handoff identity, provider toggle, shift timer).
-  - [x] `TaskBoard.tsx` (4-column Kanban: Pending, In Progress, Flagged Conflict, Completed with STAT indicators).
-  - [x] `ConflictReviewDrawer.tsx` (Room 305-B Vancomycin EHR vs Notes discrepancy review with human nurse sign-off).
-  - [x] `ExecutionTracePanel.tsx` (Live stream of MCP tools invoked over Streamable HTTP with latencies).
-  - [x] `AlexaVoiceSim.tsx` (Simulated Alexa+ assistant with Web Speech API audio synthesis).
-  - [x] `ChaosControlBar.tsx` (Interactive judge demo buttons: crash simulation, zero-loss recovery, provider switch).
-  - [x] Production build compiled via Vite into `client/dist` and served directly by Express on `http://localhost:3000`.
-- [x] **Phase 7: End-to-End Chaos Interruption & Recovery Verification**:
-  - [x] Built comprehensive test script `scripts/test-chaos-recovery.ts`.
-  - [x] Tested planned server crash after Checkpoint #1 commitment.
-  - [x] Verified zero duplicate task repetition upon recovery (`avoidedDuplicateStepsCount = 1`).
-  - [x] Verified bedside human conflict resolution and task status transition to `COMPLETED`.
-  - [x] Verified `npm run test:chaos` passing 100% with full audit trail in SQLite.
-- [x] **Phase 8: Submission Packaging, Friction Log & Demo**:
-  - [x] `FRICTION_LOG.md` (Capturing the 10% bonus points on MCP TypeScript SDK, Streamable HTTP, Express 5, and AWS Bedrock Converse API).
-  - [x] `README.md` (Comprehensive Judges' Quickstart, Architecture, Demo Guide, and Scorecard Alignment).
-  - [x] 3-Minute Video Demo Script & narrative recorded in [`goal.md`](file:///C:/Users/siddh/Desktop/dev_assist/goal.md) (Section 4) and [`README.md`](file:///C:/Users/siddh/Desktop/dev_assist/README.md) (Section 5).
-- [x] **Post-Phase Enhancement: Live Voice Assistant & Microphone STT (Commit `e0a75c8`)**:
-  - [x] Upgraded `client/src/components/AlexaVoiceSim.tsx` with Web Speech API `SpeechRecognition` / `webkitSpeechRecognition`.
-  - [x] Added real-time speech input (microphone toggle, listening pulse animation, speech error fallback).
-  - [x] Added quick-action prompt chips for fast testing (Pending tasks query, recovery resumption, draft summary).
-  - [x] Seamless bidirectional loop: Audio TTS voice responses + microphone STT input.
-  - [x] Recompiled production client assets via `npm run build:client` into `client/dist/`.
+## Verification
 
----
+`npm run typecheck`, `npm test`, `npm run build:client`. Tests create their own database and include real process-exit recovery after a committed draft response is lost. Never run mutation tests against the shared demo database.
 
-## 4. Git Commit History Reference
+No production nurse authentication exists. Keep the demonstration on loopback and use synthetic records. A demo nurse ID is context, not proof of identity.
 
-| Commit | Branch | Summary |
-| :--- | :--- | :--- |
-| `e0a75c8` | `feature/voiceassistant` (HEAD) | Enhanced `AlexaVoiceSim.tsx` with real-time Web Speech recognition (STT), mic listener & ripple animation, sample prompt chips. |
-| `7b8f6a0` | `feature/mdfiles` | Created `README.md` (Master Judges' guide), `FRICTION_LOG.md` (10% bonus points), updated `types.ts` and core docs. |
-| `1723302` | `feature/code` | 7 phases complete implementation (MCP server, 9 tools, agents, React client, services, chaos testing). |
-| `6aa2bf6` | `feature/backend` | Updated docs for hybrid SQLite edge-cache + live FHIR architecture. |
-| `b9a3adf` | `main` | Added `goal.md`, `how_it_works.md`, `memory.md`. |
-| `e91ff07` | `main` | Added `AGENTS.md`, `architecture.md`, `mcp.md`, `plan.md`. |
-| `c5e3795` | `main` | Added `field_schema.md`. |
-| `d8ef2b6` | `main` | Added `ShiftWeave_Project_Document.docx`, `important.md`, `plain_schema.md`, `schema.md`. |
-| `b7d9ac8` | `main` | Initial Streamable HTTP MCP server skeleton & ESM setup. |
-| `fc7852f` | `main` | TypeScript MCP project configuration. |
-| `6f99742` | `main` | Initial project setup. |
+## Scope
 
+Architecture documents include future worksheet and multi-provider proposals. They do not automatically authorize building those features in every task. Historical checked boxes and promotional claims are not verification evidence.
+
+## Change record — 20 October 2026
+
+### Repository rules and API guidance
+
+- Updated `AGENTS.md` and the repository-local `hackathon-guidelines` skill to require current rules, relevant architecture/schema context, explicit failures, factual verification claims and clinical boundaries throughout project work.
+- Added `.agents/skills/hackathon-guidelines/references/project-context.md` as a document map and architecture reference. Its initial investigation notes are historical; consult current code and `IMPLEMENTATION_STATUS.md` for corrected behavior.
+- Created `incomingapikey.md` with core/optional Epic Incoming API guidance. Incoming means this app calls Epic, including permitted writes. The supplied Outgoing APIs are not required for the current flow.
+- Corrected assumptions about generic bedside Task updates, Binary retrieval, and encounter/location mapping. API catalog availability does not establish authorized or tested integration.
+
+### Database, mutations and recovery
+
+- Retained the original 11 domain tables and added `operation_receipts` for operation identity, canonical request JSON and saved response JSON.
+- Added `canonical-json.ts`, `mutation.service.ts` and `source-version.ts`. Local domain changes, mutation workflow/checkpoint records, receipts and audit records commit atomically. Reusing a key with a different operation or payload fails explicitly.
+- Strengthened checkpoint validation and ordering. Recovery reads actual saved state and committed receipts; missing checkpoints return an unrecoverable result.
+- Persisted conversation history, request identity, pending tool intent, results, context, source version and final response. Completed chat retries return the original saved result.
+- Reconcile changed local source records before continuing interrupted reads. Fresh processes can resume after a draft commits but its tool response is lost, without inserting another draft.
+
+### Handoffs and human review
+
+- Added `handoff.service.ts` for factual draft generation, explicit custody acceptance and local finalization.
+- Drafts snapshot assigned unfinished work and do not transfer responsibility. Draft narrative is rendered from database records.
+- Escalation records a note without changing task completion status. Conflict resolution requires an explicit human decision, final status and review note.
+- Custody acceptance requires the matching incoming nurse/handoff, current outgoing assignment and no unresolved conflict. It transfers assignment custody without claiming task completion.
+- Finalization requires human confirmation, accepted custody and discrepancy review. It is a local sign-off, with no external publishing.
+
+### Agent and MCP
+
+- Reworked the orchestrator around durable checkpoints and stable tool retry keys; added demo nurse ownership checks and an in-process busy-run guard.
+- Restricted agent execution to scoped reads and draft creation. Human mutation tools cannot be autonomously executed by the model.
+- Replaced hardcoded mock patient responses with deterministic summaries from actual tool results, including contextual follow-ups.
+- Gemini uses native function-call/function-response messages; Bedrock preserves matching tool-use/result IDs and uses the SDK credential chain. Missing configuration and provider failures are explicit.
+- Nurse-facing final content is grounded through deterministic rendering; unconstrained cloud prose is not displayed as clinical guidance.
+- MCP bridge validates negotiated protocol `2025-11-25`, parses result events, applies timeouts and closes sessions. Server retains stateful Streamable HTTP on `/mcp`; removed the uninitialized stateless fallback.
+
+### Server and providers
+
+- Corrected dashboard SQL to use assignment transfer state, nurse full names and handoff snapshots; carried-forward assignments remain visible.
+- Mapped audit fields into the frontend contract and added validated chat, conversation restoration, human acknowledgement and handoff finalization endpoints.
+- Added explicit JSON errors, local-origin CORS and loopback binding. A demo nurse identifier is still not authenticated identity.
+- Chaos controls now reference actual runs/checkpoints and report actual recovery results. The UI injects an exception; a separate test exercises real worker-process termination.
+- Removed fake live-FHIR behavior and arbitrary public patient fetching. Optional FHIR metadata transport reports failures, while operational provider selection is explicitly unavailable until mappings are implemented.
+- Unknown local units no longer fall back to returning all patients.
+
+### Ingestion
+
+- Incoming JSON requires validated identifiers/statuses and explicit conflict provenance; the importer does not invent disagreements from a flagged status.
+- Identical file content is deduplicated through a content hash and durable receipt/checkpoint.
+- The synthetic fixture contains two patients and two tasks. Changed imports can update local state and require review before use; CSV ingestion is not implemented.
+
+### Frontend
+
+- Switched to same-origin API calls with Vite proxies, request timeouts and visible failure messages.
+- Persisted workflow IDs and retry keys; restore server conversation history after refresh and provide a new-conversation action.
+- Added draft review, explicit custody acceptance and local sign-off controls. Conflict review requires a typed note.
+- Fixed voice recognition stop/abort cleanup, provider display, audit/recovery types and missing spacing/disabled/loading styles.
+- Removed misleading live-sync, fixed-latency and guaranteed-recovery claims. Labels identify the synthetic local demonstration.
+
+### Documentation and configuration
+
+- Updated README, `baaki.md`, incoming-data instructions and environment examples to match local execution and pending integrations.
+- Added `IMPLEMENTATION_STATUS.md` as the current behavior/limitations record.
+- Added status notices to older architecture, schema, API, workflow and planning documents; their aspirational text is not evidence of implemented features.
+- Documented operation receipts in `field_schema.md`, ignored SQLite sidecars and retained strict TypeScript checking.
+
+## Last implementation verification
+
+These results were obtained during the preceding implementation task; this memory-only update does not rerun them.
+
+- Root TypeScript check: passed with `tsc --noEmit --pretty false`.
+- `npm test`: passed all 50 isolated assertions.
+- `npm run build:client`: passed.
+- `git diff --check`: no whitespace errors; line-ending warnings were present.
+
+The test runner creates and cleans its own temporary database. Legacy test entrypoints now use this isolated runner. Coverage includes protocol/discovery, dashboard contracts, identical/changed retries, persisted history, owner checks, stale-source reconciliation, human conflict/custody transitions, adapter message formats and explicit configuration errors. A child worker exits after committing a draft and before saving its result checkpoint; a fresh worker resumes and verifies exactly one draft.
+
+The shared demo database was not used for mutating verification. No live Epic writes or cloud-provider calls were verified. Browser visual behavior and microphone operation still need manual verification.
+
+## Pending work and practical limits
+
+- Authorized Epic OAuth/environment setup, patient/encounter/roster/task mapping and tested resource permissions.
+- Human-reviewed external note publishing with explicit sync states and remote reconciliation before retrying.
+- Production nurse authentication and authorization before using real clinical records.
+- Live Gemini/Bedrock verification with authorized credentials.
+- Browser/microphone checks and submission demo/assets.
+- Recovery tests cover selected local failure cases, not every distributed failure. The busy-run guard is process-local; no distributed lock or universal zero-loss guarantee exists.
+- Completed workflow replay returns its saved historical result. Audit traces are polled, not pushed.
+
+## Git handoff
+
+At this update, the working branch is `feature/api`. The earlier Incoming API guide was pushed as commit `ad7fd85`. The subsequent rules/skill updates and implementation fixes remain local and uncommitted; this memory update is also local.
+
+Untracked `install.sh` and `install.sh~` predate these fixes and were not modified. Keep them out of any fixes commit unless explicitly requested. Recheck Git status before committing or pushing, and do not treat this dated snapshot as current remote state.

@@ -1,5 +1,6 @@
 import { db } from "../db/connection.js";
 import type { IEHRProvider, Patient, Task, TaskEvent, TaskStatus } from "./types.js";
+import { MutationService } from "../services/mutation.service.js";
 import { randomUUID } from "crypto";
 
 export class SQLiteCacheProvider implements IEHRProvider {
@@ -30,17 +31,6 @@ export class SQLiteCacheProvider implements IEHRProvider {
       ORDER BY p.room_number ASC
     `;
     const rows = db.prepare(query).all(unitId) as Patient[];
-    if (rows.length === 0) {
-      // Fallback: return all patients in database if not joined
-      return db.prepare(`
-        SELECT id, mrn, full_name AS fullName, room_number AS roomNumber,
-               bed_number AS bedNumber, admission_date AS admissionDate,
-               acuity_level AS acuityLevel, allergies, primary_diagnosis AS primaryDiagnosis,
-               created_at AS createdAt
-        FROM patients
-        ORDER BY room_number ASC
-      `).all() as Patient[];
-    }
     return rows;
   }
 
@@ -54,7 +44,7 @@ export class SQLiteCacheProvider implements IEHRProvider {
       FROM tasks t
       JOIN task_assignments ta ON ta.task_id = t.id
       JOIN patients p ON p.id = t.patient_id
-      WHERE ta.nurse_id = ? AND ta.shift_id = ?
+      WHERE ta.nurse_id = ? AND ta.shift_id = ? AND ta.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')
       ORDER BY t.scheduled_time ASC
     `;
     return db.prepare(query).all(nurseId, shiftId) as Task[];
@@ -93,7 +83,7 @@ export class SQLiteCacheProvider implements IEHRProvider {
       LIMIT 10
     `).all(taskId) as TaskEvent[];
 
-    return { task, patient, recentEvents: events };
+    return { task, ...(patient ? { patient } : {}), recentEvents: events };
   }
 
   async getRecentEvents(since: Date): Promise<TaskEvent[]> {
@@ -102,7 +92,7 @@ export class SQLiteCacheProvider implements IEHRProvider {
              new_value AS newValue, source, actor_id AS actorId,
              idempotency_key AS idempotencyKey, timestamp, metadata
       FROM task_events
-      WHERE timestamp >= ?
+      WHERE datetime(timestamp) >= datetime(?)
       ORDER BY timestamp DESC
     `;
     return db.prepare(query).all(since.toISOString()) as TaskEvent[];
@@ -115,48 +105,22 @@ export class SQLiteCacheProvider implements IEHRProvider {
     idempotencyKey: string,
     note?: string
   ): Promise<{ success: boolean; committedVersion: string }> {
-    // 1. Idempotency Check: Did this operation already commit?
-    const existingEvent = db.prepare(`
-      SELECT id, timestamp FROM task_events WHERE idempotency_key = ?
-    `).get(idempotencyKey) as { id: string; timestamp: string } | undefined;
-
-    if (existingEvent) {
-      return { success: true, committedVersion: existingEvent.id };
-    }
-
-    // 2. Fetch current task state
-    const currentTask = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string } | undefined;
-    if (!currentTask) {
-      throw new Error(`Task not found: ${taskId}`);
-    }
-
-    const previousStatus = currentTask.status;
-    const completedTime = newStatus === "COMPLETED" ? new Date().toISOString() : null;
-    const eventId = `evt_${randomUUID().slice(0, 8)}`;
-
-    // 3. Atomic Transaction for State Mutation + Event Audit
-    const mutationTx = db.transaction(() => {
-      db.prepare(`
-        UPDATE tasks
-        SET status = ?, completed_time = COALESCE(?, completed_time), updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(newStatus, completedTime, taskId);
-
-      db.prepare(`
-        INSERT INTO task_events (id, task_id, event_type, previous_value, new_value, source, actor_id, idempotency_key, metadata)
-        VALUES (?, ?, 'STATUS_TRANSITION', ?, ?, 'NURSE_OVERRIDE', ?, ?, ?)
-      `).run(
-        eventId,
-        taskId,
-        previousStatus,
-        newStatus,
-        actorId,
-        idempotencyKey,
-        note ? JSON.stringify({ note }) : null
-      );
-    });
-
-    mutationTx();
-    return { success: true, committedVersion: eventId };
+    return MutationService.execute('UPDATE_LOCAL_TASK', idempotencyKey,
+      { taskId, newStatus, actorId, note }, actorId, () => {
+        const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as { status: string } | undefined;
+        if (!task) throw new Error('Task not found');
+        if (!db.prepare('SELECT id FROM nurses WHERE id = ?').get(actorId)) throw new Error('Unknown nurse');
+        if (!['PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'].includes(newStatus)) throw new Error('Invalid local task transition');
+        if (db.prepare("SELECT id FROM conflicts WHERE task_id = ? AND status = 'UNRESOLVED'").get(taskId)) {
+          throw new Error('Resolve conflicting documentation through human review first');
+        }
+        const id = randomUUID();
+        db.prepare('UPDATE tasks SET status = ?, completed_time = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(newStatus, newStatus === 'COMPLETED' ? new Date().toISOString() : null, taskId);
+        db.prepare(`INSERT INTO task_events (id, task_id, event_type, previous_value, new_value, source, actor_id, idempotency_key, metadata)
+          VALUES (?, ?, 'STATUS_TRANSITION', ?, ?, 'HUMAN_LOCAL_WORKFLOW', ?, ?, ?)`)
+          .run(id, taskId, task.status, newStatus, actorId, idempotencyKey, JSON.stringify({ note }));
+        return { success: true, committedVersion: id };
+      });
   }
 }

@@ -1,5 +1,7 @@
 # ShiftWeave — Step-by-Step Implementation Plan
 
+> **Implementation note (20 October 2026):** This document includes intended design and historical claims. Use [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for current verified behavior and limitations; use [incomingapikey.md](incomingapikey.md) for corrected Epic API guidance. External write-back, production authentication, universal recovery guarantees and fixed latency claims are not established by this document.
+
 > **Document Version**: 1.0.0  
 > **Target Track**: Amazon Developer Hackathon — Alexa+ Track  
 > **Key References**: [`important.md`](file:///C:/Users/siddh/Desktop/dev_assist/important.md), [`architecture.md`](file:///C:/Users/siddh/Desktop/dev_assist/architecture.md), [`field_schema.md`](file:///C:/Users/siddh/Desktop/dev_assist/field_schema.md)  

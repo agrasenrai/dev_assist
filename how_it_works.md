@@ -1,5 +1,7 @@
 # ShiftWeave — How It Works (End-to-End System, Data & UI Guide)
 
+> **Implementation note (20 October 2026):** This document includes intended design and historical claims. Use [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for current verified behavior and limitations; use [incomingapikey.md](incomingapikey.md) for corrected Epic API guidance. External write-back, production authentication, universal recovery guarantees and fixed latency claims are not established by this document.
+
 > **Goal of this Document**: Explain in simple, intuitive terms exactly how the entire system works, how hospital data (Epic / FHIR) is used, and what a nurse actually sees on the UI screen step-by-step.
 
 ---

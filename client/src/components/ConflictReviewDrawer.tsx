@@ -24,7 +24,7 @@ export const ConflictReviewDrawer: React.FC<Props> = ({ conflicts, onResolve, lo
               Zero Active Discrepancies in ICU-B
             </h4>
             <p style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
-              All EHR feeds and nurse shift notes are reconciled. Clinical custody transferred cleanly.
+              No unresolved discrepancies were returned. Custody acceptance is tracked separately.
             </p>
           </div>
         </div>
@@ -145,9 +145,9 @@ export const ConflictReviewDrawer: React.FC<Props> = ({ conflicts, onResolve, lo
             onClick={() => onResolve(
               activeConflict.id,
               'COMPLETED',
-              resolutionNote || 'Bedside verification confirmed: Infusion completed and verified by RN'
+              resolutionNote
             )}
-            disabled={loading}
+            disabled={loading || !resolutionNote.trim()}
             className="btn btn-cyan"
             style={{ fontSize: '0.82rem' }}
           >
@@ -159,14 +159,14 @@ export const ConflictReviewDrawer: React.FC<Props> = ({ conflicts, onResolve, lo
             onClick={() => onResolve(
               activeConflict.id,
               'IN_PROGRESS',
-              resolutionNote || 'Verified pending pharmacy delivery. Carried forward to morning shift.'
+              resolutionNote
             )}
-            disabled={loading}
+            disabled={loading || !resolutionNote.trim()}
             className="btn btn-outline"
             style={{ fontSize: '0.82rem', borderColor: 'rgba(245, 158, 11, 0.4)', color: '#fde68a' }}
           >
             <AlertOctagon size={16} />
-            <span>Confirm Pending (Carry Forward)</span>
+            <span>Verify Still In Progress</span>
           </button>
         </div>
       </div>

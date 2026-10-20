@@ -14,6 +14,7 @@ import { AuditService } from "./services/audit.service.js";
 import { CheckpointService } from "./services/checkpoint.service.js";
 import { ConflictService } from "./services/conflict.service.js";
 import { RecoveryService } from "./services/recovery.service.js";
+import { HandoffService } from "./services/handoff.service.js";
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
 
 dotenv.config();
@@ -138,7 +139,13 @@ export function createShiftWeaveServer(): McpServer {
       const startTime = Date.now();
       const provider = getActiveProvider();
       const sinceDate = new Date(args.since_timestamp);
-      const events = await provider.getRecentEvents(sinceDate);
+      if (Number.isNaN(sinceDate.getTime())) throw new Error('Invalid since_timestamp');
+      let events = await provider.getRecentEvents(sinceDate);
+      if (args.unit_id) {
+        const allowed = db.prepare(`SELECT DISTINCT t.id FROM tasks t JOIN task_assignments a ON a.task_id = t.id
+          JOIN shifts s ON s.id = a.shift_id WHERE s.unit_id = ?`).all(args.unit_id) as Array<{ id: string }>;
+        events = events.filter(event => allowed.some(task => task.id === event.taskId));
+      }
 
       AuditService.log({
         actorType: "MCP_SERVER",
@@ -182,7 +189,7 @@ export function createShiftWeaveServer(): McpServer {
       const completedTasks = tasks.filter(t => t.status === "COMPLETED");
       const pendingTasks = tasks.filter(t => t.status === "PENDING" || t.status === "IN_PROGRESS");
       const conflictedTasks = tasks.filter(t => t.status === "FLAGGED_CONFLICT");
-      const unresolvedConflicts = ConflictService.getUnresolvedConflicts();
+      const unresolvedConflicts = ConflictService.getUnresolvedConflicts().filter(c => tasks.some(t => t.id === c.taskId));
 
       AuditService.log({
         actorType: "MCP_SERVER",
@@ -236,70 +243,8 @@ export function createShiftWeaveServer(): McpServer {
       idempotency_key: z.string().describe("UUIDv4 idempotency key preventing duplicate draft creation")
     },
     async (args) => {
-      const startTime = Date.now();
-      const handoffId = `handoff_${randomUUID().slice(0, 8)}`;
-      const snapshotStr = JSON.stringify({
-        carriedForwardIds: args.carried_forward_task_ids,
-        timestamp: new Date().toISOString()
-      });
-
-      const existing = db.prepare(`
-        SELECT id, status, created_at FROM handoffs
-        WHERE shift_id = ? AND outgoing_nurse_id = ? AND incoming_nurse_id = ?
-      `).get(args.shift_id, args.outgoing_nurse_id, args.incoming_nurse_id) as { id: string; status: string; created_at: string } | undefined;
-
-      if (existing) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              handoff_id: existing.id,
-              status: existing.status,
-              reused_existing: true,
-              created_at: existing.created_at
-            }, null, 2)
-          }]
-        };
-      }
-
-      db.transaction(() => {
-        db.prepare(`
-          INSERT INTO handoffs (id, shift_id, outgoing_nurse_id, incoming_nurse_id, status, summary_markdown, data_snapshot)
-          VALUES (?, ?, ?, ?, 'DRAFT', ?, ?)
-        `).run(handoffId, args.shift_id, args.outgoing_nurse_id, args.incoming_nurse_id, args.summary_markdown, snapshotStr);
-
-        for (const taskId of args.carried_forward_task_ids) {
-          db.prepare(`
-            UPDATE task_assignments
-            SET transfer_status = 'CARRIED_FORWARD'
-            WHERE task_id = ? AND shift_id = ?
-          `).run(taskId, args.shift_id);
-        }
-      })();
-
-      AuditService.log({
-        actorType: "MCP_SERVER",
-        actorId: args.incoming_nurse_id,
-        action: "MCP_TOOL:create_handoff_draft",
-        targetResource: `handoff/${handoffId}`,
-        outcome: "SUCCESS",
-        details: { handoffId, carriedCount: args.carried_forward_task_ids.length },
-        latencyMs: Date.now() - startTime
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              handoff_id: handoffId,
-              status: "DRAFT",
-              carried_forward_count: args.carried_forward_task_ids.length,
-              created_at: new Date().toISOString()
-            }, null, 2)
-          }
-        ]
-      };
+      const result = HandoffService.createDraft(args);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
     }
   );
 
@@ -389,8 +334,8 @@ export function createShiftWeaveServer(): McpServer {
         actorId: "recovery_engine",
         action: "MCP_TOOL:resume_workflow",
         targetResource: `workflow/${args.workflow_run_id}`,
-        outcome: "RECOVERED",
-        details: recoveryPlan,
+        outcome: recoveryPlan.recoveryStatus === "CANNOT_RECOVER" ? "FAILURE" : "RECOVERED",
+        details: { ...recoveryPlan },
         latencyMs: Date.now() - startTime
       });
 
@@ -400,7 +345,8 @@ export function createShiftWeaveServer(): McpServer {
             type: "text",
             text: JSON.stringify(recoveryPlan, null, 2)
           }
-        ]
+        ],
+        isError: recoveryPlan.recoveryStatus === "CANNOT_RECOVER"
       };
     }
   );
@@ -412,47 +358,15 @@ export function createShiftWeaveServer(): McpServer {
     {
       task_id: z.string().describe("Target task identifier"),
       nurse_id: z.string().describe("Nurse recording the action"),
+      human_confirmed: z.literal(true).describe("Explicit human confirmation; not supplied by the agent"),
+      handoff_id: z.string().optional(),
       action: z.enum(['ACCEPT_HANDOFF', 'RESOLVE_CONFLICT', 'FLAG_FOR_SUPERVISOR']),
       resolution_note: z.string().optional().describe("Clinical note or explanation"),
       idempotency_key: z.string().describe("UUIDv4 token ensuring exact-once execution")
     },
     async (args) => {
-      const startTime = Date.now();
-      const provider = getActiveProvider();
-
-      if (args.action === "RESOLVE_CONFLICT") {
-        const conflict = ConflictService.getConflictByTaskId(args.task_id);
-        if (conflict) {
-          ConflictService.resolveConflict(conflict.id, args.nurse_id, "COMPLETED", args.resolution_note || "Resolved by nurse verification");
-        }
-      }
-
-      await provider.updateTaskStatus(args.task_id, "COMPLETED", args.nurse_id, args.idempotency_key, args.resolution_note);
-
-      AuditService.log({
-        actorType: "NURSE",
-        actorId: args.nurse_id,
-        action: `MCP_TOOL:acknowledge_task:${args.action}`,
-        targetResource: `task/${args.task_id}`,
-        outcome: "SUCCESS",
-        details: { action: args.action, note: args.resolution_note },
-        latencyMs: Date.now() - startTime
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              task_id: args.task_id,
-              nurse_id: args.nurse_id,
-              action: args.action,
-              status: "COMPLETED",
-              recorded_at: new Date().toISOString()
-            }, null, 2)
-          }
-        ]
-      };
+      const result = HandoffService.acknowledge(args);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
     }
   );
 
@@ -483,8 +397,13 @@ app.use(express.json());
 
 // Enable CORS for React Dashboard
 app.use((_req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, mcp-session-id");
+  const origin = _req.headers.origin;
+  if (origin && !['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'].includes(origin)) {
+    res.status(403).json({ error: 'Origin is not allowed' });
+    return;
+  }
+  if (origin) res.header("Access-Control-Allow-Origin", origin);
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, mcp-session-id, MCP-Protocol-Version");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   if (_req.method === "OPTIONS") {
     res.sendStatus(200);
@@ -501,7 +420,7 @@ app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   try {
-    let session = sessionId ? sessions.get(sessionId) : undefined;
+    const session = sessionId ? sessions.get(sessionId) : undefined;
 
     if (session) {
       session.lastActive = Date.now();
@@ -524,6 +443,8 @@ app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
         if (sid) sessions.delete(sid);
       };
 
+      // SDK 1.x callback declarations include explicit undefined while Transport uses optional properties.
+      // @ts-expect-error SDK exactOptionalPropertyTypes declaration mismatch; real transport handshake is tested.
       await newServer.connect(transport);
       await transport.handleRequest(req, res, req.body);
       return;
@@ -534,13 +455,7 @@ app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Default stateless fallback: create ad-hoc server & transport for single-request tools
-    const adHocServer = createShiftWeaveServer();
-    const adHocTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined
-    });
-    await adHocServer.connect(adHocTransport);
-    await adHocTransport.handleRequest(req, res, req.body);
+    res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Initialize an MCP session first' }, id: null });
   } catch (error) {
     console.error("Error handling MCP request:", error);
     if (!res.headersSent) {
@@ -589,7 +504,8 @@ app.get("/health", async (_req, res) => {
   const provider = getActiveProvider();
   const ping = await provider.ping();
   res.json({
-    status: "ok",
+    status: ping ? "ok" : "degraded",
+    mode: "LOCAL_DEMO_NO_PRODUCTION_AUTH",
     server: "ShiftWeave MCP Server",
     specVersion: "2025-11-25",
     transport: "Streamable HTTP (/mcp)",
@@ -606,7 +522,10 @@ app.get("/health", async (_req, res) => {
 
 /** Telemetry stream endpoint for React Dashboard live trace */
 app.get("/api/execution-trace", (_req, res) => {
-  const logs = AuditService.getRecentLogs(30);
+  const logs = AuditService.getRecentLogs(30).map(log => ({ id: log.id, actorType: log.actor_type,
+    actorId: log.actor_id, action: log.action, targetResource: log.target_resource,
+    outcome: log.outcome, details: log.details ? JSON.parse(log.details) : null,
+    latencyMs: log.latency_ms || 0, timestamp: log.timestamp }));
   res.json({ count: logs.length, logs });
 });
 
@@ -644,11 +563,11 @@ app.get("/api/tasks", (_req, res) => {
     SELECT t.id, t.patient_id AS patientId, p.full_name AS patientName, p.room_number AS roomNumber,
            t.title, t.description, t.category, t.status, t.priority,
            t.scheduled_time AS scheduledTime, t.completed_time AS completedTime,
-           t.source_system AS sourceSystem, t.transfer_status AS transferStatus,
-           ta.nurse_id AS assignedNurseId, n.name AS assignedNurseName
+           t.source_system AS sourceSystem, ta.transfer_status AS transferStatus,
+           ta.nurse_id AS assignedNurseId, n.full_name AS assignedNurseName
     FROM tasks t
     JOIN patients p ON p.id = t.patient_id
-    LEFT JOIN task_assignments ta ON ta.task_id = t.id AND ta.transfer_status = 'ACTIVE'
+    LEFT JOIN task_assignments ta ON ta.task_id = t.id AND ta.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')
     LEFT JOIN nurses n ON n.id = ta.nurse_id
     ORDER BY t.scheduled_time ASC
   `).all();
@@ -659,9 +578,9 @@ app.get("/api/tasks", (_req, res) => {
 app.get("/api/handoffs", (_req, res) => {
   const handoffs = db.prepare(`
     SELECT h.id, h.shift_id AS shiftId, h.outgoing_nurse_id AS outgoingNurseId,
-           n1.name AS outgoingNurseName, h.incoming_nurse_id AS incomingNurseId,
-           n2.name AS incomingNurseName, h.status, h.summary_markdown AS summaryMarkdown,
-           h.structured_snapshot AS structuredSnapshot, h.created_at AS createdAt
+           n1.full_name AS outgoingNurseName, h.incoming_nurse_id AS incomingNurseId,
+           n2.full_name AS incomingNurseName, h.status, h.summary_markdown AS summaryMarkdown,
+           h.data_snapshot AS structuredSnapshot, h.created_at AS createdAt
     FROM handoffs h
     LEFT JOIN nurses n1 ON n1.id = h.outgoing_nurse_id
     LEFT JOIN nurses n2 ON n2.id = h.incoming_nurse_id
@@ -670,101 +589,78 @@ app.get("/api/handoffs", (_req, res) => {
   res.json({ count: handoffs.length, handoffs });
 });
 
+app.post('/api/handoffs/:id/finalize', (req, res) => {
+  const input = z.object({ nurse_id: z.string().min(1), idempotency_key: z.string().min(1), human_confirmed: z.literal(true) }).parse(req.body);
+  res.json(HandoffService.finalize(String(req.params.id), input.nurse_id, input.idempotency_key, input.human_confirmed));
+});
+
 /** Resolve a clinical conflict from the review drawer */
 app.post("/api/conflicts/:id/resolve", (req, res) => {
-  const { resolvedBy, finalStatus, resolutionNote } = req.body as {
-    resolvedBy?: string;
-    finalStatus?: 'COMPLETED' | 'IN_PROGRESS' | 'CANCELLED';
-    resolutionNote?: string;
-  };
-  const success = ConflictService.resolveConflict(
-    req.params.id,
-    resolvedBy || "nurse_reema_02",
-    finalStatus || "COMPLETED",
-    resolutionNote || "Human nurse bedside verification"
-  );
-  if (!success) {
-    res.status(404).json({ error: "Conflict not found" });
-    return;
-  }
-  AuditService.log({
-    actorType: "NURSE",
-    actorId: resolvedBy || "nurse_reema_02",
-    action: "HUMAN_RESOLVE_CONFLICT",
-    targetResource: `conflict/${req.params.id}`,
-    outcome: "SUCCESS",
-    details: { finalStatus, resolutionNote }
-  });
-  res.json({ success: true, conflictId: req.params.id, status: "VERIFIED_RESOLVED" });
+  const args = z.object({ resolvedBy: z.string().min(1), finalStatus: z.enum(['COMPLETED', 'IN_PROGRESS', 'CANCELLED']),
+    resolutionNote: z.string().trim().min(1), idempotency_key: z.string().min(1), human_confirmed: z.literal(true) }).parse(req.body);
+  const success = ConflictService.resolveConflict(String(req.params.id), args.resolvedBy, args.finalStatus,
+    args.resolutionNote, args.idempotency_key);
+  if (!success) { res.status(404).json({ error: 'Conflict not found' }); return; }
+  res.json({ success: true, conflictId: req.params.id, status: 'VERIFIED_RESOLVED', externalSync: 'NOT_REQUESTED' });
 });
 
 /** Chat endpoint for the Alexa+ conversational simulation */
 app.post("/api/chat", async (req, res) => {
-  const { utterance, nurseId, shiftId, outgoingNurseId, incomingNurseId, workflowRunId } = req.body as {
-    utterance: string;
-    nurseId?: string;
-    shiftId?: string;
-    outgoingNurseId?: string;
-    incomingNurseId?: string;
-    workflowRunId?: string;
-  };
-
+  const input = z.object({ utterance: z.string().trim().min(1).max(8000), nurseId: z.string().default('nurse_reema_02'),
+    shiftId: z.string().optional(), outgoingNurseId: z.string().optional(), incomingNurseId: z.string().optional(),
+    idempotency_key: z.string().min(1), workflowRunId: z.string().min(1).max(200).optional() }).parse(req.body);
+  const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), process.env.LLM_PROVIDER || 'mock', input.workflowRunId);
   try {
-    const orchestrator = new ShiftWeaveOrchestrator(
-      `http://localhost:${PORT}/mcp`,
-      process.env.LLM_PROVIDER || "mock",
-      workflowRunId
-    );
     await orchestrator.initialize();
-    const result = await orchestrator.processUtterance(
-      nurseId || "nurse_reema_02",
-      utterance,
-      { shiftId, outgoingNurseId, incomingNurseId }
-    );
+    const result = await orchestrator.processUtterance(input.nurseId, input.utterance, { ...input, requestKey: input.idempotency_key });
     res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (error) {
+    res.status(409).json({ error: error instanceof Error ? error.message : String(error), workflowRunId: orchestrator.getWorkflowRunId() });
+  } finally { await orchestrator.close(); }
 });
 
-/** Chaos simulation endpoint for demo buttons */
-app.post("/api/chaos/simulate", async (req, res) => {
-  const { action } = req.body as { action: "crash" | "recover" };
-  const runId = "wf_run_chaos_dashboard";
-  try {
-    const orchestrator = new ShiftWeaveOrchestrator(`http://localhost:${PORT}/mcp`, "mock", runId);
-    await orchestrator.initialize();
+app.get('/api/conversations/:id', (req, res) => {
+  const run = db.prepare('SELECT initiated_by FROM workflow_runs WHERE id = ?').get(req.params.id) as { initiated_by: string } | undefined;
+  if (!run) { res.json({ messages: [] }); return; }
+  if (run.initiated_by !== req.query.nurseId) { res.status(403).json({ error: 'Conversation belongs to another nurse' }); return; }
+  res.json({ messages: CheckpointService.getLatestCheckpoint(String(req.params.id))?.statePayload.messages || [] });
+});
 
-    if (action === "crash") {
-      try {
-        await orchestrator.processUtterance("nurse_reema_02", "Prepare my morning handoff for ICU-B", {
-          simulateInterruptionAtStep: 2
-        });
-      } catch (crashErr: any) {
-        res.json({
-          status: "CRASHED",
-          message: "Simulated hospital Wi-Fi drop triggered. Intermediate state saved to SQLite checkpoint.",
-          workflowRunId: runId,
-          error: crashErr.message
-        });
-        return;
-      }
-    } else {
-      const result = await orchestrator.processUtterance(
-        "nurse_reema_02",
-        "Alexa, resume my handoff preparation.",
-        { shiftId: "shift_20261019_night", outgoingNurseId: "nurse_seema_01", incomingNurseId: "nurse_reema_02" }
-      );
-      res.json({
-        status: "RECOVERED",
-        message: "Zero-loss recovery completed from checkpoint! Duplicated steps avoided.",
-        result
-      });
-      return;
-    }
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+/** Explicit local task acceptance/escalation; not medication administration. */
+app.post('/api/tasks/:id/acknowledge', (req, res) => {
+  const input = z.object({ nurse_id: z.string().min(1), action: z.enum(['ACCEPT_HANDOFF', 'FLAG_FOR_SUPERVISOR']),
+    handoff_id: z.string().optional(), resolution_note: z.string().optional(), idempotency_key: z.string().min(1),
+    human_confirmed: z.literal(true) }).parse(req.body);
+  res.json(HandoffService.acknowledge({ ...input, task_id: String(req.params.id) }));
+});
+
+/** Exception injection tests durable resumption; does not claim to kill the server. */
+app.post('/api/chaos/simulate', async (req, res) => {
+  const input = z.object({ action: z.enum(['crash', 'recover']), workflowRunId: z.string().optional() }).parse(req.body);
+  if (input.action === 'recover' && !input.workflowRunId) { res.status(400).json({ error: 'workflowRunId is required for recovery' }); return; }
+  const runId = input.workflowRunId || `chaos_${randomUUID()}`;
+  const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), 'mock', runId);
+  try {
+    await orchestrator.initialize();
+    const result = await orchestrator.processUtterance('nurse_reema_02', input.action === 'crash'
+      ? 'Prepare my shift handoff' : 'Resume my handoff', input.action === 'crash' ? { simulateInterruptionAtStep: 3 } : {});
+    res.json({ status: 'RECOVERED', workflowRunId: runId, checkpointId: result.checkpointId,
+      message: `Recovered saved workflow. Restored tool results: ${result.avoidedDuplicateStepsCount || 0}.`, result });
+  } catch (error) {
+    const checkpoint = CheckpointService.getLatestCheckpoint(runId);
+    const message = error instanceof Error ? error.message : String(error);
+    if (input.action === 'crash' && message.includes('[CHAOS SIMULATION]') && checkpoint) {
+      res.json({ status: 'INTERRUPTED', workflowRunId: runId, checkpointId: checkpoint.id,
+        message: `Simulated interruption; durable checkpoint ${checkpoint.id} saved.`, error: message });
+    } else res.status(409).json({ error: message, workflowRunId: runId });
+  } finally { await orchestrator.close(); }
+});
+
+app.use((error: unknown, req: Request, res: Response, _next: express.NextFunction) => {
+  const message = error instanceof Error ? error.message : String(error);
+  AuditService.log({ actorType: 'SYSTEM', actorId: 'http', action: 'HTTP:ERROR', targetResource: req.path,
+    outcome: 'FAILURE', details: { message } });
+  res.status(error instanceof z.ZodError ? 400 : 409).json({ error: message });
 });
 
 // Serve compiled React Clinical Dashboard
@@ -779,9 +675,14 @@ if (fs.existsSync(clientDist)) {
   });
 }
 
-const PORT = process.env.PORT || 3000;
+function localMcpEndpoint() {
+  const address = appServer.address();
+  if (!address || typeof address === 'string') throw new Error('HTTP server is not ready');
+  return `http://127.0.0.1:${address.port}/mcp`;
+}
+const PORT = Number(process.env.PORT || 3000);
 
-export const appServer = app.listen(PORT, () => {
+export const appServer = app.listen(PORT, "127.0.0.1", () => {
   console.log(`\n======================================================`);
   console.log(`🏥 ShiftWeave MCP Server (Spec 2025-11-25) Running`);
   console.log(`📡 Transport: Streamable HTTP at http://localhost:${PORT}/mcp`);
@@ -789,4 +690,8 @@ export const appServer = app.listen(PORT, () => {
   console.log(`======================================================\n`);
 });
 
+appServer.on('close', () => {
+  for (const session of sessions.values()) void session.server.close();
+  sessions.clear();
+});
 export default app;

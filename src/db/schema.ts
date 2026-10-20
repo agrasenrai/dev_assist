@@ -161,6 +161,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp DESC);
+
+-- Durable operation receipts bind retry keys to the original request and response.
+CREATE TABLE IF NOT EXISTS operation_receipts (
+    idempotency_key TEXT PRIMARY KEY,
+    operation TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 export function initializeDatabase() {

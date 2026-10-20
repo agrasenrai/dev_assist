@@ -38,12 +38,12 @@ export interface ConflictItem {
 }
 
 export interface AuditLogItem {
-  id: number;
+  id: string;
   actorType: 'NURSE' | 'AGENT' | 'MCP_SERVER' | 'SYSTEM';
   actorId: string;
   action: string;
   targetResource: string;
-  outcome: 'SUCCESS' | 'FAILURE' | 'BLOCKED';
+  outcome: 'SUCCESS' | 'FAILURE' | 'RECOVERED';
   latencyMs: number;
   details?: Record<string, unknown> | string;
   timestamp: string;
@@ -88,6 +88,7 @@ export interface ChatMessage {
     metrics?: Record<string, unknown>;
     data?: unknown;
   };
+  provider?: string;
   toolsExecuted?: Array<{
     name: string;
     latencyMs: number;

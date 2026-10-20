@@ -2,6 +2,14 @@
 
 > **Core Reference**: [`important.md`](file:///C:/Users/siddh/Desktop/dev_assist/important.md) & [`ShiftWeave_Project_Document`](file:///C:/Users/siddh/Desktop/dev_assist/ShiftWeave_Project_Document.docx)
 
+## Required Project Skill and Context
+
+For every task in this repository, load and apply [hackathon-guidelines](.agents/skills/hackathon-guidelines/SKILL.md). Read this file and `important.md` at task start, then consult the skill's [project context](.agents/skills/hackathon-guidelines/references/project-context.md) and relevant architecture/schema/API documents before implementation. Re-read sources when they change rather than relying on an old conversation summary.
+
+At each implementation step, check transport, durable state, idempotency, clinical boundaries, observable outcomes, and the free local default. Apply checks to the behavior being changed; documentation edits do not themselves require clinical workflow checkpoints.
+
+Completion claims in `memory.md`, `plan.md`, and README must be verified against code and checks. For Epic API selection, consult `incomingapikey.md`, which corrects older `apicall.md` and `callapi.md` assumptions. Surface external failures explicitly; never present missing data, failed calls, or mock results as verified live success.
+
 ## Mandatory Rules for All Implementation Steps:
 
 1. **MCP Spec & Transport Integrity**:

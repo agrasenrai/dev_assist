@@ -93,5 +93,17 @@
       "transfer_status": "CARRIED_FORWARD",
       "assigned_by": "SEEMA_RN"
     }
+  ],
+  "conflicts": [
+    {
+      "id": "conf_task_med_102_03",
+      "task_id": "task_med_102_03",
+      "conflict_type": "STATUS_MISMATCH",
+      "system_a_name": "Synthetic EHR record",
+      "system_a_val": "COMPLETED (Logged 06:10)",
+      "system_b_name": "Synthetic nurse shift note",
+      "system_b_val": "PENDING (Awaiting pharmacy delivery)",
+      "resolution_note": "Seeded demonstration disagreement; requires human verification"
+    }
   ]
 }
