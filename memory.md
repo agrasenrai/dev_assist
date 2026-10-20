@@ -147,12 +147,34 @@ At this update, the working branch is `feature/backend`. The earlier Incoming AP
 
 Untracked `install.sh` and `install.sh~` predate these fixes and were not modified. Keep them out of any fixes commit unless explicitly requested. Recheck Git status before committing or pushing, and do not treat this dated snapshot as current remote state.
 
-### Epic Backend Registration update — 20 October 2026
+### Epic Backend Integration Update — Step 1 Verified & Step 2 Credential Resolution (21 October 2026)
 
-- Completed Step 1 of the integration roadmap (Epic Backend Application Registration).
-- Configured settings: Application Audience: Backend Systems (Backend), Use Case: General, SMART on FHIR Version: R4, SMART Scope Version: SMART v2 configured, FHIR ID Generation Scheme: Use Unconstrained FHIR IDs.
-- Published and verified live public JWKS endpoint on GitHub Pages: `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`.
-- Non-Production Client ID issued by Epic: `ccc8c11f-4af0-4caf-b981-848012aab1a2`.
-- Private key retained locally at `./keys/private_key.pem` with matching RS384 public key.
-- Next pending integration step is Step 2 (OAuth 2.0 Client Assertion JWT signing & token exchange).
+- **Step 1 Completion Verified**:
+  - `.env` configured with `EPIC_CLIENT_ID=ccc8c11f-4af0-4caf-b981-848012aab1a2`, `EPIC_JWKS_URL=https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`, and sandbox endpoints.
+  - Public JWKS endpoint verified live (HTTP 200) on GitHub Pages with matching kid (`691586d6-d0fe-4efc-800d-d5316d69128c`), alg (`RS384`), use (`sig`), and 2048-bit modulus `n`.
+  - Application settings confirmed: Backend Systems (Backend), Use Case: General, SMART on FHIR Version: R4, SMART Scope Version: SMART v2, FHIR ID Scheme: Unconstrained FHIR IDs.
+  - Git isolation confirmed: `.env`, `keys/`, and `*.pem` are verified in `git status --ignored` and excluded from version control.
+- **Step 2 Credential Security Hardening**:
+  - Identified hardcoded passphrase (`Agrasen@1`) in the key generation script and absence of passphrase configuration in `.env`.
+  - Re-encrypted the private key with a cryptographically secure 256-bit random passphrase without altering the public JWKS parameters.
+  - Stored re-encrypted private key at `./keys/private_key.pem` with restricted file permissions.
+  - Configured `PRIVATE_KEY_PATH=./keys/private_key.pem` and `PRIVATE_KEY_PASSPHRASE` in local `.env`.
+  - Added `PRIVATE_KEY_PASSPHRASE=` to `.env.example` for reproducible secure configuration.
+  - Updated `generate-jwks.cjs` to require `process.env.PRIVATE_KEY_PASSPHRASE` instead of hardcoded secrets.
+  - Verified local RS384 sign and verify cycle against the public key; passed.
+### Epic Backend Integration Update — Step 2 (Backend OAuth & Authorized Read) COMPLETED (21 October 2026)
+
+- **Step 2 Implementation Completed & Verified Live**:
+  - Built `EpicOAuthService` (`src/providers/epic-oauth.service.ts`) implementing RFC 7523 OAuth 2.0 client credentials grant over RS384.
+  - **Client Assertion JWT Signing**: Generates valid JWT assertions with RS384, key ID (`691586d6-d0fe-4efc-800d-d5316d69128c`), client ID issuer/subject, audience, and bounded 5-minute expiry.
+  - **Live Token Exchange Verified**: Successfully exchanged assertion with Epic OAuth endpoint (`https://fhir.epic.com/interconnect-fhir-oauth/oauth2/token`). Received valid Bearer access token with registered SMART v2 scopes (`system/Patient.r`, `system/Encounter.r`, `system/DocumentReference.r`, etc.).
+  - **In-Memory Caching & Expiry Buffer**: Caches access tokens in-memory and reuses them sub-millisecond, automatically refreshing 60 seconds prior to expiration.
+  - **First Authorized Sandbox Read Verified**: Executed authorized HTTP GET against Epic on FHIR R4 endpoint (`https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/Patient/erXuFYUfucBZaryVksYEcMg3`). Successfully retrieved real test patient Camila Maria Lopez (Female, DOB 1987-09-12) with HTTP 200.
+  - **Explicit Error Surfacing**: Verified that invalid credentials return explicit `invalid_client` failures without silent fallback or empty mock data.
+  - **Automated Verification Suite**: Added `npm run test:epic` (`scripts/test-epic-oauth.ts`), passing all 5 test scenarios (JWT generation, live token exchange, cache hit, authorized read, explicit error surfacing).
+  - **Security Invariants Preserved**: Private keys and passphrases remain strictly server-side and are completely excluded from source control (`.gitignore`).
+- **Next Pending Milestone (Step 3 Implementation)**:
+  - Step 3 (Epic Reads): Implement normalized clinical mappings for Patient, Encounter, Condition (diagnosis/problem list), AllergyIntolerance, MedicationRequest, and DocumentReference (Handoff notes) into ShiftWeave, keeping local assignments, custody, and SQLite edge-cache resilience intact.
+
+
 

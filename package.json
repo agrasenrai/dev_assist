@@ -13,7 +13,8 @@
     "test:agent": "tsx scripts/run-tests.ts agent",
     "test:chaos": "tsx scripts/run-tests.ts chaos",
     "test": "tsx scripts/run-tests.ts all",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:epic": "tsx scripts/test-epic-oauth.ts"
   },
   "repository": {
     "type": "git",

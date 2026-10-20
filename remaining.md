@@ -72,9 +72,9 @@ The present browser adapter is an Alexa+ simulation. The two MCP tools provide i
 
 ### 4. Complete Epic integration
 
-- [ ] Verify the public JWKS URL, Epic app configuration, and non-production client ID.
-- [ ] Implement backend JWT signing, token exchange, expiry handling, and explicit failures.
-- [ ] Complete an authorized sandbox Patient/Encounter read.
+- [x] Verify the public JWKS URL, Epic app configuration, and non-production client ID (Step 1 Verified).
+- [x] Implement backend JWT signing, token exchange, expiry handling, and explicit failures (Step 2 Completed & Tested via `npm run test:epic`).
+- [x] Complete an authorized sandbox Patient read (Step 2 Verified live: Patient Camila Maria Lopez erXuFYUfucBZaryVksYEcMg3).
 - [ ] Implement and test selected clinical-context mappings with provenance, timestamps, units, and missing-data handling.
 - [ ] Connect imported context to the voice workflow without replacing local assignment/custody state.
 - [ ] If write-back is included, verify reviewed Clinical Notes creation and remote reconciliation before retries.
