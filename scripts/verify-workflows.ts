@@ -43,7 +43,11 @@ try {
   const handshake = await bridge.initialize();
   check('stateful MCP protocol negotiation', () => assert.equal(handshake.version, '2025-11-25'));
   const discovered = await bridge.listTools();
-  check('runtime discovery exposes nine tools', () => assert.equal(discovered.length, 9));
+  check('runtime discovery exposes workflow and voice tools', () => {
+    assert.equal(discovered.length, 11);
+    assert(discovered.some(t => t.name === 'voice_turn'));
+    assert(discovered.some(t => t.name === 'get_voice_display'));
+  });
   const rpc = async (name: string, args: Record<string, unknown>) => {
     const result = await bridge.callTool(name, args);
     assert(!result.isError, result.content[0]?.text || 'MCP tool failed');
@@ -179,6 +183,10 @@ try {
     check('lost mutation response does not duplicate draft', () => assert.equal(count(), before + 1));
     const plan = RecoveryService.reconcileAndResume(runId, randomUUID());
     check('completed process restart is recognized', () => assert.equal(plan.recoveryStatus, 'ALREADY_COMPLETED'));
+  }
+  if (mode === 'all') {
+    const { verifyVoice } = await import('./verify-voice.js');
+    await verifyVoice(base, check);
   }
   console.log(`\n${checks} meaningful checks passed (${mode}); isolated database only.`);
 } finally {
