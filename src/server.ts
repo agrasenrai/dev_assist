@@ -16,6 +16,7 @@ import { ConflictService } from "./services/conflict.service.js";
 import { RecoveryService } from "./services/recovery.service.js";
 import { HandoffService } from "./services/handoff.service.js";
 import { EpicWriteBackService } from "./services/epic-writeback.service.js";
+import { EpicNoteService } from './services/epic-note.service.js';
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
 import { VoiceService } from "./services/voice.service.js";
 import { host, allowedOrigins, demoAccess } from './runtime-config.js';
@@ -398,6 +399,8 @@ export function createShiftWeaveServer(): McpServer {
     { session_id: z.string().uuid() }, async args => ({
       content: [{ type: 'text', text: JSON.stringify(VoiceService.read(args.session_id)) }]
     }));
+  server.tool('preview_epic_handoff_note', 'Preview a finalized single-patient sandbox note with encounter-linked author and review hash. Does not write to Epic.',
+    { handoff_id: z.string(), nurse_id: z.string() }, async args => ({ content: [{ type: 'text', text: JSON.stringify(EpicNoteService.preview(args.handoff_id, args.nurse_id)) }] }));
   server.tool(
     'publish_reviewed_handoff_note',
     'Publishes a human-reviewed handoff note to external FHIR R4 EHR as a DocumentReference. Requires explicit human confirmation, accepted custody, and zero unresolved discrepancies.',
@@ -407,6 +410,7 @@ export function createShiftWeaveServer(): McpServer {
       human_confirmed: z.literal(true).describe('Explicit human confirmation'),
       idempotency_key: z.string().describe('UUIDv4 token ensuring idempotent execution'),
       patient_id: z.string().optional().describe('Target patient identifier'),
+      review_hash: z.string().optional().describe('Exact note preview hash reviewed by the human; required for live publication'),
       execution_mode: z.enum(['live', 'mock', 'simulate_uncertain']).optional().describe('Execution environment')
     },
     async (args) => {
@@ -419,6 +423,7 @@ export function createShiftWeaveServer(): McpServer {
         idempotencyKey: args.idempotency_key,
         humanConfirmed: args.human_confirmed,
         patientId: args.patient_id,
+        reviewHash: args.review_hash,
         executionMode: args.execution_mode
       });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -710,12 +715,17 @@ app.post('/api/handoffs/:id/finalize', (req, res) => {
 });
 
 /** Publish human-reviewed handoff note as external FHIR DocumentReference */
+app.get('/api/handoffs/:id/epic-note-preview', (req, res) => {
+  try { res.json(EpicNoteService.preview(String(req.params.id), z.string().min(1).parse(req.query.nurse_id))); }
+  catch (error) { res.status(422).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
 app.post('/api/handoffs/:id/publish-note', async (req, res) => {
   const input = z.object({
     nurse_id: z.string().min(1),
     idempotency_key: z.string().min(1),
     human_confirmed: z.boolean(),
     patient_id: z.string().optional(),
+    review_hash: z.string().optional(),
     execution_mode: z.enum(['live', 'mock', 'simulate_uncertain']).optional(),
   }).parse(req.body);
 
@@ -729,6 +739,7 @@ app.post('/api/handoffs/:id/publish-note', async (req, res) => {
       idempotencyKey: input.idempotency_key,
       humanConfirmed: input.human_confirmed,
       patientId: input.patient_id,
+      reviewHash: input.review_hash,
       executionMode: input.execution_mode,
     });
     res.json(result);

@@ -1,0 +1,50 @@
+{
+  "handoffId": "handoff_7d93cfde-8e70-4fc0-a1d4-e729c4f1f01e",
+  "patientId": "erXuFYUfucBZaryVksYEcMg3",
+  "encounterReference": "Encounter/ej567ARSFdaF4ooZVunIlIg3",
+  "authorReference": "Practitioner/elpRiy0AYgjhdjAhTBJ3Aiw3",
+  "authorVerification": "Reference supplied by Epic Encounter; separate Practitioner.Read access may be unavailable. Not an authenticated nurse identity.",
+  "note": "SHIFTWEAVE SYNTHETIC SANDBOX DEMONSTRATION — NOT FOR PATIENT CARE\nNursing workflow coordination only. No order or administration changes.\nHandoff: handoff_7d93cfde-8e70-4fc0-a1d4-e729c4f1f01e\nLocal custody was accepted and this handoff finalized.\nLocal nurse identity is simulated and is not an Epic practitioner login.\nSandbox author reference selected from the encounter participant list: Practitioner/elpRiy0AYgjhdjAhTBJ3Aiw3.\nLocal coordination task: Review Epic source records for handoff; recorded draft status: PENDING\n\n## Epic source context (retrieved records, not clinical recommendations)\n### Camila Maria Lopez\nSource: EPIC_FHIR_R4; patient erXuFYUfucBZaryVksYEcMg3; retrieved 2026-10-21T12:26:41.214Z; sync READY.\nEncounter: AVAILABLE; 10 records.\nCondition: AVAILABLE; 7 records.\nMedicationAdministration: EMPTY; 0 records.\nSource notice: Resource request returns no results.\nDocumentReference: EMPTY; 0 records.\nSource notice: Resource request returns no results.\nAllergyIntolerance: AVAILABLE; 1 records.\nMedicationRequest: AVAILABLE; 1 records.\nRecorded condition: PCOS (polycystic ovarian syndrome); source Condition/euDDjG6i1-OkhZii5APxOiw3.\nRecorded condition: Stomach pain; source Condition/e.bz79vrcUgwgW2zjAyoNbKP8KjPs1AYAIh3cniJ-cYCOcX8pleUMmkw34DzeDN8jJrVNnlGbRJ7wc5BA-xgG6w3.\nRecorded condition: Ischemic chest pain (CMS/HCC); source Condition/e.bz79vrcUgwgW2zjAyoNbNOb7Ck-Tm76lw7OOBDX1qnKRcX9BbbaRspclkwQFMLDVSZbsIv4IcSGQLKmU56Y7w3.\nRecorded condition: Ischemic chest pain (CMS/HCC); source Condition/e.bz79vrcUgwgW2zjAyoNbJVNoClMvN-.L-eh8o8WqJw9SH6QL2.49H-bndryWLXvigQQGZJ7OKlxTnbYNVnx6w3.\nRecorded condition: Ischemic chest pain (CMS/HCC); source Condition/e.bz79vrcUgwgW2zjAyoNbFdDgVqW-LYAriq-Wq-q5vprD.GRo1CkSQbUO70NF4VIltXfDsqR3E2ymzwZ4RZdJg3.\nRecorded condition: Pain aggravated by activities of daily living; source Condition/eZo5zir3atulIZs.zByt1CfnQiIGDp.0eIrs1WjJWgSZmv61LxYYiR4Almdi3htmkjrLgh5q9lPZy.U0alNURUQ3.\nRecorded condition: PCOS (polycystic ovarian syndrome); source Condition/e7c8aTjCaSoNH-8EquCI0Jn27nC7yIIoAkAPIt2TESwGzVJwyNizm9EE3yNDFX1jBbQB7NSaQMPRhEODE0g8QWw3.\nRecorded allergy: Not on File; source AllergyIntolerance/eARZpey6BWRZxRZkRpc8OFJ46j3QOFrduk77hYQKWRQnp6GRlpYc2I3BfUN6pz4Anz77ow8.GJh54fUVfm3O8Vw3.\nMedication order: drospirenone-ethinyl estradiol (YAZ) 3-0.02 MG per tablet; status active; source MedicationRequest/ePDJ.zsf3Jfg2.MKkAMgW9EcIbsaiB.y-OTrPS5v2h8Q3. Order does not establish administration.\nMissing administration or document records do not establish completion, a negative history, or a discrepancy. Local review tasks and custody remain ShiftWeave records.",
+  "payload": {
+    "resourceType": "DocumentReference",
+    "status": "current",
+    "docStatus": "final",
+    "type": {
+      "coding": [
+        {
+          "system": "http://loinc.org",
+          "code": "11506-3",
+          "display": "Progress note"
+        }
+      ],
+      "text": "Progress note"
+    },
+    "subject": {
+      "reference": "Patient/erXuFYUfucBZaryVksYEcMg3"
+    },
+    "author": [
+      {
+        "reference": "Practitioner/elpRiy0AYgjhdjAhTBJ3Aiw3"
+      }
+    ],
+    "description": "ShiftWeave sandbox handoff handoff_7d93cfde-8e70-4fc0-a1d4-e729c4f1f01e",
+    "context": {
+      "encounter": [
+        {
+          "reference": "Encounter/ej567ARSFdaF4ooZVunIlIg3"
+        }
+      ]
+    },
+    "content": [
+      {
+        "attachment": {
+          "contentType": "text/plain",
+          "data": "U0hJRlRXRUFWRSBTWU5USEVUSUMgU0FOREJPWCBERU1PTlNUUkFUSU9OIOKAlCBOT1QgRk9SIFBBVElFTlQgQ0FSRQpOdXJzaW5nIHdvcmtmbG93IGNvb3JkaW5hdGlvbiBvbmx5LiBObyBvcmRlciBvciBhZG1pbmlzdHJhdGlvbiBjaGFuZ2VzLgpIYW5kb2ZmOiBoYW5kb2ZmXzdkOTNjZmRlLThlNzAtNGZjMC1hMWQ0LWU3MjljNGYxZjAxZQpMb2NhbCBjdXN0b2R5IHdhcyBhY2NlcHRlZCBhbmQgdGhpcyBoYW5kb2ZmIGZpbmFsaXplZC4KTG9jYWwgbnVyc2UgaWRlbnRpdHkgaXMgc2ltdWxhdGVkIGFuZCBpcyBub3QgYW4gRXBpYyBwcmFjdGl0aW9uZXIgbG9naW4uClNhbmRib3ggYXV0aG9yIHJlZmVyZW5jZSBzZWxlY3RlZCBmcm9tIHRoZSBlbmNvdW50ZXIgcGFydGljaXBhbnQgbGlzdDogUHJhY3RpdGlvbmVyL2VscFJpeTBBWWdqaGRqQWhUQkozQWl3My4KTG9jYWwgY29vcmRpbmF0aW9uIHRhc2s6IFJldmlldyBFcGljIHNvdXJjZSByZWNvcmRzIGZvciBoYW5kb2ZmOyByZWNvcmRlZCBkcmFmdCBzdGF0dXM6IFBFTkRJTkcKCiMjIEVwaWMgc291cmNlIGNvbnRleHQgKHJldHJpZXZlZCByZWNvcmRzLCBub3QgY2xpbmljYWwgcmVjb21tZW5kYXRpb25zKQojIyMgQ2FtaWxhIE1hcmlhIExvcGV6ClNvdXJjZTogRVBJQ19GSElSX1I0OyBwYXRpZW50IGVyWHVGWVVmdWNCWmFyeVZrc1lFY01nMzsgcmV0cmlldmVkIDIwMjYtMTAtMjFUMTI6MjY6NDEuMjE0Wjsgc3luYyBSRUFEWS4KRW5jb3VudGVyOiBBVkFJTEFCTEU7IDEwIHJlY29yZHMuCkNvbmRpdGlvbjogQVZBSUxBQkxFOyA3IHJlY29yZHMuCk1lZGljYXRpb25BZG1pbmlzdHJhdGlvbjogRU1QVFk7IDAgcmVjb3Jkcy4KU291cmNlIG5vdGljZTogUmVzb3VyY2UgcmVxdWVzdCByZXR1cm5zIG5vIHJlc3VsdHMuCkRvY3VtZW50UmVmZXJlbmNlOiBFTVBUWTsgMCByZWNvcmRzLgpTb3VyY2Ugbm90aWNlOiBSZXNvdXJjZSByZXF1ZXN0IHJldHVybnMgbm8gcmVzdWx0cy4KQWxsZXJneUludG9sZXJhbmNlOiBBVkFJTEFCTEU7IDEgcmVjb3Jkcy4KTWVkaWNhdGlvblJlcXVlc3Q6IEFWQUlMQUJMRTsgMSByZWNvcmRzLgpSZWNvcmRlZCBjb25kaXRpb246IFBDT1MgKHBvbHljeXN0aWMgb3ZhcmlhbiBzeW5kcm9tZSk7IHNvdXJjZSBDb25kaXRpb24vZXVERGpHNmkxLU9raFppaTVBUHhPaXczLgpSZWNvcmRlZCBjb25kaXRpb246IFN0b21hY2ggcGFpbjsgc291cmNlIENvbmRpdGlvbi9lLmJ6Nzl2cmNVZ3dnVzJ6akF5b05iS1A4S2pQczFBWUFJaDNjbmlKLWNZQ09jWDhwbGVVTW1rdzM0RHplRE44akpyVk5ubEdiUko3d2M1QkEteGdHNnczLgpSZWNvcmRlZCBjb25kaXRpb246IElzY2hlbWljIGNoZXN0IHBhaW4gKENNUy9IQ0MpOyBzb3VyY2UgQ29uZGl0aW9uL2UuYno3OXZyY1Vnd2dXMnpqQXlvTmJOT2I3Q2stVG03Nmx3N09PQkRYMXFuS1JjWDlCYmJhUnNwY2xrd1FGTUxEVlNaYnNJdjRJY1NHUUxLbVU1Nlk3dzMuClJlY29yZGVkIGNvbmRpdGlvbjogSXNjaGVtaWMgY2hlc3QgcGFpbiAoQ01TL0hDQyk7IHNvdXJjZSBDb25kaXRpb24vZS5iejc5dnJjVWd3Z1cyempBeW9OYkpWTm9DbE12Ti0uTC1laDhvOFdxSnc5U0g2UUwyLjQ5SC1ibmRyeVdMWHZpZ1FRR1pKN09LbHhUbmJZTlZueDZ3My4KUmVjb3JkZWQgY29uZGl0aW9uOiBJc2NoZW1pYyBjaGVzdCBwYWluIChDTVMvSENDKTsgc291cmNlIENvbmRpdGlvbi9lLmJ6Nzl2cmNVZ3dnVzJ6akF5b05iRmREZ1ZxVy1MWUFyaXEtV3EtcTV2cHJELkdSbzFDa1NRYlVPNzBORjRWSWx0WGZEc3FSM0UyeW16d1o0UlpkSmczLgpSZWNvcmRlZCBjb25kaXRpb246IFBhaW4gYWdncmF2YXRlZCBieSBhY3Rpdml0aWVzIG9mIGRhaWx5IGxpdmluZzsgc291cmNlIENvbmRpdGlvbi9lWm81emlyM2F0dWxJWnMuekJ5dDFDZm5RaUlHRHAuMGVJcnMxV2pKV2dTWm12NjFMeFlZaVI0QWxtZGkzaHRta2pyTGdoNXE5bFBaeS5VMGFsTlVSVVEzLgpSZWNvcmRlZCBjb25kaXRpb246IFBDT1MgKHBvbHljeXN0aWMgb3ZhcmlhbiBzeW5kcm9tZSk7IHNvdXJjZSBDb25kaXRpb24vZTdjOGFUakNhU29OSC04RXF1Q0kwSm4yN25DN3lJSW9Ba0FQSXQyVEVTd0d6Vkp3eU5pem05RUUzeU5ERlgxakJiUUI3TlNhUU1QUmhFT0RFMGc4UVd3My4KUmVjb3JkZWQgYWxsZXJneTogTm90IG9uIEZpbGU7IHNvdXJjZSBBbGxlcmd5SW50b2xlcmFuY2UvZUFSWnBleTZCV1JaeFJaa1JwYzhPRko0NmozUU9GcmR1azc3aFlRS1dSUW5wNkdSbHBZYzJJM0JmVU42cHo0QW56NzdvdzguR0poNTRmVVZmbTNPOFZ3My4KTWVkaWNhdGlvbiBvcmRlcjogZHJvc3BpcmVub25lLWV0aGlueWwgZXN0cmFkaW9sIChZQVopIDMtMC4wMiBNRyBwZXIgdGFibGV0OyBzdGF0dXMgYWN0aXZlOyBzb3VyY2UgTWVkaWNhdGlvblJlcXVlc3QvZVBESi56c2YzSmZnMi5NS2tBTWdXOUVjSWJzYWlCLnktT1RyUFM1djJoOFEzLiBPcmRlciBkb2VzIG5vdCBlc3RhYmxpc2ggYWRtaW5pc3RyYXRpb24uCk1pc3NpbmcgYWRtaW5pc3RyYXRpb24gb3IgZG9jdW1lbnQgcmVjb3JkcyBkbyBub3QgZXN0YWJsaXNoIGNvbXBsZXRpb24sIGEgbmVnYXRpdmUgaGlzdG9yeSwgb3IgYSBkaXNjcmVwYW5jeS4gTG9jYWwgcmV2aWV3IHRhc2tzIGFuZCBjdXN0b2R5IHJlbWFpbiBTaGlmdFdlYXZlIHJlY29yZHMu"
+        }
+      }
+    ]
+  },
+  "reviewHash": "47036bccb979563a965988cd72596c99f268ec844c23b7646eda1c7e5f1fae98",
+  "externalSync": "NOT_REQUESTED",
+  "writesEnabled": false
+}

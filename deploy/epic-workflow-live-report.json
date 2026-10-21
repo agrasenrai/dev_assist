@@ -1,0 +1,32 @@
+{
+  "verifiedAt": "2026-10-21T12:26:42.395Z",
+  "source": "LIVE_EPIC_SANDBOX",
+  "workflow": "MCP sync -> voice display -> sourced draft -> explicit custody acceptance -> local finalization -> resync preserves custody",
+  "sections": {
+    "Encounter": {
+      "status": "AVAILABLE",
+      "count": 10
+    },
+    "Condition": {
+      "status": "AVAILABLE",
+      "count": 7
+    },
+    "MedicationAdministration": {
+      "status": "EMPTY",
+      "count": 0
+    },
+    "DocumentReference": {
+      "status": "EMPTY",
+      "count": 0
+    },
+    "AllergyIntolerance": {
+      "status": "AVAILABLE",
+      "count": 1
+    },
+    "MedicationRequest": {
+      "status": "AVAILABLE",
+      "count": 1
+    }
+  },
+  "externalWrites": "NOT_PERFORMED"
+}

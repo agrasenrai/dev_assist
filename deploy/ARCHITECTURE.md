@@ -14,10 +14,13 @@ flowchart TD
   MCP --> Services[Validated workflow services]
   Services --> DB[(SQLite WAL + FULL synchronous on local EBS)]
   MCP -->|explicit allowlisted patient read| Epic[Epic backend OAuth + FHIR R4]
-  Epic --> Snapshot[Provenance-preserving supplemental snapshot]
+  Epic --> Snapshot[Versioned source snapshots and local review tasks]
   Snapshot --> DB
   DB --> Display[Saved speech, matching cards and audit trace]
   Display --> Nurse
+  Services --> Review[Single-patient note preview and human review hash]
+  Review --> Intent[Durable external write intent]
+  Intent -->|authorized sandbox POST only| Epic
 ```
 
 ## Why this topology

@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import { once } from 'node:events';
 
 // Explicit administrator setup. Uses existing credentials without displaying them.
+const fresh = process.argv.includes('--fresh');
+if (fresh) process.env.SQLITE_DB_PATH = `./data/epic-demo-${Date.now()}.db`;
 const { db } = await import('../src/db/connection.js');
 let appServer: import('node:http').Server | undefined;
 try {
@@ -20,6 +22,14 @@ try {
   if (!match) throw new Error('Public JWKS does not match the private key');
   const settings: Record<string, string> = { EPIC_KID: match.kid, EPIC_READS_ENABLED: 'true',
     EPIC_TEST_PATIENT_IDS: process.env.EPIC_TEST_PATIENT_IDS || 'erXuFYUfucBZaryVksYEcMg3', EPIC_WRITES_ENABLED: 'false' };
+  if (fresh) {
+    settings.SQLITE_DB_PATH = process.env.SQLITE_DB_PATH!;
+    settings.EPIC_DEMO_SHIFT_ID = 'epic-demo-shift';
+    const { importIncomingData } = await import('../src/db/ingest.js');
+    importIncomingData();
+    db.prepare("UPDATE nurses SET department='EPIC-DEMO' WHERE id IN ('nurse_seema_01','nurse_reema_02')").run();
+    db.prepare("INSERT INTO shifts (id,unit_id,shift_type,start_time,end_time,status) VALUES ('epic-demo-shift','EPIC-DEMO','DAY',datetime('now'),datetime('now','+12 hours'),'ACTIVE')").run();
+  }
   Object.assign(process.env, settings, { PORT: '0', HOST: '127.0.0.1', SHIFTWEAVE_TEST: '1' });
   ({ appServer } = await import('../src/server.js'));
   if (!appServer.listening) await once(appServer, 'listening');
@@ -34,6 +44,7 @@ try {
     const sync = JSON.parse(result.content[0]!.text);
     console.log(JSON.stringify({ status: sync.status, patientCount: sync.results.length, results: sync.results }, null, 2));
     if (sync.status === 'FAILED') throw new Error('Live Epic sync failed; configuration was not enabled');
+    if (db.pragma('quick_check', { simple: true }) !== 'ok' || (db.pragma('foreign_key_check') as unknown[]).length) throw new Error('Database integrity verification failed; configuration was not changed');
     let env = fs.readFileSync('.env', 'utf8');
     for (const [name, value] of Object.entries(settings)) {
       const pattern = new RegExp(`^${name}=.*$`, 'm');

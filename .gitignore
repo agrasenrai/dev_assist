@@ -4,6 +4,7 @@ node_modules/
 build/
 client/dist/
 backups/
+data/epic-demo-*.db
 # SQLite transient WAL sidecars
 data/*.db-wal
 data/*.db-shm
