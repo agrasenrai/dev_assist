@@ -25,7 +25,9 @@ try {
   const base = `http://127.0.0.1:${address.port}`;
   allowedOrigins.add(base); // The test server's random loopback port, never a wildcard.
   browser = await chromium.launch({ channel: process.env.VOICE_TEST_BROWSER || 'msedge', headless: true });
+  console.log('Browser launched');
   const page = await browser.newPage();
+  page.setDefaultTimeout(15000);
   page.on('pageerror', (error: Error) => console.error('Browser error:', error.message));
   page.on('console', (message: any) => { if (message.type() === 'error') console.error('Browser console:', message.text()); });
   page.on('requestfailed', (request: any) => console.error('Browser request failed:', request.url(), request.failure()?.errorText));
@@ -40,6 +42,7 @@ try {
     }});
     class Recognition {
       onstart: any; onresult: any; onend: any; onerror: any;
+      results: any[] = [];
       start() { w.recognition = this; w.recognitionStarts++; this.onstart?.(); }
       abort() { this.onend?.(); }
     }
@@ -54,10 +57,14 @@ try {
     } });
     w.say = (text: string, isFinal = true) => {
       const result: any = [{transcript:text}]; result.isFinal = isFinal;
-      w.recognition.onresult({results:[result],resultIndex:0});
+      const results = w.recognition.results;
+      if(results.length && !results.at(-1).isFinal) results[results.length-1]=result;
+      else results.push(result);
+      w.recognition.onspeechstart?.();
+      w.recognition.onresult({results,resultIndex:results.length-1});
     };
   });
-  await page.goto(base);
+  await page.goto(base,{timeout:15000});
   console.log('Browser loaded:', await page.title());
   await page.getByRole('button', {name:'Start microphone', exact:true}).waitFor();
   const microphone = await page.getByRole('button',{name:'Start microphone',exact:true}).boundingBox();
@@ -97,7 +104,26 @@ try {
     await page.waitForFunction((starts: number) => (window as any).recognitionStarts > starts, starts);
     console.log(`PASS transcript → HTTP/MCP → stored data → speech → listening: ${text}`);
   };
+  await say('Alexa', /Alexa.*listening/);
+  await say('Hii', /Hi!.*Alexa/);
+  await say('Alexa, what is your name?', /Alexa.*nursing workflow assistant/);
   await say('Seema', /assigned tasks/);
+  const beforePauseRequests = voiceRequests;
+  const beforePauseSpeech = await page.evaluate(() => (window as any).spoken.length);
+  await page.evaluate(() => (window as any).say('Alexa, what tasks'));
+  await page.waitForTimeout(1100);
+  assert.equal(voiceRequests,beforePauseRequests,'A one-second pause must not submit an unfinished sentence');
+  assert.equal(await page.evaluate(() => (window as any).spoken.length),beforePauseSpeech);
+  const previousStarts = await page.evaluate(() => (window as any).recognitionStarts);
+  await page.evaluate(() => (window as any).recognition.onend());
+  await page.waitForFunction((count:number)=>(window as any).recognitionStarts>count,previousStarts);
+  await page.evaluate(() => (window as any).say('are pending?'));
+  await page.waitForFunction((count:number)=>(window as any).spoken.length>count,beforePauseSpeech);
+  const joinedRequest = (db.prepare('SELECT request_json FROM operation_receipts WHERE operation=? ORDER BY rowid DESC LIMIT 1').get('VOICE_TURN')as any);
+  assert.equal(JSON.parse(joinedRequest.request_json).utterance,'Alexa, what tasks are pending?');
+  assert.equal(voiceRequests,beforePauseRequests+1);
+  await page.waitForFunction((count:number)=>(window as any).recognitionStarts>count,previousStarts+1);
+  console.log('PASS short pauses and browser recognition restarts preserve one complete sentence without early execution');
   await say('What tasks are assigned to me?', /Recorded local workflow status/);
   await say('What tasks are pending?', /pending|PENDING/);
   const task = db.prepare(`SELECT t.*,p.full_name FROM tasks t JOIN patients p ON p.id=t.patient_id
@@ -119,6 +145,12 @@ try {
   await page.evaluate(() => (window as any).recognition.onend());
   await page.waitForFunction((starts: number) => (window as any).recognitionStarts > starts, starts);
   await say('What tasks are completed?', /COMPLETED/);
+  const beforeStoppedDraft = voiceRequests;
+  await page.evaluate(() => (window as any).say('Set this task to pending'));
+  await page.getByRole('button',{name:'Stop microphone',exact:true}).click();
+  await page.waitForTimeout(2800);
+  assert.equal(voiceRequests,beforeStoppedDraft,'Stopping must cancel the buffered sentence before it reaches the backend');
+  await page.getByRole('button',{name:'Start microphone',exact:true}).click();
   const oldSession = await page.evaluate(() => localStorage.getItem('shiftweave:voice:display-session'));
   const retainedRequest = JSON.stringify({session_id:oldSession,utterance:'Show my tasks',expected_revision:0,idempotency_key:'saved-uncertain-request'});
   await page.evaluate(({session,request}:{session:string;request:string}) => {
@@ -168,6 +200,7 @@ try {
   await say('What tasks are completed?', /COMPLETED/);
 } finally {
   await browser?.close();
+  appServer.closeAllConnections();
   await new Promise<void>(resolve => appServer.close(() => resolve()));
   db.close();
   // The target is the exact temporary directory created above, never the configured data directory.
