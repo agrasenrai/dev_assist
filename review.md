@@ -1,333 +1,125 @@
-# ShiftWeave — Demo-Production Review
-
-> Goal: everything runs cleanly when you present. Latency first. No crashes. No blank screens.
-> Status: All 8 issues resolved and verified across 73 test checks (npm test green).
-> Updated: 21 October 2026.
-
----
-
-## TL;DR — Review & Resolution Status
-
-| Rank | Issue | Impact | Status | Applied In |
-|:---:|---|---|:---:|---|
-| 🔴 1 | Voice turn self-connected to internal MCP server over HTTP | +80–150ms added latency per turn | ✅ **Fixed** | `src/server.ts` |
-| 🔴 2 | VoiceWorkspace polled display AND trace simultaneously every 2.5s | Double HTTP traffic; UI re-render jitter | ✅ **Fixed** | `client/src/components/VoiceWorkspace.tsx` |
-| 🔴 3 | MCP session map had no TTL cleanup | Stale sessions leak across tabs/reconnects | ✅ **Fixed** | `src/server.ts` |
-| 🔴 4 | Finalize & acknowledge routes threw naked unhandled errors | Potential crash / uninformative 409 rejections | ✅ **Fixed** | `src/server.ts` |
-| 🟡 5 | Audit log hard-capped at 30 rows in telemetry endpoint | Recent tool calls scrolled off trace panel | ✅ **Fixed** | `src/server.ts` |
-| 🟡 6 | `shift_id` hard-coded in frontend `api.ts` | Chat broke if re-seeded DB had different shift ID | ✅ **Fixed** | `client/src/api.ts` & `src/server.ts` |
-| 🟡 7 | `operation_receipts` grew without TTL pruning | Table bloat over long multi-day test runs | ✅ **Fixed** | `src/server.ts` |
-| 🟢 8 | Confirmation stale state never cleaned from checkpoint on load | Expired pending actions showed in display | ✅ **Fixed** | `src/services/voice.service.ts` |
-
-All 8 issues are resolved. Core architectural invariants, zero-loss recovery, idempotency, and clinical safety boundaries are fully preserved.
-
----
-
-## Issue 1 (CRITICAL LATENCY) — Voice API Self-Connects to Its Own MCP Server
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `src/server.ts`, `app.post('/api/voice')`
-
-**Root Cause:**
-Previously, every browser voice turn triggered an internal MCP client handshake:
-```
-POST /api/voice
-  → new MCPClientBridge()
-  → POST /mcp  (initialize — full JSON-RPC handshake)
-  → POST /mcp  (tools/list — fetches all tool schemas)
-  → POST /mcp  (tools/call voice_turn)
-  → DELETE /mcp (session close)
-```
-This self-loop added 4 internal HTTP round-trips (~80–150ms latency) to every utterance.
-
-**Fix Implemented:**
-Dispatched directly to `VoiceService.turn(input)` in-process inside `POST /api/voice`. The external `voice_turn` MCP tool remains available on `/mcp` for external agent clients.
-
-```ts
-// AFTER (in src/server.ts) — direct service call, ~80-150ms faster per turn:
-app.post('/api/voice', (req, res) => {
-  const input = voiceInput.parse(req.body);
-  res.json(VoiceService.turn(input));
-});
-```
-
----
-
-## Issue 2 (DEMO JANK) — VoiceWorkspace Polls Display AND Trace Every 2500ms
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `client/src/components/VoiceWorkspace.tsx`
-
-**Root Cause:**
-Both `refresh()` (voice display) and `refreshTrace()` (telemetry logs) fired synchronously inside the same 2500ms `setInterval`. During an active voice turn, background polling fired concurrently mid-request, causing React state update jitter and brief UI flashes.
-
-**Fix Implemented:**
-Separated display and trace intervals. Display polling stays responsive at 2500ms and is guarded with `if (!busyRef.current)` to skip polling while an utterance is in flight. Trace telemetry polling relaxed to 5000ms. Both timers are cleanly cleared on component unmount.
-
-```ts
-// AFTER (in client/src/components/VoiceWorkspace.tsx):
-const displayTimer = setInterval(() => {
-  if (!busyRef.current) void refresh();
-}, 2500);
-const traceTimer = setInterval(() => {
-  void refreshTrace();
-}, 5000);
-return () => {
-  alive = false;
-  clearInterval(displayTimer);
-  clearInterval(traceTimer);
-};
-```
-
----
-
-## Issue 3 (DEMO RELIABILITY) — MCP Session Map Has No TTL
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `src/server.ts` — `const sessions = new Map<string, SessionRecord>()`
-
-**Root Cause:**
-Sessions were only removed on explicit `DELETE /mcp`. Browser refreshes, closed tabs, and interrupted runs accumulated orphan session objects over time.
-
-**Fix Implemented:**
-Added a periodic 5-minute cleanup interval that closes and evicts any session idle for >30 minutes (`lastActive < Date.now() - 30 * 60_000`). Timer uses `.unref()` so it does not block Node.js exit, and is cleared in `appServer.on('close')`.
-
-```ts
-// AFTER (in src/server.ts):
-const sessionCleanupTimer = setInterval(() => {
-  const cutoff = Date.now() - 30 * 60_000;
-  for (const [id, s] of sessions) {
-    if (s.lastActive < cutoff) {
-      void s.server.close();
-      sessions.delete(id);
-    }
-  }
-}, 5 * 60_000);
-sessionCleanupTimer.unref();
-
-appServer.on('close', () => {
-  clearInterval(sessionCleanupTimer);
-  for (const session of sessions.values()) void session.server.close();
-  sessions.clear();
-});
-```
-
----
-
-## Issue 4 (CRASH ON DEMO) — Finalize & Acknowledge Routes Throw Naked Errors
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `src/server.ts` — `/api/handoffs/:id/finalize` & `/api/tasks/:id/acknowledge`
-
-**Root Cause:**
-Route handlers lacked explicit `try / catch` blocks. Domain throws from `HandoffService.finalize()` (e.g. unresolved conflicts, unaccepted custody) and `HandoffService.acknowledge()` bubbled to the default handler without distinguishing expected clinical business rejections.
-
-**Fix Implemented:**
-Added route-level `try / catch` returning HTTP 400 for invalid schemas (`z.ZodError`) and HTTP 422 for clinical/business prerequisite rejections (structured JSON `{ error: message }`). The global handler preserves HTTP 409 for concurrency/state collisions.
-
-```ts
-// AFTER (in src/server.ts):
-app.post('/api/handoffs/:id/finalize', (req, res) => {
-  try {
-    const input = z.object({ nurse_id: z.string().min(1), idempotency_key: z.string().min(1), human_confirmed: z.literal(true) }).parse(req.body);
-    res.json(HandoffService.finalize(String(req.params.id), input.nurse_id, input.idempotency_key, input.human_confirmed));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(err instanceof z.ZodError ? 400 : 422).json({ error: message });
-  }
-});
-
-app.post('/api/tasks/:id/acknowledge', (req, res) => {
-  try {
-    const input = z.object({
-      nurse_id: z.string().min(1),
-      action: z.enum(['ACCEPT_HANDOFF', 'FLAG_FOR_SUPERVISOR']),
-      handoff_id: z.string().optional(),
-      resolution_note: z.string().optional(),
-      idempotency_key: z.string().min(1),
-      human_confirmed: z.literal(true)
-    }).parse(req.body);
-    res.json(HandoffService.acknowledge({ ...input, task_id: String(req.params.id) }));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(err instanceof z.ZodError ? 400 : 422).json({ error: message });
-  }
-});
-```
-
----
-
-## Issue 5 (DEMO VISIBILITY) — Audit Log Capped at 30 Rows
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `src/server.ts` — `/api/execution-trace` endpoint
-
-**Root Cause:**
-Hard-coded limit of 30 rows caused earlier tool calls (`get_assigned_tasks`, `create_handoff_draft`, etc.) to scroll off the telemetry panel quickly during demo runs.
-
-**Fix Implemented:**
-Raised default log retrieval from 30 to 100 entries and added optional `?limit=` query parameter support bounded safely between 1 and 500:
-
-```ts
-// AFTER (in src/server.ts):
-app.get("/api/execution-trace", (req, res) => {
-  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
-  const logs = AuditService.getRecentLogs(limit).map(log => ({ id: log.id, actorType: log.actor_type,
-    actorId: log.actor_id, action: log.action, targetResource: log.target_resource,
-    outcome: log.outcome, details: log.details ? JSON.parse(log.details) : null,
-    latencyMs: log.latency_ms || 0, timestamp: log.timestamp }));
-  res.json({ count: logs.length, logs });
-});
-```
-
----
-
-## Issue 6 (SILENT FAILURE) — shift_id Hard-Coded in Frontend
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `client/src/api.ts` & `src/server.ts`
-
-**Root Cause:**
-`client/src/api.ts` hardcoded `shiftId: 'shift_20261019_night'`. If the database was re-seeded with a different shift identifier, conversational chat queried a nonexistent shift, returning zero tasks.
-
-**Fix Implemented:**
-1. Removed `shiftId` from frontend `sendChatMessage()`.
-2. In `src/server.ts` `/api/chat`, added dynamic lookup to query the active shift for the nurse's department unit from SQLite, matching the dynamic scoping in `VoiceService`.
-
-```ts
-// AFTER (in src/server.ts /api/chat):
-let shiftId = input.shiftId;
-if (!shiftId) {
-  const nurse = db.prepare('SELECT department FROM nurses WHERE id = ?').get(input.nurseId) as { department: string } | undefined;
-  if (nurse) {
-    const activeShift = db.prepare(`SELECT id FROM shifts WHERE unit_id = ? AND status IN ('ACTIVE', 'HANDOFF_IN_PROGRESS')
-      ORDER BY start_time DESC LIMIT 1`).get(nurse.department) as { id: string } | undefined;
-    if (activeShift) shiftId = activeShift.id;
-  }
-}
-```
-
----
-
-## Issue 7 (MEMORY) — operation_receipts Grows Forever
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `src/server.ts`
-
-**Root Cause:**
-Every voice turn, mutation, and chaos run appends a row to `operation_receipts`. Over weeks of testing and demonstration, unbounded row accumulation slowed idempotency lookups.
-
-**Fix Implemented:**
-Added startup pruning right after `initializeDatabase()` to delete receipts older than 3 days:
-
-```ts
-// AFTER (in src/server.ts):
-initializeDatabase();
-// Prune receipts older than 3 days at startup
-db.prepare("DELETE FROM operation_receipts WHERE created_at < datetime('now', '-3 days')").run();
-```
-
----
-
-## Issue 8 (COSMETIC) — Stale Pending Confirmation in Checkpoint After Expiry
-
-**Status:** ✅ **Fixed & Verified**  
-**File:** `src/services/voice.service.ts` — `load()` method
-
-**Root Cause:**
-When a pending action staged by a nurse passed its 5-minute expiry, the pending confirmation persisted in the checkpoint until a new turn overwritten it. If a user refreshed the dashboard during this window, an expired confirmation prompt was rendered with no way to dismiss it except speaking.
-
-**Fix Implemented:**
-In `VoiceService.load()`, immediately evaluate and purge expired pending confirmations on load:
-
-```ts
-// AFTER (in src/services/voice.service.ts):
-private static load(id: string): State {
-  const state = (CheckpointService.getLatestCheckpoint(runId(id))?.statePayload.voice as State | undefined) || initial();
-  // Clear expired confirmations on load so the display is never stale
-  if (state.pending && state.pending.expiresAt < Date.now()) {
-    state.pending = null;
-  }
-  return state;
-}
-```
-
----
-
-## What Is Solid — Preserved Invariants
-
-These remain fully operational and verified across all test runs:
-
-- **Chaos crash + recovery flow** — `simulateInterruptionAtStep` + checkpoint restore works end-to-end.
-- **MutationService atomicity** — every write is idempotent with deduplicated execution receipts.
-- **Zod validation on MCP inputs** — malformed payloads fail fast with descriptive 400 responses.
-- **VoiceService revision check** — prevents concurrent tabs from clobbering state with HTTP 409 rejections.
-- **`human_confirmed: true` requirement** — clinical safety guardrail preserved across all mutation APIs.
-- **Test isolation** (`run-tests.ts` temp DB, `PORT=0`) — `npm test` never touches the local demo database.
-- **Global error handler** — logs telemetry to `AuditService` and returns structured JSON.
-
----
-
-## AWS Services — Demo Day Reference
-
-You do not need AWS for the hackathon demo. The mock LLM and SQLite are sufficient. If demonstrating live AWS:
-
-### AWS Bedrock (Implemented & Verified)
-`BedrockLLMProvider` is functional. Configure `.env`:
-```env
-LLM_PROVIDER=bedrock
-AWS_REGION=us-east-1
-BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
-```
-- Tool use IDs and Converse API schemas match MCP tool definitions.
-- Default credential provider chain is used.
-- *Demo Tip:* Bedrock adds 2–5 seconds latency per LLM decision. If presenting under strict time constraints, stick with `LLM_PROVIDER=mock` for instantaneous responses.
-
-### Skip for Demo
-- **Cognito** — authentication is not required for a hackathon demo. Adding it breaks the name-based demo flow.
-- **RDS / Aurora** — SQLite edge cache is fast, local, and zero-cost ($0).
-- **ECS / App Runner** — run locally on localhost/laptop to avoid network latency on voice synthesis.
-- **HealthLake** — long-term roadmap, not part of the active workflow demonstration.
-
----
-
-## Pre-Demo Checklist
-
-Run these in order the morning of your presentation:
-
-```sh
-# 1. Clean slate — fresh DB with demo data
-npm run db:init
-npm run import:data
-
-# 2. Verify everything passes
-npm test
-npm run typecheck
-
-# 3. Build the frontend
-npm run build:client
-
-# 4. Start the server
-npm run dev
-
-# 5. Open http://127.0.0.1:3000 and run through the demo flow once
-# Say: "Hi, I am Seema" → confirm you see 2 tasks
-# Click: Simulate Wi-Fi Drop → Resume Saved Workflow
-# Say: "Prepare my handoff for Reema"
-# Switch to Reema, accept tasks, finalize
-```
-
-If any step fails silently (no tasks, no conflicts, wrong names), re-run `npm run db:init && npm run import:data` and restart.
-
----
-
-## Summary: Resolution Status (All 8 Fixed & Verified)
-
-1. ✅ **Voice API self-connect bypass** — Direct in-process call saves 80–150ms per utterance (`src/server.ts`).
-2. ✅ **VoiceWorkspace polling separation** — Display polls at 2.5s (guarded by `!busyRef.current`), trace at 5.0s (`client/src/components/VoiceWorkspace.tsx`).
-3. ✅ **MCP session TTL eviction** — Evicts sessions idle >30m every 5m (`src/server.ts`).
-4. ✅ **Route-level try/catch on finalize & acknowledge** — Returns HTTP 400 for schemas, HTTP 422 for clinical prerequisites (`src/server.ts`).
-5. ✅ **Audit log limit raised to 100** — Live telemetry keeps complete tool call history (`src/server.ts`).
-6. ✅ **Dynamic shift resolution** — Frontend no longer hardcodes shift ID; server resolves active shift dynamically (`client/src/api.ts` & `src/server.ts`).
-7. ✅ **Startup receipt pruning** — Deletes `operation_receipts` older than 3 days on startup (`src/server.ts`).
-8. ✅ **Stale pending confirmation expiry** — Expired pending state cleared on `load()` (`src/services/voice.service.ts`).
+**The core workflow is implemented, but the original end-to-end definition of done is not yet fully verified.** The biggest remaining gaps are natural-language handling across patient/task requests, physical voice testing, and recovery after reopening the project.
+
+This was a read-only review. I did not edit files, run tests or builds, call application endpoints, or change database state. The plan below exists only in this response. Staff workspace changes remain outside scope.
+
+**1. What we have completed**
+
+| Area | Current implementation | Evidence and limits |
+|---|---|---|
+| Default experience | Opens the voice workspace with a fresh conversation and a lower-center microphone button. | Implemented; browser automation covers the default view and microphone placement. |
+| Speech input | Requests microphone permission, displays interim transcription, and buffers speech for 2.5 seconds before submission. | Tested with simulated recognition, including a 1.1-second pause and recognition restart. Physical microphone reliability remains unverified. |
+| Speech output | Speaks backend responses and returns to listening; handles playback errors and stopping. | Simulated synthesis tests exist. Actual audible playback remains unverified. |
+| Alexa conversation | Casual conversation reaches the configured Bedrock model without requiring a nurse introduction. | Both examples you reported passed live Bedrock checks in the preceding work. |
+| Nurse selection | Matches existing names/badges and selects a shift. | Implemented and tested. Saying a name selects demo context; it does not authenticate somebody. |
+| Patient/task reads | Retrieves stored patient details, assigned tasks, status filters, discrepancies, and available Epic snapshots. | Backend checks cover reads, missing records, ambiguity, and multiple records. |
+| Supported changes | Stages task updates, discrepancy resolution, escalation, custody acceptance, and local handoff finalization. | Confirmation, persistence, stale-record rejection, and exact retries are covered. |
+| Backend integration | Browser transcript → HTTP API → Streamable HTTP MCP → services/SQLite → response. | Existing MCP boundary and protocol checks are present. |
+| Durable state | Stores checkpoints, operation receipts, conversation state, and workflow results. | Backend recovery tests exist, including process interruption in the broader orchestrator. |
+| Epic integration | Reads sandbox records and retains source timestamps and failure states. | Historical live reports support successful reads. Live Epic publication failed and remains disabled. |
+
+The latest verification from the preceding work was **111 backend checks passed**, plus successful typecheck, production build, and two live Bedrock conversational turns. I did **not** rerun those during this review. The current verification record describes those boundaries in [VOICE_VERIFICATION.md](C:/Users/siddh/Desktop/dev_assist/VOICE_VERIFICATION.md).
+
+**2. What remains incomplete or fragile**
+
+These are the most important findings from the current code.
+
+| Priority | Finding | Practical effect |
+|---|---|---|
+| Critical | Patient/task routing still depends heavily on keywords. | Reasonable phrasing can miss the correct backend operation. |
+| Critical | Physical speech recognition and audible output have not been verified together. | Passing browser simulations does not establish that your actual microphone problem is resolved. |
+| High | Conversation history is split between general chat and workflow handling. | A follow-up can lose the patient/task context when it crosses between those paths. |
+| High | Fresh-page behavior makes older uncertain requests inaccessible through the normal retry control. | The request remains stored, but reopening switches to a new session. |
+| High | Some existing data is available only through authenticated-mode branches. | The current name-only voice mode can omit information that exists in the selected database. |
+| Medium | “Alexa” is currently a recognized prefix, not a complete wake-word system. | The microphone must first be enabled; voice interruption during an answer is not implemented. |
+| Medium | Several documents describe older implementations. | They can lead us to repeat work or claim capabilities that are not currently verified. |
+
+More specifically:
+
+- **The LLM integration is only partly unified.** General conversation now calls Bedrock. Ordinary patient/task requests usually use the deterministic interpreter. The separate “Ask assistant” route lets the model plan reads, but replaces its final response with the deterministic renderer. This explains why parts of the assistant still sound fixed. See [voice-agent.service.ts](C:/Users/siddh/Desktop/dev_assist/src/services/voice-agent.service.ts:86) and [orchestrator.ts](C:/Users/siddh/Desktop/dev_assist/src/agent/orchestrator.ts:147).
+
+- **Some natural follow-ups are routed away from their records.** From static inspection, phrases such as “What should I do next?” or “Mark it done” can enter general conversation, where the model has no patient/task records or execution tools. These are code-derived concerns, not newly executed failures. The routing rule is in [voice.service.ts](C:/Users/siddh/Desktop/dev_assist/src/services/voice.service.ts:110).
+
+- **Name detection still has edge cases.** The reported “not feeling well” example is fixed, but the current approach excludes a list of feeling words. An expression such as “I am confused” can still resemble an introduction. We should replace that fragile interpretation with explicit, validated intent handling rather than keep adding exceptions.
+
+- **Fresh opening and recovery need to coexist.** A clean opening is already implemented, as requested. However, retry lookup only checks the newly active session. Preserving an old uncertain request is useful only if its outcome can later be reconciled safely. See [voice-api.ts](C:/Users/siddh/Desktop/dev_assist/client/src/voice-api.ts:8).
+
+- **The current data profile needs targeted verification.** Configuration selects the existing operational sandbox database while staff authentication is disabled. Voice patient notes and care-team-only patient lookup are conditional on authenticated mode. This does not mean all patient queries fail; it means the complete existing dataset is not necessarily exposed consistently through the requested name-only voice flow. See [voice.service.ts](C:/Users/siddh/Desktop/dev_assist/src/services/voice.service.ts:263).
+
+- **Speech controls have remaining edge cases.** Recognition stops during playback, so a spoken interruption cannot currently stop Alexa mid-answer. The mute setting affects text submissions but is not passed into the microphone conversation hook. Recognition ending with unfinished interim text also needs explicit testing. These are reliability items within the existing voice scope.
+
+- **“Latest information” currently means latest stored information unless Epic is refreshed.** We must keep the snapshot time visible and spoken when relevant. A current local database read is not proof of a fresh Epic read.
+
+**3. What has failed, and what has been filmed**
+
+There are three distinct evidence levels:
+
+| Evidence | What we have |
+|---|---|
+| Automated verification | Backend checks, simulated speech-browser tests, and integration scripts. |
+| Live service verification | Bedrock conversational calls and historical Epic sandbox read reports. |
+| Recorded human demonstration | Screenshots exist; I found no demo video in this repository. |
+
+I cannot establish whether footage exists elsewhere on your computer.
+
+The confirmed external failure is **Epic `DocumentReference.Create` returning HTTP 403**. The saved report correctly records failure and no successful readback. It must not be presented as working write-back. See [epic-write-report.json](C:/Users/siddh/Desktop/dev_assist/deploy/epic-write-report.json).
+
+The existing Epic read report records encounters, conditions, an allergy, and a medication order, but **no medication-administration or document records** for that checked scenario. Missing records must remain missing—not become inferred completion or fabricated clinical information. See [epic-workflow-live-report.json](C:/Users/siddh/Desktop/dev_assist/deploy/epic-workflow-live-report.json).
+
+**4. Proposed next phases**
+
+Each phase should finish with an observable acceptance check before moving on.
+
+| Phase | Work | Acceptance gate |
+|---|---|---|
+| **1 — Establish the actual voice baseline** | Use the current voice workspace, browser, microphone, and existing dataset. Check capture, transcription, pauses, playback, and automatic listening. Record which layer fails when something goes wrong. | A real spoken question produces the correct transcript, backend answer, audible response, and return to listening. |
+| **2 — Complete natural-language routing** | Use the existing model adapter to interpret conversational requests and follow-ups. Map supported intents to existing validated services. Preserve deterministic authorization, confirmation, and mutation checks. Remove dependence on “Ask assistant” for ordinary supported questions. | Equivalent phrasings reach the same operation; ambiguous requests clarify; model wording cannot manufacture an action or record fact. |
+| **3 — Reconcile fresh starts with recovery** | Keep the initial screen blank. Make uncertain prior outcomes recoverable without automatically resuming or repeating an action. Test process interruption around model-result storage and task commits. | Reopening stays fresh, while a lost response can be reconciled without duplicate changes. |
+| **4 — Verify complete dataset coverage** | Exercise the requested name-only voice profile against existing patients, assignments, snapshots, and relevant notes. Correct voice-path gaps without changing staff workspace behavior. Check source age and failed refresh handling. | Every supported answer matches its source; unavailable, historical, and failed data are clearly distinguished. |
+| **5 — Run the complete acceptance suite** | Combine backend, simulated browser, live-model, and physical-device checks. Test supported writes only in isolated test data. Verify errors, ambiguity, permissions where enabled, and restart behavior. | The full matrix below passes with explicit evidence and no unresolved critical defect. |
+| **6 — Rehearse and record the demonstration** | Align documentation with verified behavior, rehearse one coherent voice journey, and record the real interaction and backend traces. | Another person can reproduce the demonstrated scenario, and the video contains no unsupported success claims. |
+
+For Phase 2, the intended flow should be:
+
+**Speech → transcript → context-aware interpretation → validated existing backend operation → grounded response → speech.**
+
+The model should help interpret language and explain results. The backend must continue deciding which records are accessible, whether an action is valid, and whether it committed successfully.
+
+**5. Required acceptance matrix**
+
+This should become our completion checklist during implementation—not a claim that everything already passes.
+
+| Scenario | Required result |
+|---|---|
+| Fresh opening | Blank conversation, voice workspace selected, microphone control available. |
+| Greeting before identification | Natural response without repeatedly demanding a nurse name. |
+| Valid/unknown/ambiguous nurse | Correct profile, honest failure, or clarification; no accidental identity switch. |
+| Patient question | Correct stored patient and source information. |
+| Task question | Correct assigned records and status. |
+| Different status filters | Pending, in-progress, completed, and cancelled results match storage. |
+| Follow-up across chat and workflow | “That patient,” “it,” and “what next?” retain the appropriate context. |
+| Supported update | Exact proposal → human confirmation → persisted result → subsequent query reflects it. |
+| Negation or ambiguity | No unintended staged or committed action. |
+| Unsupported action | Clear explanation; no fabricated execution. |
+| Model/backend/Epic failure | Honest response, recoverable state, no false success. |
+| Lost response/reload/restart | Reconcile committed state; do not repeat a mutation. |
+| Speech pauses and recognition restart | Sentence remains intact; no premature submission. |
+| Playback, pause, mute, microphone errors | No stuck state or unwanted late playback. |
+| Full physical interaction | Spoken input → correct operation → audible response → listening again. |
+
+The existing [browser test](C:/Users/siddh/Desktop/dev_assist/scripts/verify-voice-browser.ts) covers useful wiring and recovery scenarios, but it explicitly simulates recognition and synthesis. Physical testing is therefore a separate completion gate.
+
+**6. Demonstration plan**
+
+Once those phases pass, record a short continuous journey:
+
+1. Open the project fresh and greet Alexa.
+2. Identify an existing nurse and ask a naturally phrased patient/task question.
+3. Ask a follow-up without repeating the full context.
+4. Request a supported local task change, review it, confirm it, and query the saved status.
+5. Show a discrepancy or missing-data response.
+6. Demonstrate an interruption and recovery with actual checkpoints.
+7. Show the model/provider trace and accurately label Epic sandbox data versus local coordination state.
+
+Actual Alexa hardware integration, successful Epic publication, new authentication, dashboards, and additional integrations are **not prerequisites for finishing this scoped browser voice workflow**. Keep Epic writes disabled while authorization remains unresolved.
+
+The immediate next phase should be **the physical voice baseline**, followed by **unifying natural-language workflow routing**. Those address the two largest remaining differences between the current implementation and the experience you originally requested.

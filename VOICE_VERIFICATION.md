@@ -14,6 +14,8 @@ On 22 October 2026, `npm test` passed 111 checks, including adapter-stubbed conv
 
 All mutating checks use temporary databases and the existing fixture importer or existing isolated test fixtures.
 
+Conversational wording verification: 117 backend checks, 46 existing access-control checks, the Epic fixture workflow, typecheck, production build, and the simulated speech-browser journey passed after the voice reply changes. Introductions no longer recite tasks unless requested; ordinary task answers omit database metadata; focused patient questions retain missing-data and snapshot-age notices. Review notes accept natural follow-up answers without a required prefix, preserve an already selected status, and still require confirmation. Two live Bedrock turns passed with the revised conversational guidance. Physical microphone acoustics and audible playback remain unverified.
+
 | Command | Coverage |
 | --- | --- |
 | `npm test` | MCP transport, durable recovery, voice reads, patient/room ambiguity, status filters, confirmations, persisted updates, exact retries, failed writes, handoffs, and clinical refusal |

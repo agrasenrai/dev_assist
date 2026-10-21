@@ -28,7 +28,9 @@ type State = { revision: number; nurse: Nurse | null; shift: Shift | null; pendi
   messages: Message[]; conversationMessages?: Message[]; speech: string };
 export type VoiceInput = { session_id: string; utterance: string; expected_revision: number; idempotency_key: string };
 
-const greeting = 'What is your registered nurse name?';
+const greeting = 'Before I look up your records, what name should I look for?';
+const spokenStatus = (status: string) => status === 'FLAGGED_CONFLICT' ? 'waiting for a discrepancy review' : status.toLowerCase().replaceAll('_', ' ');
+const firstName = (name: string) => name.replace(/,\s*RN$/i, '').split(/\s+/)[0];
 const initial = (): State => ({ revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
   selectedPatientId: null,
   selectedHandoffId: null, focus: 'tasks', messages: [], conversationMessages: [], speech: staffAuthRequired() && currentStaff()
@@ -112,8 +114,17 @@ export class VoiceService {
     if (!normalized || this.introduction(text,state)) return false;
     if (/^(?:yes|confirm|yes confirm|confirm it|yes please|cancel|no|stop|never mind|no cancel|end (?:my )?session|sign out|log out|goodbye|bye)$/.test(normalized)) return false;
     if (state.pending && /\b(completed|in progress|cancelled|canceled|pending|because|note)\b/.test(normalized)) return false;
+    if (this.reviewNote(text,state.pending)) return false;
     if (/\b(tasks?|patients?|shift|handoff|room|records?|discrepanc\w*|conflicts?|assigned|pending|completed|unfinished|remaining|status|accept|finalize|finalise|escalate|supervisor|resolve|allerg\w*|diagnos\w*|prescrib\w*|dose|treatment|administer)\b/.test(normalized)) return false;
     return true;
+  }
+
+  private static reviewNote(text: string, pending: Pending | null) {
+    if (!pending || pending.ready || !['RESOLVE','ESCALATE'].includes(pending.kind)) return null;
+    // A direct answer to a requested note need not use a scripted "because" prefix.
+    if (/^(?:show|what|which|who|how|explain|tell|list|read|sync|prepare|create|accept|finalize|cancel|stop|no|yes|confirm)\b/i.test(text.trim())) return null;
+    const note = text.replace(/^\s*(?:in progress|completed|cancelled|canceled)[\s,.:;-]*/i,'').trim();
+    return note || null;
   }
 
   static isConversational(input: VoiceInput) {
@@ -165,27 +176,29 @@ export class VoiceService {
         const claimed = normal(introduction[1]!.split(/[,.;!?]|\b(?:and|please|let me|show|tell|what|mere)\b/i)[0]!);
         const matches = staffAuthRequired() && staff ? [{id:staff.id,name:staff.name,department:staff.unit}] : this.resolveNurse(claimed);
         if (matches.length !== 1) {
-          speech = matches.length ? 'More than one nurse matches. Please say “I am” followed by your full name or badge number.'
-            : 'I could not match that name. Please say “I am” followed by your full registered name or badge number.';
+          speech = matches.length ? 'More than one nurse has that name. What’s your full name or badge number?'
+            : 'I couldn’t find that name. What’s your full registered name or badge number?';
         } else {
           state.nurse = matches[0]!;
           state.shift = staffAuthRequired() ? db.prepare(`SELECT s.id,s.unit_id AS unit,s.shift_type AS type,s.start_time AS start,s.end_time AS end FROM shifts s JOIN staff_shift_memberships m ON m.shift_id=s.id
             WHERE m.staff_id=? AND s.status IN ('ACTIVE','HANDOFF_IN_PROGRESS') ORDER BY s.start_time DESC LIMIT 1`).get(staff!.id) as Shift || null : db.prepare(`SELECT id, unit_id AS unit, shift_type AS type, start_time AS start, end_time AS end
             FROM shifts WHERE unit_id = ? AND status IN ('ACTIVE', 'HANDOFF_IN_PROGRESS')
             ORDER BY start_time DESC LIMIT 1`).get(state.nurse.department) as Shift || null;
-          speech = `Hello ${state.nurse.name}. ${state.shift ? this.summary(state) : 'No active demo shift is configured for your unit.'}`;
+          speech = `Hi ${firstName(state.nurse.name)}. ` + (state.shift
+            ? /\b(tasks?|shift|pending|unfinished|assigned)\b/i.test(text) ? this.summary(state) : 'What can I help you with?'
+            : 'I don’t have an active shift for your unit right now.');
         }
       } else if (!text && /\balexa\b/i.test(spokenText)) {
         speech = "Yes, I'm Alexa. I'm listening. Take your time.";
       } else if (/^(?:hi+|hey+|hello+|good (?:morning|afternoon|evening))(?: there)?(?: how are you(?: doing)?)?(?: alexa)?$/.test(normalized)) {
         state.pending = null;
-        speech = "Hi! I'm Alexa. How can I help you today?";
+        speech = "Hey, I'm here. What's on your mind?";
       } else if (/^(?:what(?:s| is) your name|who are you|what should i call you)$/.test(normalized)) {
         state.pending = null;
         speech = "I'm Alexa, your nursing workflow assistant.";
       } else if (/^(?:how are you|how are you doing|how is it going)$/.test(normalized)) {
         state.pending = null;
-        speech = "I'm here and ready to help. How can I help you today?";
+        speech = "I'm here and listening. How are you doing?";
       } else if (/^(?:thanks|thank you|thanks alexa|thank you alexa)$/.test(normalized)) {
         state.pending = null;
         speech = "You're welcome. I'm here if you need anything else.";
@@ -197,14 +210,14 @@ export class VoiceService {
         speech = 'I can look up your existing patient and task records, track local workflow status, and help with reviewed handoffs. What would you like help with?';
       } else if (/^(?:alexa )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
         Object.assign(state, initial(), { revision: state.revision });
-        speech = 'Your session has ended. The display is cleared. Introduce yourself to begin another session.';
+        speech = 'Take care. I’ve cleared this conversation from the screen.';
       } else if (this.conversationText(state,text)) {
         state.pending = null;
-        speech = "I'm listening. I'm in local conversation mode; tell me what you would like help with.";
+        speech = "I'm listening. I'm using the local demo, so free conversation is limited. What would you like help with?";
       } else if (!state.nurse) {
         speech = greeting;
       } else if (!state.shift) {
-        speech = 'No active demo shift is configured for your unit. Ask the demo administrator to configure a shift.';
+        speech = 'I don’t have an active shift for your unit right now.';
       } else {
         speech = this.interpret(state, text, input.idempotency_key);
       }
@@ -231,9 +244,9 @@ export class VoiceService {
   private static summary(state: State) {
     const r = this.records(state);
     const unfinished = r.tasks.filter(t => !['COMPLETED', 'CANCELLED'].includes(t.status)).length;
-    return `You have ${r.tasks.length} assigned tasks, ${unfinished} unfinished, and ${r.conflicts.length} unresolved discrepancies in your current view. ` +
-      (r.candidates.length ? `${r.candidates.length} incoming handoff tasks await your explicit acceptance. ` : '') +
-      'Your tasks are on the screen. You can ask about a room, review discrepancies, or prepare a handoff.';
+    return `You have ${r.tasks.length} assigned task${r.tasks.length === 1 ? '' : 's'}, with ${unfinished} still unfinished.` +
+      (r.conflicts.length ? ` ${r.conflicts.length} discrepanc${r.conflicts.length === 1 ? 'y needs' : 'ies need'} your review.` : '') +
+      (r.candidates.length ? ` There are also ${r.candidates.length} incoming handoff tasks waiting for your acceptance.` : '');
   }
 
   private static selectTask(state: State, text: string, tasks: Task[]): Task | null {
@@ -253,11 +266,13 @@ export class VoiceService {
     return null;
   }
 
-  private static taskSpeech(task: Task) {
+  private static taskSpeech(task: Task, details = false) {
+    const answer = `${task.title} for ${task.patientName}, ${task.roomNumber}, is ${spokenStatus(task.status)}.`;
+    if (!details) return answer;
     const row = db.prepare('SELECT description, scheduled_time, completed_time, updated_at FROM tasks WHERE id=?').get(task.id) as any;
-    return `${task.patientName}, ${task.roomNumber}: ${task.title}. Recorded local workflow status: ${task.status.replaceAll('_', ' ')}. ` +
-      `Priority: ${task.priority}. Scheduled: ${row.scheduled_time}. ` + (row.description ? `${row.description}. ` : '') +
-      (row.completed_time ? `Completion recorded: ${row.completed_time}. ` : '') + `Source: ${task.source}; updated ${row.updated_at}.`;
+    return `${answer} The recorded priority is ${task.priority.toLowerCase()}. ` +
+      (row.description ? `${row.description}. ` : '') + `Scheduled for ${row.scheduled_time}. ` +
+      (row.completed_time ? `Completion was recorded at ${row.completed_time}. ` : '') + `Source: ${task.source}; updated ${row.updated_at}.`;
   }
 
   private static patientSpeech(state: State, text: string, tasks: Task[]) {
@@ -274,10 +289,11 @@ export class VoiceService {
       new RegExp(`\\broom ${normal(t.roomNumber).replace(/^room /, '')}\\b`).test(query) ||
       t.patientName.split(/\s+/).some(n => n.length > 2 && !['patient','demo','test'].includes(normal(n)) && query.endsWith(` ${normal(n)}`)));
     const previous = patients.find(p => p.patientId === state.selectedPatientId) || tasks.find(t => t.id === state.selectedTaskId);
-    const implicit = !/\broom\b/.test(query) && (!/\bpatient\b/.test(query) || /\bpatient$/.test(query));
+    const implicit = !/\broom\b/.test(query) && (!/\bpatient\b/.test(query) || /\bpatient$/.test(query) ||
+      /\b(?:my|this|that|the) patient(?: (?:s|have|has|is|doing|allergies|allergy|diagnosis|admission|today|please|right|now))*$/.test(query));
     const patient = matches.length === 1 ? matches[0] : !matches.length && implicit && /\b(this|that|their|my patient|the patient)\b/.test(query)
       ? previous || (patients.length === 1 ? patients[0] : undefined) : undefined;
-    if (!patient) return 'Please specify the patient name or room from your current view. I could not identify one patient.';
+    if (!patient) return 'Which patient do you mean? I couldn’t find a single match. What’s their name or room?';
     if (staffAuthRequired()) OperationalSandboxService.assertPatient(patient.patientId,state.shift!.id);
     state.selectedPatientId = patient.patientId;
     state.selectedTaskId = tasks.find(t => t.patientId === patient.patientId)?.id || null;
@@ -286,11 +302,32 @@ export class VoiceService {
     const notes = staffAuthRequired() ? db.prepare('SELECT text,created_at FROM operational_notes WHERE patient_id=? AND shift_id=? ORDER BY created_at DESC LIMIT 3')
       .all(patient.patientId, state.shift!.id) as Array<{text:string;created_at:string}> : [];
     const epic = EpicWorkflowService.recordsForPatients([patient.patientId]);
-    return `${row.full_name}, ${row.room_number}. Recorded diagnosis: ${row.primary_diagnosis || 'unavailable'}. ` +
-      `Allergy information: ${row.allergies || 'not available; a negative allergy history is not verified'}. ` +
-      `Admission: ${row.admission_date}. ` + own.map(t => this.taskSpeech(t)).join(' ') +
-      notes.map(n => ` Recorded shift note at ${n.created_at}: ${n.text}.`).join('') +
-      (epic.length ? EpicWorkflowService.narrative(epic).replace(/#+/g, '').replace(/\n+/g, ' ') : ' No Epic snapshot is available for this patient; these are stored local records.');
+    const freshness = epic.map(record => ` Epic snapshot retrieved at ${record.retrievedAt}.` +
+      (record.error ? ' The latest refresh failed, so these records may be stale.' : '') +
+      (record.status === 'PARTIAL' ? ' Some source information could not be retrieved.' : '')).join('');
+    const allergies = row.allergies ? `The recorded allergy information is: ${row.allergies}.`
+      : 'I don’t have allergy information for this patient, so I can’t confirm a negative allergy history.';
+    const diagnosis = row.primary_diagnosis ? `The recorded diagnosis is ${row.primary_diagnosis}.` : 'I don’t have a recorded diagnosis for this patient.';
+    const identity = `${row.full_name}, ${row.room_number}. `;
+    // Answer a specific question directly rather than reading out the entire chart.
+    if (/\ballerg\w*\b/.test(query) && !/\b(diagnosis|admission|medications|details|everything|summary)\b/.test(query)) return identity + allergies + freshness;
+    if (/\bdiagnosis\b/.test(query) && !/\b(allerg\w*|admission|medications|details|everything|summary)\b/.test(query)) return identity + diagnosis + freshness;
+    if (/\badmission\b/.test(query) && !/\b(allerg\w*|diagnosis|medications|details|everything|summary)\b/.test(query)) return identity + `The recorded admission is ${row.admission_date || 'unavailable'}.` + freshness;
+    const source = epic.length ? epic.map(record => {
+      const sections = record.snapshot.sections;
+      const conditions = sections.Condition?.resources || [];
+      return `The Epic snapshot was retrieved at ${record.retrievedAt}. ` +
+        (record.error ? 'The latest refresh failed, so these records may be stale. ' : '') +
+        (record.status === 'PARTIAL' ? 'Some source information could not be retrieved. ' : '') +
+        conditions.slice(0,2).map(c => `A recorded condition is ${c.code?.text || c.code?.coding?.[0]?.display || 'unspecified'}. `).join('') +
+        (conditions.length > 2 ? `${conditions.length - 2} more conditions are in the source records. ` : '') +
+        (sections.MedicationAdministration?.status === 'EMPTY' ? 'No medication administration records were returned. ' : '') +
+        (sections.DocumentReference?.status === 'EMPTY' ? 'No handoff document records were returned. ' : '');
+    }).join('') : 'These are stored local records; I don’t have an Epic snapshot for this patient.';
+    const detailed = /\b(details|everything|clinical|medications|source records)\b/.test(query);
+    return identity + diagnosis + ' ' + allergies + ' ' + own.map(t => this.taskSpeech(t)).join(' ') +
+      (notes[0] ? ` The latest recorded shift note, at ${notes[0].created_at}, says: ${notes[0].text}. ` : ' ') +
+      (detailed && epic.length ? EpicWorkflowService.narrative(epic).replace(/#+/g, '').replace(/\n+/g, ' ') : source);
   }
 
   private static stage(state: State, pending: Pending): string {
@@ -304,12 +341,12 @@ export class VoiceService {
     const text = normal(raw);
     if (/^(?:alexa )?(?:cancel|never mind|no|no cancel|stop)$/.test(text)) {
       state.pending = null;
-      return 'Cancelled. No pending action will be performed.';
+      return 'Okay, I’ve cancelled that. No records were changed.';
     }
     if (/^(?:alexa )?(?:yes|confirm|yes confirm|confirm it|yes please)$/.test(text)) {
       const pending = state.pending;
       state.pending = null;
-      if (!pending?.ready) return 'There is no complete action awaiting confirmation. Please state the action you want.';
+      if (!pending?.ready) return 'There’s nothing ready to confirm yet. What would you like to do?';
       if (pending.expiresAt < Date.now() || pending.version !== this.version(state)) {
         return 'The confirmation expired or the records changed. Please review the current details and request the action again.';
       }
@@ -326,16 +363,18 @@ export class VoiceService {
             } else {
               new SQLiteCacheProvider().updateLocalTaskStatus(taskId, pending.finalStatus!, nurseId, `${key}:status`, pending.note!);
             }
-            return `Local task status was saved as ${pending.finalStatus!.replaceAll('_', ' ')}. This does not record medication administration or change Epic orders.`;
+            const task = this.records(state).tasks.find(t => t.id === taskId)!;
+            return `Done. ${task.title} for ${task.patientName} is now ${spokenStatus(pending.finalStatus!)} in the local task record.` +
+              (/medicat|infusion|dose|drug/i.test(task.title) ? ' This doesn’t record medication administration or change Epic orders.' : '');
           }
           if (pending.kind === 'RESOLVE') {
             if (!ConflictService.resolveConflict(pending.conflictId!, nurseId, pending.finalStatus! as 'COMPLETED' | 'IN_PROGRESS' | 'CANCELLED', pending.note!, `${key}:resolve`))
               throw new Error('Discrepancy no longer exists');
-            return 'Your review was saved and the local workflow status was updated. This does not record medication administration or publish to Epic.';
+            return `Your review is saved. The local task is now ${spokenStatus(pending.finalStatus!)}. Nothing was published to Epic.`;
           }
           if (pending.kind === 'FINALIZE') {
             HandoffService.finalize(pending.handoffId!, nurseId, `${key}:finalize`, true);
-            return 'The reviewed handoff is finalized locally. No external clinical record was published.';
+            return 'Done, the handoff is finalized locally. Nothing was published to Epic.';
           }
           for (const id of pending.taskIds) HandoffService.acknowledge({ task_id: id, nurse_id: nurseId,
             action: pending.kind === 'ACCEPT' ? 'ACCEPT_HANDOFF' : 'FLAG_FOR_SUPERVISOR', handoff_id: pending.handoffId || undefined,
@@ -373,7 +412,7 @@ export class VoiceService {
     }
     if (/\b(update|mark|set|start|finish|complete|cancel|reopen)\b/.test(text) || collecting?.kind === 'STATUS') {
       const task = selected || visibleTasks.find(t => t.id === collecting?.taskIds[0]);
-      if (!task) return 'Which task should I update? Please give the full task title and patient or room.';
+      if (!task) return 'Which task would you like to update? What’s the patient’s name or room and the task title?';
       if (!r.tasks.some(t => t.id === task.id)) return 'Accept custody through the reviewed handoff before updating this task.';
       if (r.conflicts.some(c => c.taskId === task.id)) return 'This task has an unresolved discrepancy. Review and resolve the discrepancy first.';
       const status = /\b(in progress|start)\b/.test(text) ? 'IN_PROGRESS' : /\b(completed|complete|done|finish|finished)\b/.test(text) ? 'COMPLETED'
@@ -383,38 +422,42 @@ export class VoiceService {
       const revision = (db.prepare('SELECT revision FROM operational_task_versions WHERE task_id=?').get(task.id) as any)?.revision || 0;
       return this.stage(state, {kind:'STATUS', taskIds:[task.id],handoffId:null,conflictId:null,finalStatus:status,note,
         taskRevision:revision,ready:Boolean(status),version:'',expiresAt:0,prompt:status
-          ? `Set ${task.title} for ${task.patientName} to ${status.replaceAll('_', ' ')} locally? Say “confirm” or “cancel”.`
-          : 'What local task status should I record: pending, in progress, completed, or cancelled?'});
+          ? `Should I mark ${task.title} for ${task.patientName} as ${spokenStatus(status)} locally? Say “confirm” or “cancel”.`
+          : 'What status should I save for this task?'});
     }
 
-    if (/\b(resolve|verify)\b/.test(text) || (collecting?.kind === 'RESOLVE' && /\b(completed|in progress|cancelled|canceled|because|note)\b/.test(text))) {
+    if (/\b(resolve|verify)\b/.test(text) || (collecting?.kind === 'RESOLVE' && (/\b(completed|in progress|cancelled|canceled|because|note)\b/.test(text) || this.reviewNote(raw,collecting)))) {
       const task = selected || (collecting ? visibleTasks.find(t => t.id === collecting.taskIds[0]) : null);
       if (!task) return 'Please specify the room or patient whose discrepancy you want to review.';
       state.selectedTaskId = task.id; state.focus = 'conflicts';
       const conflict = r.conflicts.find(c => c.taskId === task.id);
       if (!conflict) return 'No unresolved discrepancy is available for that task.';
-      const finalStatus = /\bin progress\b/.test(text) ? 'IN_PROGRESS' : /\bcompleted\b/.test(text) ? 'COMPLETED'
+      const answeringNote = collecting?.finalStatus && this.reviewNote(raw,collecting) &&
+        !/^\s*(?:in progress|completed|cancelled|canceled)\b/i.test(raw);
+      const finalStatus = answeringNote ? collecting.finalStatus : /\bin progress\b/.test(text) ? 'IN_PROGRESS' : /\bcompleted\b/.test(text) ? 'COMPLETED'
         : /\bcancelled\b|\bcanceled\b/.test(text) ? 'CANCELLED' : collecting?.finalStatus || null;
-      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || collecting?.note || null;
+      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || this.reviewNote(raw,collecting) || collecting?.note || null;
       const ready = Boolean(finalStatus && note);
       return this.stage(state, { kind: 'RESOLVE', taskIds: [task.id], handoffId: null, conflictId: conflict.id,
         finalStatus, note, ready, version: '', expiresAt: 0,
-        prompt: ready ? `For ${task.patientName}, ${task.roomNumber}, set local workflow status to ${finalStatus!.replaceAll('_', ' ')} and save your note: “${note}”. Say “confirm” or “cancel”.`
-          : `${conflict.systemAName} says ${conflict.systemAVal}; ${conflict.systemBName} says ${conflict.systemBVal}. State your verified local workflow status and note, for example “in progress because I reviewed the source records”.` });
+        prompt: ready ? `For ${task.patientName}, ${task.roomNumber}, mark the local task ${spokenStatus(finalStatus!)} with your note: “${note}”. Say “confirm” or “cancel”.`
+          : finalStatus ? 'What should I note about your review?'
+          : note ? 'What task status did you verify?'
+          : `${conflict.systemAName} says ${conflict.systemAVal}; ${conflict.systemBName} says ${conflict.systemBVal}. What task status did you verify?` });
     }
     if (/\b(escalate|supervisor)\b/.test(text) || collecting?.kind === 'ESCALATE') {
       const task = selected || visibleTasks.find(t => t.id === collecting?.taskIds[0]);
       if (!task) return 'Please specify the room or patient to flag for supervisor review.';
-      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || null;
+      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || this.reviewNote(raw,collecting) || null;
       return this.stage(state, { kind: 'ESCALATE', taskIds: [task.id], handoffId: null, conflictId: null, finalStatus: null,
         note, ready: Boolean(note), version: '', expiresAt: 0, prompt: note
           ? `Save a local escalation for ${task.patientName}, ${task.roomNumber}: “${note}”? Say “confirm” or “cancel”.`
-          : 'Please give your escalation reason, beginning with “because”.' });
+          : 'What reason should I include in the escalation note?' });
     }
     if (/\b(prepare|create|generate|draft)\b/.test(text) && /\bhandoff\b/.test(text)) {
       const target = raw.match(/\b(?:for|to)\s+(.+?)[.!?]*$/i)?.[1]?.trim();
       const nurses = target ? this.resolveNurse(normal(target)) : [];
-      if (nurses.length !== 1 || nurses[0]!.id === state.nurse!.id) return 'Who should receive the handoff? Say “prepare my handoff for” followed by another nurse’s full name.';
+      if (nurses.length !== 1 || nurses[0]!.id === state.nurse!.id) return 'Who should receive the handoff? What’s the other nurse’s full name?';
       const receiver = nurses[0]!;
       if (receiver.department !== state.nurse!.department) return 'The receiving nurse must belong to this demo unit.';
       const draft = HandoffService.createDraft({ outgoing_nurse_id: state.nurse!.id, incoming_nurse_id: receiver.id,
@@ -455,14 +498,14 @@ export class VoiceService {
       const conflicts = selected ? r.conflicts.filter(c => c.taskId === selected.id) : r.conflicts;
       if (selected) state.selectedTaskId = selected.id;
       return conflicts.length ? conflicts.map(c => `${c.patientName}, ${c.patientRoom}: ${c.systemAName} says ${c.systemAVal}; ${c.systemBName} says ${c.systemBVal}.`).join(' ') +
-        ' Human review is required. You can say “resolve discrepancy in room” followed by the room number.'
+        ' These records disagree and need your review.'
         : 'No unresolved discrepancy was returned for the requested tasks.';
     }
     const plural = listQuery;
     if (selected && !plural && /\b(room|patient|show|explain|details|that|this|it|status|completed|done)\b/.test(text)) {
       state.focus = 'tasks'; state.selectedTaskId = selected.id;
       state.selectedPatientId = selected.patientId;
-      return this.taskSpeech(selected);
+      return this.taskSpeech(selected, /\b(explain|details|source|scheduled|when|history)\b/.test(text));
     }
     if (/\b(task|tasks|pending|shift|resume|continue|next|remaining|unfinished|assigned)\b/.test(text)) {
       state.focus = 'tasks';
@@ -476,11 +519,11 @@ export class VoiceService {
         : /\bcancelled|canceled\b/.test(text) ? 'CANCELLED' : /\bpending\b/.test(text) ? 'PENDING' : null;
       if (status) tasks = tasks.filter(t => t.status === status);
       else if (/\b(next|remaining|unfinished)\b/.test(text)) tasks = tasks.filter(t => !['COMPLETED','CANCELLED'].includes(t.status));
-      if (!tasks.length) return `No ${status ? status.toLowerCase().replaceAll('_', ' ') + ' ' : ''}assigned tasks were returned for your current shift.`;
+      if (!tasks.length) return status ? `You don’t have any assigned tasks marked ${spokenStatus(status)} for this shift.` : 'You don’t have any assigned tasks in this view.';
       if (tasks.length === 1) state.selectedTaskId = tasks[0]!.id;
-      return `${tasks.length} assigned task(s). ` + tasks.map(t => this.taskSpeech(t)).join(' ') +
-        (r.conflicts.length ? ' Unresolved discrepancies require human review.' : '');
+      return `You have ${tasks.length} assigned task${tasks.length === 1 ? '' : 's'}${status ? ` marked ${spokenStatus(status)}` : ''}. ` + tasks.map(t => this.taskSpeech(t)).join(' ') +
+        (tasks.some(t => r.conflicts.some(c => c.taskId === t.id)) ? ' There’s a discrepancy here that needs your review.' : '');
     }
-    return 'You can ask for your tasks, explain a room’s task, review discrepancies, prepare a handoff for another nurse, or end your session. Please state one request at a time.';
+    return 'I’m not sure what you mean yet. Are you asking about a patient or a task?';
   }
 }
