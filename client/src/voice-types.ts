@@ -14,4 +14,7 @@ export interface VoiceDisplay {
   conflicts: Array<{ id: string; taskId: string; patientName?: string; patientRoom?: string;
     systemAName: string; systemAVal: string; systemBName: string; systemBVal: string }>;
   source: string; identityMode: string; updatedAt: string;
+  epicRecords?: Array<{ patientId: string; epicPatientId: string; name: string; retrievedAt: string; status: string; error: string | null;
+    snapshot: { sections: Record<string, { status: string; resources: unknown[]; warnings: string[]; error?: string }>;
+      documents: Array<{ id: string; contentType: string; text?: string; status: string; error?: string }> } }>;
 }

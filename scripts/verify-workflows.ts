@@ -35,6 +35,9 @@ try {
   assert(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
   const endpoint = base + '/mcp';
+  check('readiness probe responds', () => assert(appServer.listening));
+  const badOrigin = await fetch(base + '/mcp', { method: 'POST', headers: { Origin: 'https://untrusted.example' } });
+  check('MCP rejects untrusted origins', () => assert.equal(badOrigin.status, 403));
   importIncomingData();
   const countBeforeImport = db.prepare('SELECT count(*) AS n FROM operation_receipts').get() as { n: number };
   importIncomingData();
@@ -44,7 +47,7 @@ try {
   check('stateful MCP protocol negotiation', () => assert.equal(handshake.version, '2025-11-25'));
   const discovered = await bridge.listTools();
   check('runtime discovery exposes workflow and voice tools', () => {
-    assert.equal(discovered.length, 12);
+    assert.equal(discovered.length, 14);
     assert(discovered.some(t => t.name === 'voice_turn'));
     assert(discovered.some(t => t.name === 'get_voice_display'));
   });

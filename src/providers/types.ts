@@ -12,7 +12,7 @@ export interface Patient {
   roomNumber: string;
   bedNumber: string;
   admissionDate: string;
-  acuityLevel: number;
+  acuityLevel: number | null;
   allergies?: string | null;
   primaryDiagnosis: string;
   createdAt?: string;

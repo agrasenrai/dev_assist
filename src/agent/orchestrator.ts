@@ -27,7 +27,7 @@ export class ShiftWeaveOrchestrator {
   private conversationHistory: AgentMessage[] = [];
   private discoveredTools: MCPToolDefinition[] = [];
   private activeWorkflowRunId: string;
-  constructor(endpoint = "http://localhost:3000/mcp", providerId?: string, runId?: string) {
+  constructor(endpoint = "http://localhost:3000/mcp", providerId?: string, runId?: string, private readOnly = false) {
     this.mcpBridge = new MCPClientBridge(endpoint);
     this.llmProvider = getLLMProvider(providerId);
     this.activeWorkflowRunId = runId || `wf_run_${randomUUID()}`;
@@ -35,12 +35,13 @@ export class ShiftWeaveOrchestrator {
   async initialize() {
     const info = await this.mcpBridge.initialize();
     this.discoveredTools = await this.mcpBridge.listTools();
+    if (this.readOnly) this.discoveredTools = this.discoveredTools.filter(tool => readTools.has(tool.name));
     AuditService.log({ actorType: 'AGENT', actorId: 'shiftweave_agent', action: 'AGENT:INITIALIZE_SESSION',
       targetResource: 'mcp/session', outcome: 'SUCCESS',
       details: { toolsDiscovered: this.discoveredTools.length, provider: this.llmProvider.providerName } });
     return { toolsCount: this.discoveredTools.length, provider: this.llmProvider.providerName, sessionId: info.sessionId };
   }
-  async close() { await this.mcpBridge.close(); }
+  async close() { this.llmProvider.close?.(); await this.mcpBridge.close(); }
 
   async processUtterance(nurseId: string, utterance: string, context: {
     shiftId?: string | undefined; outgoingNurseId?: string | undefined; incomingNurseId?: string | undefined;
@@ -130,11 +131,17 @@ export class ShiftWeaveOrchestrator {
         persist('TURN_STARTED');
       }
       for (let iteration = 1; iteration <= 12; iteration++) {
+        if (Date.now() - started > 55_000) throw new Error('Turn time budget reached; retry the same request to reconcile and resume');
         if (context.simulateInterruptionAtStep === iteration) {
           throw new Error(`[CHAOS SIMULATION] Interrupted before step ${iteration}; checkpoint ${checkpoint?.id} is committed.`);
         }
+        const decisionStart = Date.now();
+        const reusedIntent = Boolean(pendingTool);
         let decision: AgentTurnResult = pendingTool ? { toolCall: pendingTool } : await this.llmProvider.decideNextStep(
           this.conversationHistory, this.discoveredTools, executionContext);
+        if (!reusedIntent) AuditService.log({ actorType: 'AGENT', actorId: nurseId, action: 'LLM:DECISION',
+          targetResource: `workflow_run/${runId}`, outcome: 'SUCCESS', latencyMs: Date.now() - decisionStart,
+          details: { provider: this.llmProvider.providerId, iteration, metric: 'complete_decision_ms' } });
         // Cloud models can plan read/draft calls, but nurse-facing facts are rendered from actual tool results.
         // This prevents unconstrained model prose from becoming clinical recommendations or invented success.
         if (decision.finalSpeech && this.llmProvider.providerId !== 'mock-autonomous') {
@@ -154,6 +161,9 @@ export class ShiftWeaveOrchestrator {
           return result;
         }
         if (!decision.toolCall) throw new Error('Provider returned neither a tool call nor a response');
+        if (this.readOnly && !readTools.has(decision.toolCall.toolName)) {
+          throw new Error('Ask assistant supports read-only questions. Use the voice handoff and confirmation commands for changes.');
+        }
         if (!pendingTool) {
           toolIndex++;
           pendingTool = { ...decision.toolCall, arguments: { ...decision.toolCall.arguments } };

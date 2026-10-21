@@ -17,6 +17,7 @@ export const db: Database.Database = new Database(dbPath);
 // Configure SQLite for high-concurrency microsecond access
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
-db.pragma("synchronous = NORMAL");
+db.pragma("synchronous = FULL");
+db.pragma("busy_timeout = 5000");
 
 export default db;

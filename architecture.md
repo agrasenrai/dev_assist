@@ -1,5 +1,7 @@
 # ShiftWeave — System Architecture Specification
 
+> **Deployment update (21 October 2026):** [deploy/ARCHITECTURE.md](deploy/ARCHITECTURE.md) and [DEPLOYMENT.md](DEPLOYMENT.md) describe the current deployment implementation and its limits. Historical latency, live-write and production-authentication claims below are not deployment guarantees.
+
 > **Implementation note (20 October 2026):** This document includes intended design and historical claims. Use [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for current verified behavior and limitations; use [incomingapikey.md](incomingapikey.md) for corrected Epic API guidance. External write-back, production authentication, universal recovery guarantees and fixed latency claims are not established by this document.
 
 > **Document Version**: 1.0.0  

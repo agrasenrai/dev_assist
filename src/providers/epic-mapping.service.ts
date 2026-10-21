@@ -246,6 +246,7 @@ export class EpicMappingService {
    */
   static async getPatientClinicalContext(patientId: string): Promise<EpicClinicalContext> {
     const cleanId = patientId.trim();
+    if (!/^[A-Za-z0-9.-]+$/.test(cleanId)) throw new Error('Invalid FHIR patient identifier');
 
     // Parallel fetch of core FHIR resources with resilient per-call isolation
     const [patientRes, encountersRes, conditionsRes, allergiesRes, medRequestsRes, docsRes] =
@@ -260,6 +261,17 @@ export class EpicMappingService {
 
     if (patientRes.status === 'rejected') {
       throw new Error(`Failed to read patient ${cleanId} from Epic: ${patientRes.reason?.message || patientRes.reason}`);
+    }
+
+    // Fail visibly: a denied search is not an empty clinical history.
+    const sections = [encountersRes, conditionsRes, allergiesRes, medRequestsRes, docsRes];
+    const names = ['Encounter', 'Condition', 'AllergyIntolerance', 'MedicationRequest', 'DocumentReference'];
+    for (const [index, result] of sections.entries()) {
+      if (result.status === 'rejected') throw new Error(`Epic ${names[index]} read failed: ${String(result.reason)}`);
+      if (result.value.resourceType !== 'Bundle') throw new Error(`Epic ${names[index]} returned an invalid search response`);
+      if (result.value.link?.some((link: any) => link.relation === 'next')) {
+        throw new Error(`Epic ${names[index]} result is paginated; complete retrieval is required before presenting this context`);
+      }
     }
 
     const epicPatient = patientRes.value;

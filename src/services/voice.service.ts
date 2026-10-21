@@ -6,10 +6,11 @@ import { HandoffService } from './handoff.service.js';
 import { ConflictService, type ConflictRecord } from './conflict.service.js';
 import { canonicalJson } from './canonical-json.js';
 import { getActiveProvider } from '../providers/index.js';
+import { EpicWorkflowService } from './epic-workflow.service.js';
 
 type Nurse = { id: string; name: string; department: string };
 type Shift = { id: string; unit: string; type: string; start: string; end: string };
-type Task = { id: string; patientName: string; roomNumber: string; title: string; status: string; priority: string; source: string };
+type Task = { id: string; patientId: string; patientName: string; roomNumber: string; title: string; status: string; priority: string; source: string };
 type Handoff = { id: string; incomingId: string; outgoingId: string; incomingName: string; outgoingName: string;
   status: string; summary: string; snapshot: string; shiftId: string };
 type Pending = { kind: 'RESOLVE' | 'ACCEPT' | 'FINALIZE' | 'ESCALATE'; taskIds: string[];
@@ -49,8 +50,8 @@ export class VoiceService {
   }
 
   private static records(state: State) {
-    if (!state.nurse || !state.shift) return { tasks: [] as Task[], candidates: [] as Task[], handoffs: [] as Handoff[], conflicts: [] as ConflictRecord[] };
-    const all = db.prepare(`SELECT t.id, p.full_name AS patientName, p.room_number AS roomNumber, t.title,
+    if (!state.nurse || !state.shift) return { tasks: [] as Task[], candidates: [] as Task[], handoffs: [] as Handoff[], conflicts: [] as ConflictRecord[], epicRecords: [] as ReturnType<typeof EpicWorkflowService.recordsForPatients> };
+    const all = db.prepare(`SELECT t.id, t.patient_id AS patientId, p.full_name AS patientName, p.room_number AS roomNumber, t.title,
       t.status, t.priority, t.source_system AS source FROM tasks t JOIN patients p ON p.id = t.patient_id`).all() as Task[];
     const assigned = db.prepare(`SELECT task_id AS id FROM task_assignments WHERE nurse_id = ? AND shift_id = ?
       AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`).all(state.nurse.id, state.shift.id) as Array<{ id: string }>;
@@ -62,7 +63,8 @@ export class VoiceService {
           AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`).get(id, h.outgoingId, h.shiftId))));
     const candidates = all.filter(t => candidateIds.has(t.id) && !tasks.some(own => own.id === t.id));
     const visible = new Set([...tasks, ...candidates].map(t => t.id));
-    return { tasks, candidates, handoffs, conflicts: ConflictService.getUnresolvedConflicts().filter(c => visible.has(c.taskId)) };
+    return { tasks, candidates, handoffs, conflicts: ConflictService.getUnresolvedConflicts().filter(c => visible.has(c.taskId)),
+      epicRecords: EpicWorkflowService.recordsForPatients([...tasks, ...candidates].map(t => t.patientId)) };
   }
 
   private static version(state: State) {
@@ -76,11 +78,26 @@ export class VoiceService {
       pending: state.pending ? { prompt: state.pending.prompt, ready: state.pending.ready,
         expiresAt: state.pending.expiresAt } : null,
       messages: state.messages, ...records,
-      source: 'Local synthetic demo records', identityMode: 'DEMO_NAME_SELECTION',
+      source: records.epicRecords.length ? 'Epic sandbox source records + local nursing coordination' : 'Local synthetic demo records', identityMode: 'DEMO_NAME_SELECTION',
       updatedAt: new Date().toISOString() };
   }
 
   static read(sessionId: string) { return this.display(this.load(sessionId)); }
+
+  static saveAssistantTurn(input: VoiceInput, speech: string) {
+    return MutationService.execute('VOICE_TURN', `voice-turn:${input.idempotency_key}`, input, 'voice-demo', () => {
+      const state = this.load(input.session_id);
+      if (state.revision !== input.expected_revision) throw new Error('Voice session changed. Refresh before speaking again.');
+      state.pending = null;
+      state.revision++;
+      state.speech = speech;
+      state.messages = [...state.messages, { role: 'nurse' as const, text: input.utterance },
+        { role: 'assistant' as const, text: speech }].slice(-30);
+      CheckpointService.saveCheckpoint(runId(input.session_id), state.revision, 'VOICE_AGENT_RESULT',
+        { voice: state }, `voice-state:${input.idempotency_key}`);
+      return this.display(state);
+    });
+  }
 
   static turn(input: VoiceInput) {
     if (getActiveProvider().providerId !== 'sqlite-edge-cache') throw new Error('Voice demo requires the local provider; live voice mappings are not configured.');

@@ -1,0 +1,119 @@
+{
+  "checkedAt": "2026-10-21T03:36:01.326Z",
+  "environment": "Epic configured non-production endpoint",
+  "jwksMatch": true,
+  "oauth": "VERIFIED",
+  "checks": [
+    {
+      "resource": "metadata",
+      "httpStatus": 200,
+      "resourceType": "CapabilityStatement",
+      "nextPage": false
+    },
+    {
+      "resource": "Patient",
+      "httpStatus": 200,
+      "resourceType": "Patient",
+      "nextPage": false
+    },
+    {
+      "resource": "Encounter",
+      "httpStatus": 200,
+      "resourceType": "Bundle",
+      "count": 10,
+      "nextPage": false,
+      "entryTypes": [
+        "Encounter",
+        "Encounter",
+        "Encounter",
+        "Encounter",
+        "Encounter",
+        "Encounter",
+        "Encounter",
+        "Encounter",
+        "Encounter",
+        "Encounter"
+      ],
+      "entryIssues": [],
+      "attachments": []
+    },
+    {
+      "resource": "Condition",
+      "httpStatus": 200,
+      "resourceType": "Bundle",
+      "count": 7,
+      "nextPage": false,
+      "entryTypes": [
+        "Condition",
+        "Condition",
+        "Condition",
+        "Condition",
+        "Condition",
+        "Condition",
+        "Condition"
+      ],
+      "entryIssues": [],
+      "attachments": []
+    },
+    {
+      "resource": "AllergyIntolerance",
+      "httpStatus": 200,
+      "resourceType": "Bundle",
+      "count": 1,
+      "nextPage": false,
+      "entryTypes": [
+        "AllergyIntolerance"
+      ],
+      "entryIssues": [],
+      "attachments": []
+    },
+    {
+      "resource": "MedicationRequest",
+      "httpStatus": 200,
+      "resourceType": "Bundle",
+      "count": 1,
+      "nextPage": false,
+      "entryTypes": [
+        "MedicationRequest"
+      ],
+      "entryIssues": [],
+      "attachments": []
+    },
+    {
+      "resource": "MedicationAdministration",
+      "httpStatus": 200,
+      "resourceType": "Bundle",
+      "count": 1,
+      "nextPage": false,
+      "entryTypes": [
+        "OperationOutcome"
+      ],
+      "entryIssues": [
+        {
+          "severity": "warning",
+          "code": "processing",
+          "details": "Resource request returns no results."
+        }
+      ],
+      "attachments": []
+    },
+    {
+      "resource": "DocumentReference",
+      "httpStatus": 200,
+      "resourceType": "Bundle",
+      "count": 1,
+      "nextPage": false,
+      "entryTypes": [
+        "OperationOutcome"
+      ],
+      "entryIssues": [
+        {
+          "severity": "warning",
+          "code": "processing",
+          "details": "Resource request returns no results."
+        }
+      ],
+      "attachments": []
+    }
+  ]
+}

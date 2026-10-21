@@ -2,6 +2,8 @@
 
 Nursing workflow coordination, local handoff drafts, human discrepancy review, and durable interruption recovery.
 
+**End-to-end setup:** [DEPLOYMENT.md](DEPLOYMENT.md) covers local setup, Docker/HTTPS deployment, LLM and Epic placeholders, persistent storage, backup and verification. Recommended hosted topology: one EC2 host with EBS-backed SQLite and optional Bedrock. See [deployment architecture](deploy/ARCHITECTURE.md) for the design tradeoffs.
+
 Built for the Amazon Developer Hackathon Alexa+ track. The browser simulates voice/chat using speech recognition and synthesis. MCP tool traffic uses Streamable HTTP on Express `/mcp`, with protocol `2025-11-25`.
 
 ## Run locally

@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "outDir": "build", "declaration": false, "declarationMap": false },
+  "include": ["src/**/*.ts", "scripts/backup.ts", "scripts/preflight.ts", "scripts/smoke.ts"],
+  "exclude": ["node_modules", "client", "build"]
+}

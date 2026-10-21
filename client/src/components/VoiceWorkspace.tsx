@@ -193,6 +193,12 @@ export function VoiceWorkspace() {
       <div className="voice-chips-container">
         <span className="voice-chips-label">Demo Walkthrough & Quick Voice Prompts (Click to Speak):</span>
         <div className="voice-chips">
+          <button type="button" className="voice-chip" disabled={busy || !display?.nurse}
+            onClick={() => handleChipClick('Sync Epic patients')}>Sync Epic patients</button>
+          <button type="button" className="voice-chip" disabled={busy}
+            onClick={() => handleChipClick('Ask assistant, summarize my shift')}>
+            Ask assistant to summarize
+          </button>
           <button
             type="button"
             className="voice-chip voice-chip-primary"
@@ -355,6 +361,24 @@ export function VoiceWorkspace() {
               </section>
 
               {/* Pending Human Confirmation Drawer */}
+              {Boolean(display.epicRecords?.length) && <section className="glass-panel" aria-label="Epic source records">
+                <h2>Epic source records</h2>
+                <p>Local review tasks use these retrieved records. Orders do not establish administration or transfer custody.</p>
+                {display.epicRecords!.map(record => <article key={record.patientId}>
+                  <h3>{record.name} · {record.status}</h3>
+                  <p>Epic Patient/{record.epicPatientId} · Retrieved {record.retrievedAt}</p>
+                  {record.error && <p role="alert">Refresh failed; retained data may be stale: {record.error}</p>}
+                  <ul>{Object.entries(record.snapshot.sections).map(([name, section]) => <li key={name}>
+                    {name}: {section.status} · {section.resources.length} records
+                    {section.error && <span role="alert"> — {section.error}</span>}
+                    {section.warnings.length > 0 && <span> — {section.warnings.join('; ')}</span>}
+                  </li>)}</ul>
+                  {record.snapshot.documents.map((document, index) => <details key={`${document.id}:${index}`}>
+                    <summary>Document {document.id} · {document.status} · {document.contentType}</summary>
+                    {document.text ? <pre style={{ whiteSpace: 'pre-wrap' }}>{document.text}</pre> : <p>{document.error || 'Content format is not supported for display.'}</p>}
+                  </details>)}
+                </article>)}
+              </section>}
               {display.pending && (
                 <aside className="voice-confirmation" aria-live="polite">
                   <h2>

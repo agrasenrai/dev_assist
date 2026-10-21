@@ -33,6 +33,16 @@ export interface EpicOAuthConfig {
  */
 export class EpicOAuthService {
   private static cachedToken: CachedToken | null = null;
+  private static tokenRequest: Promise<string> | null = null;
+
+  static resolveResourceUrl(resourcePath: string): string {
+    const base = new URL(this.getConfig().fhirBaseUrl.replace(/\/$/, '') + '/');
+    const target = new URL(resourcePath.replace(/^\/(?!\/)/, ''), base);
+    if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname) || target.username || target.password || target.hash) {
+      throw new Error('Epic resource URL is outside the configured FHIR endpoint');
+    }
+    return target.href;
+  }
 
   static getConfig(): EpicOAuthConfig {
     const clientId = process.env.EPIC_CLIENT_ID;
@@ -114,6 +124,13 @@ export class EpicOAuthService {
    * Caches active token in-memory and refreshes 60 seconds before expiration.
    */
   static async getAccessToken(forceRefresh = false): Promise<string> {
+    if (this.tokenRequest) return this.tokenRequest;
+    const request = this.exchangeToken(forceRefresh);
+    this.tokenRequest = request;
+    try { return await request; } finally { this.tokenRequest = null; }
+  }
+
+  private static async exchangeToken(forceRefresh = false): Promise<string> {
     const now = Date.now();
     // Return cached token if valid (with 60-second safety window)
     if (!forceRefresh && this.cachedToken && this.cachedToken.expiresAtMs > now + 60000) {
@@ -179,6 +196,7 @@ export class EpicOAuthService {
     }
 
     const tokenResponse = data as unknown as EpicTokenResponse;
+    if (!tokenResponse.access_token || typeof tokenResponse.access_token !== 'string') throw new Error('Epic token response contained no access token');
     const expiresInSec = Number(tokenResponse.expires_in) || 300;
 
     this.cachedToken = {
@@ -230,9 +248,7 @@ export class EpicOAuthService {
     const token = await this.getAccessToken();
 
     const cleanPath = resourcePath.replace(/^\//, '');
-    const fullUrl = cleanPath.startsWith('http')
-      ? cleanPath
-      : `${config.fhirBaseUrl.replace(/\/$/, '')}/${cleanPath}`;
+    const fullUrl = this.resolveResourceUrl(resourcePath);
 
     const headers = {
       Accept: 'application/fhir+json',
@@ -242,6 +258,7 @@ export class EpicOAuthService {
 
     let response = await fetch(fullUrl, {
       ...options,
+      redirect: 'error',
       headers,
       signal: options.signal || AbortSignal.timeout(20000),
     });
@@ -254,6 +271,7 @@ export class EpicOAuthService {
       };
       response = await fetch(fullUrl, {
         ...options,
+        redirect: 'error',
         headers: retryHeaders,
         signal: options.signal || AbortSignal.timeout(20000),
       });
@@ -274,9 +292,7 @@ export class EpicOAuthService {
     const token = await this.getAccessToken();
 
     const cleanPath = resourcePath.replace(/^\//, '');
-    const fullUrl = cleanPath.startsWith('http')
-      ? cleanPath
-      : `${config.fhirBaseUrl.replace(/\/$/, '')}/${cleanPath}`;
+    const fullUrl = this.resolveResourceUrl(resourcePath);
 
     const headers = {
       Accept: 'application/fhir+json',
@@ -289,6 +305,7 @@ export class EpicOAuthService {
     try {
       response = await fetch(fullUrl, {
         ...options,
+        redirect: 'error',
         headers,
         signal: options.signal || AbortSignal.timeout(20000),
       });
@@ -323,6 +340,7 @@ export class EpicOAuthService {
       };
       response = await fetch(fullUrl, {
         ...options,
+        redirect: 'error',
         headers: retryHeaders,
         signal: options.signal || AbortSignal.timeout(20000),
       });

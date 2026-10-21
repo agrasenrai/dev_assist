@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { MutationService } from './mutation.service.js';
 import type { EpicClinicalContext } from '../providers/epic-mapping.service.js';
 import { FieldAuthorityService, FIELD_AUTHORITY_MATRIX } from './field-authority.service.js';
+import { EpicWorkflowService } from './epic-workflow.service.js';
 
 export interface HandoffDraftInput {
   outgoing_nurse_id: string; incoming_nurse_id: string; shift_id: string;
@@ -40,7 +41,7 @@ export class HandoffService {
         const tasks = db.prepare(`SELECT t.*, p.full_name AS patientName, p.room_number AS roomNumber FROM tasks t
           JOIN patients p ON p.id = t.patient_id JOIN task_assignments a ON a.task_id = t.id
           WHERE a.nurse_id = ? AND a.shift_id = ? AND a.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`)
-          .all(args.outgoing_nurse_id, args.shift_id) as Array<{ id: string; status: string; title: string; patientName: string; roomNumber: string }>;
+          .all(args.outgoing_nurse_id, args.shift_id) as Array<{ id: string; patient_id: string; status: string; title: string; patientName: string; roomNumber: string }>;
         for (const id of args.carried_forward_task_ids) {
           if (!tasks.some(t => t.id === id && !['COMPLETED', 'CANCELLED'].includes(t.status))) {
             throw new Error('Carry-forward candidate is not unfinished work assigned to this nurse/shift');
@@ -72,7 +73,10 @@ export class HandoffService {
           }
         }
 
+        const epicRecords = EpicWorkflowService.recordsForPatients(tasks.map(t => t.patient_id));
+        summary += EpicWorkflowService.narrative(epicRecords);
         const snapshotData = {
+          epicRecords,
           tasks,
           carriedForwardIds: args.carried_forward_task_ids,
           ...(args.epic_clinical_context && args.epic_clinical_context.length > 0 ? {
