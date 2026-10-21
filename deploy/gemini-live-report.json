@@ -1,0 +1,27 @@
+{
+  "verifiedAt": "2026-10-21T12:58:56.476Z",
+  "provider": "gemini",
+  "model": "gemini-2.5-flash",
+  "status": "PASSED",
+  "elapsedMs": 7230,
+  "speech": "2 assigned tasks: 1 completed, 0 pending/in progress, 1 unresolved discrepancies. James Clark (Room 304): Q4 Vital Signs & Neuro Check — COMPLETED. Elena Rostova (Room 305): IV Vancomycin 1g Infusion — FLAGGED_CONFLICT. Please review the discrepancies before confirming task status.",
+  "decisions": [
+    {
+      "outcome": "SUCCESS",
+      "latency_ms": 1954,
+      "details": "{\"provider\":\"gemini\",\"iteration\":1,\"metric\":\"complete_decision_ms\"}"
+    },
+    {
+      "outcome": "SUCCESS",
+      "latency_ms": 1896,
+      "details": "{\"provider\":\"gemini\",\"iteration\":2,\"metric\":\"complete_decision_ms\"}"
+    },
+    {
+      "outcome": "SUCCESS",
+      "latency_ms": 3241,
+      "details": "{\"provider\":\"gemini\",\"iteration\":3,\"metric\":\"complete_decision_ms\"}"
+    }
+  ],
+  "retry": "IDENTICAL_SAVED_RESPONSE",
+  "data": "ISOLATED_SYNTHETIC_FIXTURES"
+}

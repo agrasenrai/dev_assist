@@ -112,6 +112,15 @@ export function toGeminiMessages(messages: AgentMessage[]): Content[] {
   });
 }
 
+/** MCP advertises JSON Schema dialect metadata; Gemini's parameters field does not accept it.
+ * Walk schema nodes, preserving property names and the original MCP validation contract. */
+export function toGeminiToolSchema(schema: Record<string, any>): FunctionDeclarationSchema {
+  const { $schema, $id, ...converted } = schema;
+  if (converted.properties) converted.properties = Object.fromEntries(Object.entries(converted.properties).map(([name, value]) => [name, toGeminiToolSchema(value as Record<string, any>)]));
+  if (converted.items && typeof converted.items === 'object') converted.items = toGeminiToolSchema(converted.items);
+  return converted as FunctionDeclarationSchema;
+}
+
 export class GeminiLLMProvider implements ILLMProvider {
   providerId = 'gemini'; providerName = 'Google Gemini (external)';
   constructor(private apiKey = process.env.GEMINI_API_KEY || '', private modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash') {}
@@ -119,7 +128,7 @@ export class GeminiLLMProvider implements ILLMProvider {
     if (!this.apiKey) throw new Error('Gemini selected but GEMINI_API_KEY is missing. Select mock explicitly for local mode.');
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const declarations: FunctionDeclaration[] = tools.filter(t => !['acknowledge_task', 'resume_workflow', 'save_workflow_checkpoint', 'voice_turn', 'get_voice_display', 'publish_reviewed_handoff_note'].includes(t.name))
-      .map(t => ({ name: t.name, description: t.description, parameters: t.inputSchema as unknown as FunctionDeclarationSchema }));
+      .map(t => ({ name: t.name, description: t.description, parameters: toGeminiToolSchema(t.inputSchema) }));
     const model = new GoogleGenerativeAI(this.apiKey).getGenerativeModel({
       model: this.modelName, systemInstruction: safety + '\nTrusted context: ' + JSON.stringify(context),
       tools: [{ functionDeclarations: declarations }] });

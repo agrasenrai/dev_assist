@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
@@ -48,6 +48,8 @@ try {
   const originalFetch = EpicOAuthService.authorizedFetch;
   const originalRead = EpicOAuthService.readPatient;
   process.env.EPIC_READS_ENABLED = 'true'; process.env.EPIC_TEST_PATIENT_IDS = 'allowed';
+  writeFileSync(path.join(directory, 'fixture.pem'), 'not-a-real-key');
+  Object.assign(process.env, { EPIC_CLIENT_ID: 'fixture', PRIVATE_KEY_PATH: path.join(directory, 'fixture.pem'), EPIC_FHIR_BASE_URL: 'https://epic.test/FHIR/R4' });
   try {
     let reads = 0;
     EpicOAuthService.readPatient = async () => { reads++; return { resourceType: 'Patient', id: 'allowed', name: [{ text: 'Synthetic Epic Fixture' }] }; };

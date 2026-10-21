@@ -18,6 +18,8 @@ if ([user, password, token, publicOrigin].some(value => /REPLACE_|example\.com/.
 if (publicOrigin && new URL(publicOrigin).origin !== publicOrigin) throw new Error('PUBLIC_ORIGIN must be an exact origin without a trailing slash');
 export const allowedOrigins = new Set([
   'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173',
+  ...(!exposed && /^\d+$/.test(process.env.PORT || '') && Number(process.env.PORT) > 0 && Number(process.env.PORT) <= 65535
+    ? [`http://localhost:${Number(process.env.PORT)}`, `http://127.0.0.1:${Number(process.env.PORT)}`] : []),
   ...(publicOrigin ? [publicOrigin] : [])
 ]);
 function equals(a: string, b: string) {

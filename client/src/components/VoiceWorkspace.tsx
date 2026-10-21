@@ -6,6 +6,7 @@ import { useVoiceConversation } from '../useVoiceConversation.js';
 import { ExecutionTracePanel } from './ExecutionTracePanel.js';
 import { ChaosControlBar } from './ChaosControlBar.js';
 import { fetchExecutionTrace } from '../api.js';
+import { EpicNoteReview } from './EpicNoteReview.js';
 
 export function VoiceWorkspace() {
   const [display, setDisplay] = useState<VoiceDisplay | null>(null);
@@ -379,6 +380,8 @@ export function VoiceWorkspace() {
                   </details>)}
                 </article>)}
               </section>}
+              {display.handoffs.filter(h => h.id === display.selectedHandoffId && h.status === 'FINALIZED').map(h =>
+                <EpicNoteReview key={`${h.id}:${display.nurse!.id}`} handoffId={h.id} nurseId={display.nurse!.id} />)}
               {display.pending && (
                 <aside className="voice-confirmation" aria-live="polite">
                   <h2>

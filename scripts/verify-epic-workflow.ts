@@ -27,9 +27,10 @@ try {
   if (!live) {
     EpicOAuthService.readPatient = async () => ({ resourceType: 'Patient', id: 'fixture', name: [{ text: 'Epic Fixture Patient' }] });
     EpicOAuthService.authorizedFetch = async <T>(url: string) => {
+      if (url === 'Encounter/enc1') return { resourceType: 'Encounter', id: 'enc1', status: 'in-progress', subject: { reference: 'Patient/fixture' }, participant: [{ individual: { reference: 'Practitioner/author1' } }] } as T;
       const type = new URL(url).pathname.split('/').at(-1)!;
       const resource = type === 'MedicationRequest' ? { resourceType: type, id: 'order1', status: 'active', subject: { reference: 'Patient/fixture' } }
-        : type === 'Encounter' ? { resourceType: type, id: 'enc1', status: 'in-progress', subject: { reference: 'Patient/fixture' } }
+        : type === 'Encounter' ? { resourceType: type, id: 'enc1', status: 'in-progress', subject: { reference: 'Patient/fixture' }, participant: [{ individual: { reference: 'Practitioner/author1' } }] }
         : { resourceType: 'OperationOutcome', issue: [{ severity: 'warning', code: 'processing', details: { text: 'No records returned' } }] };
       return { resourceType: 'Bundle', entry: [{ resource }] } as T;
     };
@@ -42,7 +43,7 @@ try {
   const address = appServer.address(); assert(address && typeof address !== 'string');
   bridge = new MCPClientBridge(`http://127.0.0.1:${address.port}/mcp`);
   await bridge.initialize();
-  const call = async (name: string, args: any) => { const result = await bridge!.callTool(name, args); assert(!result.isError, result.content[0]?.text); return JSON.parse(result.content[0]!.text); };
+  const call = async (name: string, args: any) => { const result = await bridge!.callTool(name, args); assert(!result.isError, result.content[0]?.text || 'MCP tool failed'); return JSON.parse(result.content[0]!.text); };
   const input = { nurse_id: 'nurse_seema_01', shift_id: 'epic-shift', idempotency_key: randomUUID() };
   const sync = await call('sync_epic_workspace', input);
   assert.equal(sync.status, 'READY', JSON.stringify(sync));
@@ -66,6 +67,35 @@ try {
   assert.equal(display.tasks.length, 1); assert.equal(display.tasks[0].status, 'PENDING');
   await say('Finalize handoff'); display = await say('Confirm');
   assert.equal(display.handoffs[0].status, 'FINALIZED');
+  const preview = await call('preview_epic_handoff_note', { handoff_id: handoff.id, nurse_id: 'nurse_reema_02' });
+  assert.equal(preview.patientId, live ? 'erXuFYUfucBZaryVksYEcMg3' : 'fixture');
+  assert.match(preview.authorReference, /^Practitioner\//);
+  if (live && process.argv.includes('--prepare-note')) {
+    fs.mkdirSync('backups', { recursive: true });
+    await db.backup('backups/epic-reviewed-note-demo.db');
+    fs.writeFileSync('deploy/epic-note-preview.json', JSON.stringify(preview, null, 2) + '\n');
+    fs.writeFileSync('deploy/epic-note-preview.md', `# Epic sandbox note preview\n\nPatient: ${preview.patientId}\n\nEncounter: ${preview.encounterReference}\n\nAuthor: ${preview.authorReference}\n\n${preview.authorVerification}\n\nReview hash: ${preview.reviewHash}\n\n${preview.note}\n`);
+  }
+  if (!live) {
+    const originalResponse = EpicOAuthService.authorizedFetchResponse;
+    process.env.EPIC_WRITES_ENABLED = 'true';
+    let posts = 0;
+    EpicOAuthService.authorizedFetchResponse = async () => { posts++; return new Response(JSON.stringify({ resourceType: 'DocumentReference', id: 'created1' }), { status: 201 }); };
+    try {
+      const publication = { handoff_id: handoff.id, nurse_id: 'nurse_reema_02', human_confirmed: true, review_hash: preview.reviewHash, idempotency_key: randomUUID(), execution_mode: 'live' };
+      const stale = await bridge.callTool('publish_reviewed_handoff_note', { ...publication, review_hash: 'stale' }); assert(stale.isError); assert.equal(posts, 0);
+      const published = await call('publish_reviewed_handoff_note', publication); assert.equal(published.externalSync, 'SYNCED');
+      const retried = await call('publish_reviewed_handoff_note', publication); assert.equal(retried.externalResourceId, 'created1'); assert.equal(posts, 1);
+      // Separate attempted publication fixture: an ambiguous POST must never be replayed.
+      db.prepare("UPDATE handoffs SET external_sync_status='NOT_REQUESTED',external_resource_id=NULL WHERE id=?").run(handoff.id);
+      EpicOAuthService.authorizedFetchResponse = async () => { posts++; throw new Error('simulated lost acknowledgement'); };
+      const uncertainInput = { ...publication, idempotency_key: randomUUID() };
+      assert.equal((await call('publish_reviewed_handoff_note', uncertainInput)).externalSync, 'UNCERTAIN');
+      assert.equal((await call('publish_reviewed_handoff_note', uncertainInput)).externalSync, 'UNCERTAIN'); assert.equal(posts, 2);
+      const otherKey = await bridge.callTool('publish_reviewed_handoff_note', { ...uncertainInput, idempotency_key: randomUUID() }); assert(otherKey.isError); assert.equal(posts, 2);
+      console.log('PASS exact-preview gate, verified identifier, durable publication receipt, and no replay after ambiguous POST');
+    } finally { EpicOAuthService.authorizedFetchResponse = originalResponse; process.env.EPIC_WRITES_ENABLED = 'false'; }
+  }
   await call('sync_epic_workspace', { ...input, idempotency_key: randomUUID() });
   assert.equal((db.prepare("SELECT nurse_id FROM task_assignments WHERE task_id=? AND transfer_status='ACTIVE'").get(display.tasks[0].id) as any).nurse_id, 'nurse_reema_02');
   assert.equal((db.prepare('SELECT count(*) AS n FROM epic_snapshot_versions').get() as any).n, 2);

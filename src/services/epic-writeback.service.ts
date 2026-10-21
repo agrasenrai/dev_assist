@@ -1,8 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from '../db/connection.js';
-import { MutationService } from './mutation.service.js';
 import { AuditService } from './audit.service.js';
-import { EpicOAuthService } from '../providers/epic-oauth.service.js';
+import { EpicNoteService } from './epic-note.service.js';
 
 export interface DocumentReferenceAttachment {
   contentType: string;
@@ -47,6 +46,7 @@ export interface PublishNoteInput {
   nurseId: string;
   idempotencyKey: string;
   humanConfirmed: boolean;
+  reviewHash?: string | undefined;
   patientId?: string | undefined;
   executionMode?: 'live' | 'mock' | 'simulate_uncertain' | undefined;
 }
@@ -142,33 +142,7 @@ export class EpicWriteBackService {
     // Check mock remote store first
     for (const record of mockRemoteEhrStore.values()) {
       if (record.patientId === normalizedPatientId && record.handoffId === handoffId) {
-        return { id: record.id, remoteUrl: `https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/DocumentReference/${record.id}` };
-      }
-    }
-
-    // In live mode with configured client ID, check remote Epic via DocumentReference search
-    if (process.env.EPIC_CLIENT_ID && process.env.SHIFTWEAVE_TEST !== '1') {
-      try {
-        const config = EpicOAuthService.getConfig();
-        const searchUrl = `${config.fhirBaseUrl}/DocumentReference?patient=${normalizedPatientId}&category=clinical-note`;
-        const res = await EpicOAuthService.authorizedFetchResponse(searchUrl, {
-          signal: AbortSignal.timeout(6000),
-        });
-        if (res.ok) {
-          const bundle = await res.json() as { entry?: Array<{ resource: { id?: string; description?: string } }> };
-          if (bundle.entry && Array.isArray(bundle.entry)) {
-            for (const entry of bundle.entry) {
-              if (entry.resource.description?.includes(handoffId) && entry.resource.id) {
-                return {
-                  id: entry.resource.id,
-                  remoteUrl: `${config.fhirBaseUrl}/DocumentReference/${entry.resource.id}`,
-                };
-              }
-            }
-          }
-        }
-      } catch {
-        // Search error or scope restriction treated as unconfirmed
+        return { id: record.id, remoteUrl: `mock://DocumentReference/${record.id}` };
       }
     }
 
@@ -180,6 +154,7 @@ export class EpicWriteBackService {
    * durable external sync state machine, and remote reconciliation before retries.
    */
   static async publishReviewedNote(input: PublishNoteInput): Promise<PublishNoteResult> {
+    if (input.executionMode !== 'mock' && input.executionMode !== 'simulate_uncertain') return EpicNoteService.publish(input);
     // 1. Explicit Human Review Gate
     if (!input.humanConfirmed) {
       throw new Error('Explicit human review and confirmation is required before publishing external clinical notes');
@@ -342,103 +317,10 @@ export class EpicWriteBackService {
         handoffId: input.handoffId,
         externalSync: 'SYNCED',
         externalResourceId: mockDocId,
-        docUrl: `https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/DocumentReference/${mockDocId}`,
+        docUrl: `mock://DocumentReference/${mockDocId}`,
       };
     }
 
-    // 10. Live Epic Sandbox Evaluation
-    try {
-      const config = EpicOAuthService.getConfig();
-      const writeUrl = `${config.fhirBaseUrl}/DocumentReference`;
-
-      const res = await EpicOAuthService.authorizedFetchResponse(writeUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/fhir+json',
-          'Accept': 'application/fhir+json',
-        },
-        body: payloadJson,
-        signal: AbortSignal.timeout(8000),
-      });
-
-      if (res.status === 201) {
-        // Document successfully created on Epic server
-        const locationHeader = res.headers.get('location') || '';
-        const idFromLocation = locationHeader.split('/').pop() || '';
-        let docId = idFromLocation;
-        try {
-          const body = await res.json() as { id?: string };
-          if (body.id) docId = body.id;
-        } catch {}
-
-        db.prepare(`UPDATE handoffs SET external_sync_status = 'SYNCED', external_resource_id = ?,
-          external_synced_at = CURRENT_TIMESTAMP, external_sync_error = NULL WHERE id = ?`)
-          .run(docId, input.handoffId);
-
-        AuditService.log({
-          actorType: 'NURSE',
-          actorId: input.nurseId,
-          action: 'EXTERNAL_SYNC:EPIC_COMMITTED',
-          targetResource: `DocumentReference/${docId}`,
-          outcome: 'SUCCESS',
-          details: { handoffId: input.handoffId, externalResourceId: docId },
-        });
-
-        return {
-          handoffId: input.handoffId,
-          externalSync: 'SYNCED',
-          externalResourceId: docId,
-          docUrl: `${config.fhirBaseUrl}/DocumentReference/${docId}`,
-        };
-      }
-
-      // External HTTP failure (e.g. 403 Forbidden in sandbox)
-      const errorText = await res.text();
-      let errorDetail = `Epic FHIR DocumentReference create failed with HTTP ${res.status}`;
-      if (res.status === 403) {
-        errorDetail = `Epic sandbox client credentials granted read-only scopes (system/DocumentReference.r, .s); DocumentReference.Create requires write authorization (system/DocumentReference.c) which is restricted in this sandbox tier.`;
-      }
-
-      db.prepare(`UPDATE handoffs SET external_sync_status = 'FAILED', external_sync_error = ? WHERE id = ?`)
-        .run(errorDetail, input.handoffId);
-
-      AuditService.log({
-        actorType: 'NURSE',
-        actorId: input.nurseId,
-        action: 'EXTERNAL_SYNC:EPIC_DENIED',
-        targetResource: 'DocumentReference',
-        outcome: 'FAILURE',
-        details: { handoffId: input.handoffId, status: res.status, raw: errorText, error: errorDetail },
-      });
-
-      return {
-        handoffId: input.handoffId,
-        externalSync: 'FAILED',
-        error: errorDetail,
-      };
-    } catch (networkErr) {
-      const message = networkErr instanceof Error ? networkErr.message : String(networkErr);
-      const isTimeout = message.includes('timeout') || message.includes('aborted');
-
-      const syncStatus = isTimeout ? 'UNCERTAIN' : 'FAILED';
-      db.prepare(`UPDATE handoffs SET external_sync_status = ?, external_sync_error = ? WHERE id = ?`)
-        .run(syncStatus, message, input.handoffId);
-
-      AuditService.log({
-        actorType: 'NURSE',
-        actorId: input.nurseId,
-        action: 'EXTERNAL_SYNC:NETWORK_ERROR',
-        targetResource: 'DocumentReference',
-        outcome: 'FAILURE',
-        details: { handoffId: input.handoffId, error: message, syncStatus },
-      });
-
-      return {
-        handoffId: input.handoffId,
-        externalSync: syncStatus,
-        error: message,
-        ...(isTimeout ? { warning: 'Outcome is ambiguous; remote reconciliation required before retry' } : {}),
-      };
-    }
+    throw new Error('Unsupported simulation mode');
   }
 }

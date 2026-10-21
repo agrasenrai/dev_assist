@@ -4,6 +4,8 @@ Nursing workflow coordination, local handoff drafts, human discrepancy review, a
 
 **End-to-end setup:** [DEPLOYMENT.md](DEPLOYMENT.md) covers local setup, Docker/HTTPS deployment, LLM and Epic placeholders, persistent storage, backup and verification. Recommended hosted topology: one EC2 host with EBS-backed SQLite and optional Bedrock. See [deployment architecture](deploy/ARCHITECTURE.md) for the design tradeoffs.
 
+**Epic workflow:** [EPIC_WORKFLOW.md](EPIC_WORKFLOW.md) documents verified live sandbox reads through MCP, sourced voice handoff, explicit custody transfer, and note review. The live note-create attempt returned HTTP 403; write-back remains disabled pending Epic authorization.
+
 Built for the Amazon Developer Hackathon Alexa+ track. The browser simulates voice/chat using speech recognition and synthesis. MCP tool traffic uses Streamable HTTP on Express `/mcp`, with protocol `2025-11-25`.
 
 ## Run locally

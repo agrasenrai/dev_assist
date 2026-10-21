@@ -248,5 +248,13 @@ When transitioning from synthetic local mocks to real Epic on FHIR sandbox integ
 
 ---
 
-*This friction log reflects authentic, hands-on engineering challenges overcome while delivering ShiftWeave for the Amazon Developer Hackathon (Alexa+ Track).*
+## 8. Live workflow verification — 21 October 2026
+
+- The existing encrypted signing key matched the public JWKS and obtained a live Epic token. The MCP workflow successfully read source records, drafted a handoff, transferred custody explicitly, finalized locally and refreshed without stealing custody back.
+- MedicationAdministration and DocumentReference returned HTTP 200 bundles containing an OperationOutcome warning, not clinical records. The adapter now separates warnings from resource counts, follows bounded same-endpoint pagination and reports partial/failed sections explicitly.
+- Practitioner.Read and the explicitly human-approved DocumentReference.Create attempt returned HTTP 403. The latter is recorded as FAILED, with no invented remote identifier. API registration/access is being checked; write-back remains disabled. A catalog listing or working token does not prove write access.
+- The existing local database and pre-migration backups reported corruption, including unreadable checkpoint/audit/receipt records. With owner approval, a separate fresh Epic demo database was selected after integrity verification. Original files were preserved; no claim is made that old workflow history was recovered.
+- Evidence is in `deploy/epic-workflow-live-report.json` and `deploy/epic-write-report.json`. Model speed, production clinical authorization and universal zero-loss recovery are not established by these tests.
+
+*This log distinguishes resolved implementation issues from remaining external access restrictions.*
 

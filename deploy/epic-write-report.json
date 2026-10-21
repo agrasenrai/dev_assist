@@ -1,0 +1,12 @@
+{
+  "verifiedAt": "2026-10-21T12:29:57.832Z",
+  "source": "LIVE_EPIC_SANDBOX",
+  "outcome": {
+    "handoffId": "handoff_7d93cfde-8e70-4fc0-a1d4-e729c4f1f01e",
+    "externalSync": "FAILED",
+    "error": "Epic DocumentReference.Create returned HTTP 403. No success claimed; verify API authorization and target encounter configuration."
+  },
+  "readback": {
+    "status": "NOT_ATTEMPTED"
+  }
+}

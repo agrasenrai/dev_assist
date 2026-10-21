@@ -32,6 +32,19 @@ try {
     try {
       const response = await EpicOAuthService.authorizedFetchResponse(resourcePath);
       const body = await response.json() as any;
+      if (process.argv.includes('--write-context') && resourcePath.startsWith('Encounter?')) {
+        for (const { resource: encounter } of body.entry || []) {
+          if (encounter?.resourceType !== 'Encounter') continue;
+          const practitioners = (encounter.participant || []).map((p: any) => p.individual?.reference).filter((r: any) => typeof r === 'string' && r.startsWith('Practitioner/'));
+          console.log(JSON.stringify({ encounter: encounter.id, status: encounter.status, subject: encounter.subject?.reference, period: encounter.period, practitioners }));
+          for (const reference of [...new Set<string>(practitioners)]) {
+            try {
+              const practitioner = await EpicOAuthService.authorizedFetch<any>(reference);
+              console.log(JSON.stringify({ practitioner: reference, verified: practitioner.resourceType === 'Practitioner', active: practitioner.active, name: practitioner.name }));
+            } catch (error) { console.log(JSON.stringify({ practitioner: reference, error: error instanceof Error ? error.message : String(error) })); }
+          }
+        }
+      }
       const item = { resource: resourcePath.split(/[/?]/)[0], httpStatus: response.status, resourceType: body.resourceType,
         count: body.entry?.length, nextPage: Boolean(body.link?.some((l: any) => l.relation === 'next')),
         entryTypes: body.entry?.map((e: any) => e.resource?.resourceType),
