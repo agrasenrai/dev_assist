@@ -6,8 +6,64 @@ import { AuditService } from './audit.service.js';
 import { MCPClientBridge } from '../agent/mcp-client-bridge.js';
 import { StaffAuthService } from './staff-auth.service.js';
 import { currentStaff, staffAuthRequired } from './staff-context.js';
+import { getLLMProvider, type AgentMessage } from '../agent/llm-provider.js';
+import { CheckpointService } from './checkpoint.service.js';
+import { createHash } from 'node:crypto';
 
 const busy = new Set<string>();
+
+async function runConversation(input: VoiceInput) {
+  const display = VoiceService.read(input.session_id);
+  if (display.revision !== input.expected_revision) throw new Error('Voice session changed. Refresh before speaking again.');
+  const provider = getLLMProvider();
+  const key = `voice-model:${input.idempotency_key}`;
+  const requestJson = canonicalJson({input,provider:provider.providerId});
+  const existing = db.prepare('SELECT request_json,response_json FROM operation_receipts WHERE idempotency_key=?').get(key) as any;
+  try {
+    if (existing) {
+      if (existing.request_json !== requestJson) throw new Error('Conversation request key was reused for a different request');
+      const saved = JSON.parse(existing.response_json);
+      return VoiceService.saveAssistantTurn(input,saved.speech,{provider:saved.provider,status:saved.status});
+    }
+    const actorId = currentStaff()?.id || display.nurse?.id || 'voice-demo';
+    db.transaction(() => {
+      db.prepare(`INSERT OR IGNORE INTO workflow_runs (id,workflow_type,initiated_by,status)
+        VALUES (?,'GENERATE_HANDOFF',?,'IN_PROGRESS')`).run(key,actorId);
+      CheckpointService.saveCheckpoint(key,1,'VOICE_LLM_INTENT',
+        {sessionId:input.session_id,revision:input.expected_revision,provider:provider.providerId,
+          requestHash:createHash('sha256').update(requestJson).digest('hex')},`${key}:intent`);
+    }).immediate();
+    const messages: AgentMessage[] = VoiceService.conversationContext(input.session_id).map(message => ({
+      role:message.role === 'nurse' ? 'user' : 'assistant',content:message.text
+    }));
+    messages.push({role:'user',content:input.utterance});
+    const started = Date.now();
+    let speech: string;
+    let status: 'SUCCESS' | 'FAILED';
+    try {
+      const result = await provider.decideNextStep(messages,[],{voiceConversation:true});
+      if (result.toolCall || !result.finalSpeech?.trim()) throw new Error('Conversation model must return text without actions');
+      speech = result.finalSpeech.trim(); status = 'SUCCESS';
+    } catch {
+      // No canned reply is presented as a successful model response, and provider errors cannot leak secrets.
+      speech = "I couldn't reach my conversation model right now. Please try again. No records were changed.";
+      status = 'FAILED';
+    }
+    const saved = {speech,status,provider:provider.providerId};
+    db.transaction(() => {
+      db.prepare('INSERT INTO operation_receipts (idempotency_key,operation,request_json,response_json) VALUES (?,?,?,?)')
+        .run(key,'VOICE_MODEL_REPLY',requestJson,JSON.stringify(saved));
+      CheckpointService.saveCheckpoint(key,2,'VOICE_LLM_RESULT',saved,`${key}:result`);
+      if (status === 'SUCCESS') CheckpointService.completeWorkflowRun(key);
+      else db.prepare("UPDATE workflow_runs SET status='FAILED',error_message='Conversation model unavailable' WHERE id=?").run(key);
+      AuditService.log({actorType:'AGENT',actorId,action:'LLM:VOICE_CONVERSATION',targetResource:`voice:${input.session_id}`,
+        outcome:status === 'SUCCESS' ? 'SUCCESS' : 'FAILURE',latencyMs:Date.now()-started,
+        details:{provider:provider.providerId,toolsEnabled:false,status}});
+    }).immediate();
+    return VoiceService.saveAssistantTurn(input,speech,{provider:provider.providerId,status});
+  } finally { provider.close?.(); }
+}
+
 /** Await remote calls outside SQLite transactions; commit the display only at the expected revision. */
 export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
   // Authorize even an exact saved-response retry before reading its receipt.
@@ -24,9 +80,13 @@ export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
       succeeded = true;
       return JSON.parse(receipt.response_json);
     }
-    const epic = input.utterance.match(/^read epic patient ([A-Za-z0-9.-]+)$/i);
-    const syncEpic = /^(?:sync|refresh|connect) epic(?: patients| records| workspace)?[.!]?$/i.test(input.utterance.trim());
-    if (!epic && !syncEpic && !/^(?:alexa[, ]+)?ask assistant[, :]+/i.test(input.utterance)) {
+    const command = VoiceService.commandText(input.utterance);
+    const epic = command.match(/^read epic patient ([A-Za-z0-9.-]+)$/i);
+    const syncEpic = /^(?:sync|refresh|connect) epic(?: patients| records| workspace)?[.!]?$/i.test(command);
+    if (!epic && !syncEpic && !/^ask assistant[, :]+/i.test(command)) {
+      if ((process.env.LLM_PROVIDER || 'mock').toLowerCase() !== 'mock' && VoiceService.isConversational(input)) {
+        const result = await runConversation(input); succeeded = true; return result;
+      }
       const result = VoiceService.turn(input); succeeded = true; return result;
     }
     const display = VoiceService.read(input.session_id);
@@ -65,7 +125,7 @@ export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
     try {
       await agent.initialize();
       const result = await agent.processUtterance(display.nurse.id,
-        input.utterance.replace(/^(?:alexa[, ]+)?ask assistant[, :]+/i, ''), {
+        command.replace(/^ask assistant[, :]+/i, ''), {
           shiftId: display.shift.id, outgoingNurseId: display.nurse.id, incomingNurseId: display.nurse.id,
           requestKey: input.idempotency_key
         });

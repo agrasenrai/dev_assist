@@ -8,6 +8,10 @@ Speech handling ignores obsolete recognition events, permits pausing during back
 
 ## Automated verification
 
+Ordinary voice conversation now reaches the configured Bedrock/Gemini adapter without the `Ask assistant` prefix or nurse selection. Only general conversation history is sent through this path; patient/task records and confirmed actions retain their existing validated handlers. Model replies have durable intent/result checkpoints and retry receipts. Provider failures are spoken explicitly. The free mock mode remains available.
+
+On 22 October 2026, `npm test` passed 111 checks, including adapter-stubbed conversation/history, exact retries, explicit provider failure and rejection of unexpected model tool calls. `npx tsx scripts/verify-voice-conversation-live.ts` separately passed both reported conversational examples through MCP and the real configured AWS Bedrock model, including saved-response retries. These were text-input checks, not physical microphone tests. Typecheck and production build passed.
+
 All mutating checks use temporary databases and the existing fixture importer or existing isolated test fixtures.
 
 | Command | Coverage |

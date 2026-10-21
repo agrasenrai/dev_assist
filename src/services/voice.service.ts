@@ -25,13 +25,13 @@ type Message = { role: 'nurse' | 'assistant'; text: string };
 type State = { revision: number; nurse: Nurse | null; shift: Shift | null; pending: Pending | null;
   selectedPatientId?: string | null;
   selectedTaskId: string | null; selectedHandoffId: string | null; focus: 'tasks' | 'conflicts' | 'handoff';
-  messages: Message[]; speech: string };
+  messages: Message[]; conversationMessages?: Message[]; speech: string };
 export type VoiceInput = { session_id: string; utterance: string; expected_revision: number; idempotency_key: string };
 
 const greeting = 'What is your registered nurse name?';
 const initial = (): State => ({ revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
   selectedPatientId: null,
-  selectedHandoffId: null, focus: 'tasks', messages: [], speech: staffAuthRequired() && currentStaff()
+  selectedHandoffId: null, focus: 'tasks', messages: [], conversationMessages: [], speech: staffAuthRequired() && currentStaff()
     ? `Signed in as ${currentStaff()!.name}. Ready for your question.` : 'Ready for your question.' });
 const normal = (text: string) => text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 const hasPhrase = (text: string, value: string) => Boolean(normal(value)) && new RegExp(`(?:^| )${normal(value)}(?: |$)`).test(text);
@@ -95,7 +95,37 @@ export class VoiceService {
 
   static read(sessionId: string) { return this.display(this.load(sessionId)); }
 
-  static saveAssistantTurn(input: VoiceInput, speech: string) {
+  static commandText(utterance: string) {
+    return utterance.trim().replace(/^(?:(?:hey|hi+|hello)[\s,.:!?-]+)?alexa\b[\s,.:!?-]*/i, '').trim();
+  }
+
+  private static introduction(text: string, state: State): string[] | RegExpMatchArray | null {
+    const explicit = text.match(/\b(?:my name is|switch to)\s+(.+)/i);
+    if (explicit) return explicit;
+    const casual = text.match(/^(?:(?:hi+|hello|hey)[,\s.!]+)?(?:i am|i['’]?m|this is)\s+(.+)/i);
+    if (casual && !/^(?:just|not|feeling|really|very|so|a|an|the|doing|going|sorry|tired|unwell|sick|upset|sad|happy|fine|okay|ok|here|back|ready|worried|stressed|exhausted)\b/i.test(casual[1]!)) return casual;
+    return !state.nurse && this.resolveNurse(normal(text)).length ? [text,text] : null;
+  }
+
+  private static conversationText(state: State, text: string) {
+    const normalized = normal(text);
+    if (!normalized || this.introduction(text,state)) return false;
+    if (/^(?:yes|confirm|yes confirm|confirm it|yes please|cancel|no|stop|never mind|no cancel|end (?:my )?session|sign out|log out|goodbye|bye)$/.test(normalized)) return false;
+    if (state.pending && /\b(completed|in progress|cancelled|canceled|pending|because|note)\b/.test(normalized)) return false;
+    if (/\b(tasks?|patients?|shift|handoff|room|records?|discrepanc\w*|conflicts?|assigned|pending|completed|unfinished|remaining|status|accept|finalize|finalise|escalate|supervisor|resolve|allerg\w*|diagnos\w*|prescrib\w*|dose|treatment|administer)\b/.test(normalized)) return false;
+    return true;
+  }
+
+  static isConversational(input: VoiceInput) {
+    return this.conversationText(this.load(input.session_id),this.commandText(input.utterance));
+  }
+
+  static conversationContext(sessionId: string) {
+    // Only general dialogue is sent to the conversation model, never the record display or task snapshots.
+    return this.load(sessionId).conversationMessages || [];
+  }
+
+  static saveAssistantTurn(input: VoiceInput, speech: string, conversationModel?: {provider: string; status: 'SUCCESS' | 'FAILED'}) {
     return MutationService.execute('VOICE_TURN', `voice-turn:${input.idempotency_key}`, input, 'voice-demo', () => {
       const state = this.load(input.session_id);
       if (state.revision !== input.expected_revision) throw new Error('Voice session changed. Refresh before speaking again.');
@@ -104,8 +134,10 @@ export class VoiceService {
       state.speech = speech;
       state.messages = [...state.messages, { role: 'nurse' as const, text: input.utterance },
         { role: 'assistant' as const, text: speech }].slice(-30);
+      if (conversationModel) state.conversationMessages = [...(state.conversationMessages || []),
+        { role: 'nurse' as const, text: input.utterance }, { role: 'assistant' as const, text: speech }].slice(-16);
       CheckpointService.saveCheckpoint(runId(input.session_id), state.revision, 'VOICE_AGENT_RESULT',
-        { voice: state }, `voice-state:${input.idempotency_key}`);
+        { voice: state, ...(conversationModel ? {conversationModel} : {}) }, `voice-state:${input.idempotency_key}`);
       return this.display(state);
     });
   }
@@ -117,11 +149,10 @@ export class VoiceService {
       const state = this.load(input.session_id);
       if (state.revision !== input.expected_revision) throw new Error('Voice session changed. Refresh before speaking again.');
       const spokenText = input.utterance.trim();
-      const text = spokenText.replace(/^(?:(?:hey|hi+|hello)[\s,.:!?-]+)?alexa\b[\s,.:!?-]*/i, '').trim();
+      const text = this.commandText(spokenText);
       const normalized = normal(text);
       let speech: string;
-      const introduction = text.match(/\b(?:i am|i['’]?m|this is|my name is|switch to)\s+(.+)/i) ||
-        (!state.nurse && this.resolveNurse(normalized).length ? [text, text] : null);
+      const introduction = this.introduction(text,state);
       const staff = currentStaff();
       if (staffAuthRequired() && staff && introduction) {
         const requested = normal(introduction[1]!.split(/[,.;!?]|\b(?:and|please|let me|show|tell|what|mere)\b/i)[0]!);
@@ -167,6 +198,9 @@ export class VoiceService {
       } else if (/^(?:alexa )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
         Object.assign(state, initial(), { revision: state.revision });
         speech = 'Your session has ended. The display is cleared. Introduce yourself to begin another session.';
+      } else if (this.conversationText(state,text)) {
+        state.pending = null;
+        speech = "I'm listening. I'm in local conversation mode; tell me what you would like help with.";
       } else if (!state.nurse) {
         speech = greeting;
       } else if (!state.shift) {
