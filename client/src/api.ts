@@ -38,7 +38,7 @@ export function sendChatMessage(utterance: string, nurseId = 'nurse_reema_02') {
   return request<{ speech: string; workflowRunId: string; provider: string;
     toolsExecuted: Array<{ name: string; args: Record<string, unknown>; resultSummary: string; latencyMs: number }>;
     dashboardCard?: any }>('/api/chat', { utterance, nurseId, workflowRunId: workflowId(),
-      shiftId: 'shift_20261019_night', outgoingNurseId: 'nurse_seema_01', incomingNurseId: nurseId,
+      outgoingNurseId: 'nurse_seema_01', incomingNurseId: nurseId,
       idempotency_key: retryKey(identity) }).then(result => { pendingKeys.delete(identity); return result; });
 }
 export function fetchConversation() {

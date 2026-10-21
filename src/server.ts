@@ -705,10 +705,19 @@ app.post("/api/chat", async (req, res) => {
   const input = z.object({ utterance: z.string().trim().min(1).max(8000), nurseId: z.string().default('nurse_reema_02'),
     shiftId: z.string().optional(), outgoingNurseId: z.string().optional(), incomingNurseId: z.string().optional(),
     idempotency_key: z.string().min(1), workflowRunId: z.string().min(1).max(200).optional() }).parse(req.body);
+  let shiftId = input.shiftId;
+  if (!shiftId) {
+    const nurse = db.prepare('SELECT department FROM nurses WHERE id = ?').get(input.nurseId) as { department: string } | undefined;
+    if (nurse) {
+      const activeShift = db.prepare(`SELECT id FROM shifts WHERE unit_id = ? AND status IN ('ACTIVE', 'HANDOFF_IN_PROGRESS')
+        ORDER BY start_time DESC LIMIT 1`).get(nurse.department) as { id: string } | undefined;
+      if (activeShift) shiftId = activeShift.id;
+    }
+  }
   const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), process.env.LLM_PROVIDER || 'mock', input.workflowRunId);
   try {
     await orchestrator.initialize();
-    const result = await orchestrator.processUtterance(input.nurseId, input.utterance, { ...input, requestKey: input.idempotency_key });
+    const result = await orchestrator.processUtterance(input.nurseId, input.utterance, { ...input, shiftId, requestKey: input.idempotency_key });
     res.json(result);
   } catch (error) {
     res.status(409).json({ error: error instanceof Error ? error.message : String(error), workflowRunId: orchestrator.getWorkflowRunId() });
