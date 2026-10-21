@@ -2,7 +2,7 @@
 
 Recommended hackathon topology: **one always-on EC2 Linux host, one application container, SQLite on local EBS-backed Docker storage, and Caddy HTTPS**. React, voice gateway, agent, Express MCP and durable workflow state share the host. Bedrock is optional; mock remains the free default. This is a synthetic-data demonstrator, not hospital production software.
 
-For the authenticated Epic/staff profile, follow [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md). The fixture import, shared demo gate and machine-token-only smoke flow below apply to the original fixture profile. Do not run the fixture import against a provisioned operational database. Set `STAFF_AUTH_REQUIRED=true`, preserve `SANDBOX_SESSION_SECRET`, select Gemini/Bedrock explicitly and deploy a backup of the provisioned database to the persistent SQLite path configured by Compose. Each user signs in with their individual sandbox account. MCP calls additionally require that staff session; the service bearer token alone does not grant staff access. This profile uses reviewed local sandbox document publication while Epic writes remain disabled.
+For the authenticated Epic/staff profile, follow [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md). The fixture import, shared demo gate and machine-token-only smoke flow below apply to the original fixture profile. Do not run the fixture import against a provisioned operational database. Set `STAFF_AUTH_REQUIRED=true`, preserve `SANDBOX_SESSION_SECRET`, select Bedrock explicitly and deploy a backup of the provisioned database to the persistent SQLite path configured by Compose. Each user signs in with their individual sandbox account. MCP calls additionally require that staff session; the service bearer token alone does not grant staff access. This profile uses reviewed local sandbox document publication while Epic writes remain disabled.
 
 ## 1. Free local start
 
@@ -50,7 +50,7 @@ Open `https://YOUR_DOMAIN` and enter the configured demo username/password. Cadd
 | `DEMO_USER` | Shared judge/demo username |
 | `DEMO_PASSWORD` | Unique random secret, at least 24 characters |
 | `MCP_AUTH_TOKEN` | Different random secret, at least 32 characters |
-| `LLM_PROVIDER` | `mock`, `bedrock`, or `gemini` |
+| `LLM_PROVIDER` | `mock` or `bedrock` |
 
 Public binding fails at startup if these are missing or still contain shipped placeholders. The shared gate protects the synthetic demo; selecting a nurse by name is **not authenticated nurse identity**. Keep credentials server-side. Do not put cloud keys or the MCP token in React/Vite variables. `/readyz` is an intentionally minimal unauthenticated process/database probe. `/health` reports configuration, not verified cloud connectivity.
 
@@ -62,10 +62,8 @@ For the AWS mini challenge set `LLM_PROVIDER=bedrock`, `AWS_REGION`, and `BEDROC
 
 Prefer an EC2 instance IAM role with least-privilege `bedrock:InvokeModel` access to the selected model/profile and its required regional resources. For Docker bridge networking, configure IMDSv2 access appropriately (including a response hop limit of 2 if needed); do not disable IMDSv2. Alternatively supply temporary AWS access key, secret, and session token to the server environment. Never bake them into an image. Cross-region inference profiles may require additional regional model permissions.
 
-For Gemini set `LLM_PROVIDER=gemini`, `GEMINI_API_KEY`, and an accessible `GEMINI_MODEL`. Account quotas and costs depend on your service access; only mock mode is guaranteed to make no paid LLM calls. `npm run preflight` validates presence, not provider permission. A real “Ask assistant, summarize my shift” turn is the live model integration check. Service failures remain errors.
-
-The LLM plans read calls; the existing orchestrator renders final clinical-facing facts deterministically from tool results. It does not publish unconstrained model prose. “Ask assistant…” is read-only; regular voice commands handle draft creation, review and explicit confirmation. All decisions are recorded as provider-labelled timing events, not hidden reasoning transcripts.
-
+Bedrock requires configured service access. Only explicit mock mode makes no paid model calls. Preflight validates configuration presence, not external permissions.
+The voice workspace uses Bedrock to interpret ordinary requests, reads scoped records through MCP, and grounds generated record replies in current backend evidence. Supported changes use the existing proposal and explicit human-confirmation flow. The separate legacy chat orchestrator retains its existing behavior. See VOICE_VERIFICATION.md for verification and limits.
 ## 4. Epic configuration and boundaries
 
 Follow `incomingapikey.md` and the target Epic environment's approved API catalog. Configure `EPIC_CLIENT_ID`, `EPIC_KID`, `EPIC_TOKEN_URL`, `EPIC_FHIR_BASE_URL`, and comma-separated `EPIC_TEST_PATIENT_IDS`. Register your matching public JWKS with Epic. Put the private signing key at `keys/private_key.pem` on the host; Compose mounts it read-only. It must be readable by container UID 1000; use restrictive ownership/permissions. For local execution use `PRIVATE_KEY_PATH`. Set `EPIC_READS_ENABLED=true` only after configuration.

@@ -31,7 +31,7 @@ try{
       assert(display.speech?.length,'LLM-assisted turn returned no grounded display');
       const retry=(await request('/api/voice',input,login.cookie)).data;assert.deepEqual(retry,display);
       const audit=(await request('/api/operations/audit',{},login.cookie)).data;
-      const decisions=audit.filter((row:any)=>row.action==='LLM:DECISION');assert(decisions.length,'No actual model decision in authenticated audit');
+      const decisions=audit.filter((row:any)=>row.action==='LLM:VOICE_CONVERSATION'&&row.outcome==='SUCCESS');assert(decisions.length,'No successful voice model decision in authenticated audit');
       checks.push({modelProvider:process.env.LLM_PROVIDER,status:'LIVE_AUTHENTICATED_TURN_PASSED',elapsedMs:Date.now()-start,epicSnapshots:display.epicRecords?.length||0,recordedModelDecisions:decisions.length,exactRetry:'IDENTICAL_SAVED_RESPONSE'});
     }
   }

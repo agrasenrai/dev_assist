@@ -10,7 +10,7 @@ const token = process.env.MCP_AUTH_TOKEN || '';
 const exposed = !['127.0.0.1', 'localhost', '::1'].includes(host);
 if(process.env.STAFF_AUTH_REQUIRED==='true'){
   if((process.env.SANDBOX_SESSION_SECRET||'').length<32||token.length<32)throw new Error('Authenticated sandbox requires persistent random SANDBOX_SESSION_SECRET and MCP_AUTH_TOKEN values of at least 32 characters');
-  if(process.env.SHIFTWEAVE_TEST!=='1'&&!['gemini','bedrock'].includes(process.env.LLM_PROVIDER||''))throw new Error('Authenticated sandbox requires an explicitly configured Gemini or Bedrock provider; no mock fallback is enabled');
+  if(process.env.SHIFTWEAVE_TEST!=='1'&&process.env.LLM_PROVIDER!=='bedrock')throw new Error('Authenticated sandbox requires an explicitly configured Bedrock provider; no mock fallback is enabled');
 }
 if ((exposed || process.env.NODE_ENV === 'production') &&
     (token.length < 32 || !publicOrigin || process.env.STAFF_AUTH_REQUIRED!=='true'&&(!user || password.length < 24))) {

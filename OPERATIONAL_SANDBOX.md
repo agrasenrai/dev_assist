@@ -32,11 +32,11 @@ The current setup has eight accounts: `administrator`, `charge.meera`, `seema`, 
 ## Provision on another laptop
 
 1. Pull the repository and install root/client dependencies.
-2. Copy `.env.example` to `.env`; privately configure the existing authorized Epic client, matching private key and passphrase, and an explicitly selected Gemini or Bedrock provider. Never commit these secrets. The private key is not included in Git.
+2. Copy `.env.example` to `.env`; privately configure the existing authorized Epic client, matching private key and passphrase, and an explicitly selected Bedrock provider. Never commit these secrets. The private key is not included in Git.
 3. Run `npm run sandbox:setup` once. It fetches all seven configured public Epic patients, creates a separate SQLite file, provisions staff and writes ignored local credentials. It backs up the previous `.env` and selects the new database; existing databases are preserved. Rerunning provisions another workspace, not a migration of existing work.
 4. Run `npm run build` and `npm start`. Share each account's password privately with its intended tester.
 
-The original zero-cost fixture demo is still available with `STAFF_AUTH_REQUIRED=false`, `LLM_PROVIDER=mock`, a separate fixture database and explicit fixture import. The authenticated operational profile deliberately requires an explicitly configured Gemini or Bedrock adapter and never silently falls back to a model mock. Service access and provider costs depend on that account.
+The original zero-cost fixture demo is still available with `STAFF_AUTH_REQUIRED=false`, `LLM_PROVIDER=mock`, a separate fixture database and explicit fixture import. The authenticated operational profile deliberately requires an explicitly configured Bedrock adapter and never silently falls back to a model mock. Service access and provider costs depend on that account.
 
 ## Roles and full workflow
 

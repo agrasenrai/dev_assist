@@ -64,8 +64,7 @@ Targeted commands: `npm run test:mcp`, `npm run test:agent`, `npm run test:chaos
 
 ## Optional models and external integration
 
-- **Gemini:** set `LLM_PROVIDER=gemini`, `GEMINI_API_KEY` and optionally `GEMINI_MODEL`. Native function calls/results are used. Missing credentials and service failures are explicit errors.
-- **Bedrock:** set `LLM_PROVIDER=bedrock`, `AWS_REGION` and `BEDROCK_MODEL_ID`; use the AWS SDK credential chain. Tool-use IDs and tool-result messages are preserved. Live model calls require separately configured access and have not been verified by local tests.
+- **Bedrock:** set `LLM_PROVIDER=bedrock`, `AWS_REGION` and `BEDROCK_MODEL_ID`; use the AWS SDK credential chain. In the voice workspace, ordinary speech uses Bedrock intent interpretation and current scoped MCP records without an “Ask assistant” prefix. Confirmations and mutations remain backend-validated. `mock` is the explicit free local mode; cloud failures never silently select it. See [voice verification](VOICE_VERIFICATION.md) for checks and limits.
 - **Epic/FHIR:** hospital-specific operational mapping, OAuth/permissions and write-back are **not configured**. Selecting the external workflow provider returns an explicit error and keeps local mode active. No public HAPI patients or SQLite rows are presented as live Epic results. See [incomingapikey.md](incomingapikey.md) before implementing the adapter.
 
 ## Boundaries and current limitations

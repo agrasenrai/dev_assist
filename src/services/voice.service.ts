@@ -11,6 +11,7 @@ import { StaffAuthService } from './staff-auth.service.js';
 import { currentStaff, staffAuthRequired } from './staff-context.js';
 import { SQLiteCacheProvider } from '../providers/sqlite-cache-provider.js';
 import { OperationalSandboxService } from './operational-sandbox.service.js';
+import { z } from 'zod';
 
 type Nurse = { id: string; name: string; department: string };
 type Shift = { id: string; unit: string; type: string; start: string; end: string };
@@ -25,15 +26,29 @@ type Message = { role: 'nurse' | 'assistant'; text: string };
 type State = { revision: number; nurse: Nurse | null; shift: Shift | null; pending: Pending | null;
   selectedPatientId?: string | null;
   selectedTaskId: string | null; selectedHandoffId: string | null; focus: 'tasks' | 'conflicts' | 'handoff';
-  messages: Message[]; conversationMessages?: Message[]; speech: string };
+  messages: Message[]; speech: string };
 export type VoiceInput = { session_id: string; utterance: string; expected_revision: number; idempotency_key: string };
+export const voiceIntentSchema = z.object({
+  intent: z.enum(['IDENTIFY','TASKS','TASK','PATIENT','STATUS','CONFLICTS','RESOLVE','ESCALATE','DRAFT','HANDOFF','ACCEPT','FINALIZE','END','SYNC_EPIC','READ_EPIC']),
+  nurse_name: z.string().trim().min(1).max(150).optional(),
+  recipient_name: z.string().trim().min(1).max(150).optional(),
+  task_id: z.string().min(1).max(250).optional(),
+  patient_id: z.string().min(1).max(250).optional(),
+  handoff_id: z.string().min(1).max(250).optional(),
+  epic_patient_id: z.string().regex(/^[A-Za-z0-9.-]+$/).max(250).optional(),
+  status: z.enum(['PENDING','IN_PROGRESS','COMPLETED','CANCELLED','UNFINISHED','ALL']).optional(),
+  note: z.string().trim().min(1).max(1000).optional(),
+  detail: z.enum(['SUMMARY','DETAILS','ALLERGIES','DIAGNOSIS','ADMISSION']).optional(),
+  all_tasks: z.boolean().optional()
+}).strict();
+export type VoiceIntent = z.infer<typeof voiceIntentSchema>;
 
 const greeting = 'Before I look up your records, what name should I look for?';
 const spokenStatus = (status: string) => status === 'FLAGGED_CONFLICT' ? 'waiting for a discrepancy review' : status.toLowerCase().replaceAll('_', ' ');
 const firstName = (name: string) => name.replace(/,\s*RN$/i, '').split(/\s+/)[0];
 const initial = (): State => ({ revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
   selectedPatientId: null,
-  selectedHandoffId: null, focus: 'tasks', messages: [], conversationMessages: [], speech: staffAuthRequired() && currentStaff()
+  selectedHandoffId: null, focus: 'tasks', messages: [], speech: staffAuthRequired() && currentStaff()
     ? `Signed in as ${currentStaff()!.name}. Ready for your question.` : 'Ready for your question.' });
 const normal = (text: string) => text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 const hasPhrase = (text: string, value: string) => Boolean(normal(value)) && new RegExp(`(?:^| )${normal(value)}(?: |$)`).test(text);
@@ -97,6 +112,80 @@ export class VoiceService {
 
   static read(sessionId: string) { return this.display(this.load(sessionId)); }
 
+  static agentContext(sessionId: string) {
+    const state = this.load(sessionId);
+    const staff = currentStaff();
+    const directory = staffAuthRequired() && staff ? [{name:staff.name}] :
+      db.prepare("SELECT full_name AS name FROM nurses WHERE role IN ('STAFF_NURSE','CHARGE_NURSE') ORDER BY full_name").all();
+    return {revision:state.revision,nurse:state.nurse,shift:state.shift,selectedTaskId:state.selectedTaskId,
+      selectedPatientId:state.selectedPatientId,selectedHandoffId:state.selectedHandoffId,pending:state.pending,
+      directory,messages:state.messages};
+  }
+
+  static agentVersion(sessionId: string) {
+    const state=this.load(sessionId),records=this.records(state);
+    const ids=[...new Set([...records.tasks,...records.candidates].map(t=>t.patientId).concat(state.selectedPatientId?[state.selectedPatientId]:[]))];
+    const patients=ids.length?db.prepare(`SELECT * FROM patients WHERE id IN (${ids.map(()=>'?').join(',')}) ORDER BY id`).all(...ids):[];
+    return createHash('sha256').update(canonicalJson({version:this.version(state),patients})).digest('hex');
+  }
+
+  /** The model supplies structured meaning; only the server constructs an executable command. */
+  static commandForIntent(input: VoiceInput, value: unknown) {
+    const intent = voiceIntentSchema.parse(value);
+    const state = this.load(input.session_id);
+    const readIntent=['TASKS','TASK','PATIENT','HANDOFF','CONFLICTS','READ_EPIC'].includes(intent.intent);
+    const request=normal(input.utterance.split(/\b(?:because|note is)\b/i)[0]!);
+    if(!readIntent&&/\b(?:dont|do not|not yet|never)\b/.test(request)) throw new Error('No changes were made. Could you clarify what you want me to do?');
+    if (intent.intent === 'END') return 'End my session';
+    const name = (value: string | undefined) => {
+      if (!value || /[\n\r,.;!?]/.test(value.replace(/,\s*RN$/i,''))) throw new Error('Please give the nurse’s name or badge number.');
+      return value.replace(/,\s*RN$/i,'');
+    };
+    if (intent.intent === 'IDENTIFY') {
+      const claimed=name(intent.nurse_name);
+      if(!hasPhrase(normal(input.utterance),claimed)&&!hasPhrase(normal(input.utterance),firstName(claimed)!)) throw new Error('Please give the nurse’s name or badge number.');
+      return `I am ${claimed}`;
+    }
+    if (!state.nurse) return 'Show my tasks'; // Existing identity gate; never expose records before selection.
+    if (!state.shift) return 'Show my tasks';
+    const records = this.records(state), visible = [...records.tasks,...records.candidates];
+    const requestedTask = intent.task_id || (!state.pending?.ready ? state.pending?.taskIds[0] : undefined) || state.selectedTaskId;
+    const task = requestedTask ? visible.find(t => t.id === requestedTask) : visible.length === 1 ? visible[0] : undefined;
+    if (intent.task_id && !task) throw new Error('That task is outside your current view. Which assigned task do you mean?');
+    const requireTask = () => { if (!task) throw new Error('Which task do you mean? Please give the patient and task title.'); return `task ${task.id}`; };
+    let patientId = intent.patient_id;
+    if (intent.intent === 'PATIENT') patientId ||= state.selectedPatientId || task?.patientId;
+    if (patientId && !visible.some(t => t.patientId === patientId)) {
+      if (!staffAuthRequired()) throw new Error('I couldn’t find that patient in your current view. Which patient do you mean?');
+      OperationalSandboxService.assertPatient(patientId,state.shift.id);
+    }
+    const patient = patientId ? ` patient ${patientId}` : '';
+    const handoffId = intent.handoff_id || state.selectedHandoffId || (records.handoffs.length === 1 ? records.handoffs[0]!.id : undefined);
+    if (intent.handoff_id && !records.handoffs.some(h => h.id === handoffId)) throw new Error('That handoff is outside your current view.');
+    const handoff = handoffId ? ` handoff ${handoffId}` : ' handoff';
+    const status = intent.status && !['ALL','UNFINISHED'].includes(intent.status) ? spokenStatus(intent.status) : '';
+    if (intent.note && !normal(input.utterance).includes(normal(intent.note))) throw new Error('What should I write in the review note? I need your own words.');
+    const note = intent.note ? ` because ${intent.note}` : '';
+    switch (intent.intent) {
+      case 'SYNC_EPIC': return 'Sync Epic patients';
+      case 'READ_EPIC': {
+        if(!intent.epic_patient_id || !records.epicRecords.some(r=>r.epicPatientId===intent.epic_patient_id)) throw new Error('I couldn’t find that patient in your current view. Which patient do you mean?');
+        return `Read Epic patient ${intent.epic_patient_id}`;
+      }
+      case 'TASKS': return `Show my ${intent.status === 'UNFINISHED' ? 'unfinished' : status} tasks${patient}`;
+      case 'TASK': return `${intent.detail === 'DETAILS' ? 'Explain' : 'Show status of'} ${requireTask()}`;
+      case 'CONFLICTS': return intent.task_id ? `Explain discrepancy for ${requireTask()}` : 'Show discrepancies';
+      case 'PATIENT': return `${intent.detail === 'ALLERGIES' ? 'Show allergies for' : intent.detail === 'DIAGNOSIS' ? 'Show diagnosis for' : intent.detail === 'ADMISSION' ? 'Show admission for' : intent.detail === 'DETAILS' ? 'Show details for' : 'Show latest information about'}${patient || ' my patient'}`;
+      case 'STATUS': return `Set ${requireTask()} ${status}${note}`;
+      case 'RESOLVE': return `Resolve discrepancy for ${requireTask()} ${status}${note}`;
+      case 'ESCALATE': return `Escalate ${requireTask()}${note}`;
+      case 'DRAFT': return `Prepare my handoff for ${name(intent.recipient_name)}`;
+      case 'HANDOFF': return `Review${handoff}`;
+      case 'ACCEPT': return intent.all_tasks ? `Accept all${handoff} tasks` : `Accept ${requireTask()}${handoff}`;
+      case 'FINALIZE': return `Finalize${handoff}`;
+    }
+  }
+
   static commandText(utterance: string) {
     return utterance.trim().replace(/^(?:(?:hey|hi+|hello)[\s,.:!?-]+)?alexa\b[\s,.:!?-]*/i, '').trim();
   }
@@ -127,40 +216,30 @@ export class VoiceService {
     return note || null;
   }
 
-  static isConversational(input: VoiceInput) {
-    return this.conversationText(this.load(input.session_id),this.commandText(input.utterance));
-  }
-
-  static conversationContext(sessionId: string) {
-    // Only general dialogue is sent to the conversation model, never the record display or task snapshots.
-    return this.load(sessionId).conversationMessages || [];
-  }
-
-  static saveAssistantTurn(input: VoiceInput, speech: string, conversationModel?: {provider: string; status: 'SUCCESS' | 'FAILED'}) {
+  static saveAssistantTurn(input: VoiceInput, speech: string, conversationModel?: {provider: string; status: 'SUCCESS' | 'FAILED'},
+    completion?: {fromRevision:number; replaceLast:boolean; preservePending:boolean}) {
     return MutationService.execute('VOICE_TURN', `voice-turn:${input.idempotency_key}`, input, 'voice-demo', () => {
       const state = this.load(input.session_id);
-      if (state.revision !== input.expected_revision) throw new Error('Voice session changed. Refresh before speaking again.');
-      state.pending = null;
+      if (state.revision !== (completion?.fromRevision ?? input.expected_revision)) throw new Error('Voice session changed. Refresh before speaking again.');
+      if (!completion?.preservePending) state.pending = null;
       state.revision++;
       state.speech = speech;
-      state.messages = [...state.messages, { role: 'nurse' as const, text: input.utterance },
+      state.messages = [...(completion?.replaceLast ? state.messages.slice(0,-2) : state.messages), { role: 'nurse' as const, text: input.utterance },
         { role: 'assistant' as const, text: speech }].slice(-30);
-      if (conversationModel) state.conversationMessages = [...(state.conversationMessages || []),
-        { role: 'nurse' as const, text: input.utterance }, { role: 'assistant' as const, text: speech }].slice(-16);
       CheckpointService.saveCheckpoint(runId(input.session_id), state.revision, 'VOICE_AGENT_RESULT',
         { voice: state, ...(conversationModel ? {conversationModel} : {}) }, `voice-state:${input.idempotency_key}`);
       return this.display(state);
     });
   }
 
-  static turn(input: VoiceInput) {
+  static turn(input: VoiceInput, interpretedCommand?: string) {
     if (getActiveProvider().providerId !== 'sqlite-edge-cache') throw new Error('Voice demo requires the local provider; live voice mappings are not configured.');
     // The receipt is checked before revision validation, so a lost response can be retried exactly.
     return MutationService.execute('VOICE_TURN', `voice-turn:${input.idempotency_key}`, input, 'voice-demo', () => {
       const state = this.load(input.session_id);
       if (state.revision !== input.expected_revision) throw new Error('Voice session changed. Refresh before speaking again.');
       const spokenText = input.utterance.trim();
-      const text = this.commandText(spokenText);
+      const text = interpretedCommand ?? this.commandText(spokenText);
       const normalized = normal(text);
       let speech: string;
       const introduction = this.introduction(text,state);
@@ -219,7 +298,7 @@ export class VoiceService {
       } else if (!state.shift) {
         speech = 'I don’t have an active shift for your unit right now.';
       } else {
-        speech = this.interpret(state, text, input.idempotency_key);
+        speech = this.interpret(state, text, input.idempotency_key, interpretedCommand !== undefined);
       }
       state.revision++;
       state.speech = speech;
@@ -337,8 +416,9 @@ export class VoiceService {
     return pending.prompt;
   }
 
-  private static interpret(state: State, raw: string, key: string): string {
-    const text = normal(raw);
+  private static interpret(state: State, raw: string, key: string, semantic = false): string {
+    // Structured notes are data; words such as "start" or "finish" inside them cannot change the intent.
+    const text = normal(semantic ? raw.split(/\bbecause\b/i)[0]! : raw);
     if (/^(?:alexa )?(?:cancel|never mind|no|no cancel|stop)$/.test(text)) {
       state.pending = null;
       return 'Okay, I’ve cancelled that. No records were changed.';
