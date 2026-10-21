@@ -199,6 +199,8 @@ try {
   if (mode === 'all') {
     const { verifyVoice } = await import('./verify-voice.js');
     await verifyVoice(base, check);
+    const { verifyVoiceConversation } = await import('./verify-voice-conversation.js');
+    await verifyVoiceConversation(base,check);
   }
   console.log(`\n${checks} meaningful checks passed (${mode}); isolated database only.`);
 } finally {
