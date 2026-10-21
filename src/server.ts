@@ -17,7 +17,6 @@ import { RecoveryService } from "./services/recovery.service.js";
 import { HandoffService } from "./services/handoff.service.js";
 import { EpicWriteBackService } from "./services/epic-writeback.service.js";
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
-import { MCPClientBridge } from "./agent/mcp-client-bridge.js";
 import { VoiceService } from "./services/voice.service.js";
 
 const voiceInput = z.object({
@@ -543,20 +542,10 @@ app.delete("/mcp", async (req: Request, res: Response): Promise<void> => {
 // REST API COMPANION ENDPOINTS FOR REACT DASHBOARD
 // =========================================================================
 
-// Browser voice input traverses the same MCP transport as an external voice host.
-app.post('/api/voice', async (req, res) => {
+// Direct service call for low voice latency; external MCP clients use the voice_turn tool over /mcp.
+app.post('/api/voice', (req, res) => {
   const input = voiceInput.parse(req.body);
-  const bridge = new MCPClientBridge(localMcpEndpoint());
-  try {
-    await bridge.initialize();
-    const tools = await bridge.listTools();
-    if (!tools.some(tool => tool.name === 'voice_turn')) throw new Error('Voice workflow tool is unavailable');
-    const result = await bridge.callTool('voice_turn', input);
-    if (result.isError) throw new Error(result.content[0]?.text || 'Voice workflow failed');
-    res.json(JSON.parse(result.content[0]!.text));
-  } finally {
-    await bridge.close();
-  }
+  res.json(VoiceService.turn(input));
 });
 app.get('/api/voice/:sessionId', (req, res) => {
   res.json(VoiceService.read(z.string().uuid().parse(req.params.sessionId)));
