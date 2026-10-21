@@ -30,6 +30,8 @@ dotenv.config();
 
 // Ensure all database tables exist on server startup
 initializeDatabase();
+// Prune receipts older than 3 days at startup
+db.prepare("DELETE FROM operation_receipts WHERE created_at < datetime('now', '-3 days')").run();
 
 /**
  * Factory function to create a fully configured ShiftWeave MCP Server

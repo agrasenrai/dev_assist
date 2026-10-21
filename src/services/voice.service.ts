@@ -30,7 +30,12 @@ const runId = (id: string) => `voice:${id}`;
 /** Local demo identity selection, not nurse authentication. All turn writes commit atomically. */
 export class VoiceService {
   private static load(id: string): State {
-    return (CheckpointService.getLatestCheckpoint(runId(id))?.statePayload.voice as State | undefined) || initial();
+    const state = (CheckpointService.getLatestCheckpoint(runId(id))?.statePayload.voice as State | undefined) || initial();
+    // Clear expired confirmations on load so the display is never stale
+    if (state.pending && state.pending.expiresAt < Date.now()) {
+      state.pending = null;
+    }
+    return state;
   }
 
   private static handoffs(state: State): Handoff[] {
