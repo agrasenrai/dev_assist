@@ -1,5 +1,9 @@
 node_modules/
 .env
+.env.deploy
+build/
+client/dist/
+backups/
 # SQLite transient WAL sidecars
 data/*.db-wal
 data/*.db-shm

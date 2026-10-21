@@ -48,6 +48,25 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   check('lost voice response retry returns exact saved response', () => assert.deepEqual(retry.data, original.data));
   const changed = await post({ ...intro, utterance: 'I am Maya' });
   check('voice retry key cannot be reused for another identity', () => assert.equal(changed.status, 409));
+  const assistantInput = { session_id: session, utterance: 'Ask assistant, summarize my shift',
+    expected_revision: revision, idempotency_key: randomUUID() };
+  const assistant = await post(assistantInput);
+  check('voice assistant uses MCP planning with nurse-scoped facts', () => {
+    assert.equal(assistant.status, 200, JSON.stringify(assistant.data));
+    assert.match(assistant.data.speech, /Demo Patient/);
+    assert.equal(assistant.data.nurse.id, 'voice_nora');
+  });
+  revision = assistant.data.revision;
+  check('voice assistant commits a display checkpoint', () => assert.equal(
+    CheckpointService.getLatestCheckpoint(`voice:${session}`)?.stepName, 'VOICE_AGENT_RESULT'));
+  const assistantRetry = await post(assistantInput);
+  check('voice assistant retry returns the committed display', () => assert.deepEqual(assistantRetry.data, assistant.data));
+  const epicFailure = await post({ session_id: session, utterance: 'Read Epic patient not-allowed',
+    expected_revision: revision, idempotency_key: randomUUID() });
+  check('unconfigured Epic voice read is an explicit error without advancing display', () => {
+    assert.equal(epicFailure.status, 409);
+    assert.equal(VoiceService.read(session).revision, revision);
+  });
   const bridge = new MCPClientBridge(base + '/mcp');
   try {
     await bridge.initialize();

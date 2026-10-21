@@ -24,6 +24,7 @@ export interface AgentTurnResult {
 }
 export interface ILLMProvider {
   providerId: string; providerName: string;
+  close?(): void;
   decideNextStep(messages: AgentMessage[], tools: MCPToolDefinition[], context?: Record<string, unknown>): Promise<AgentTurnResult>;
 }
 
@@ -84,7 +85,7 @@ ${detail.activeConflict ? 'Conflicting documentation requires human review.' : '
         summary_markdown: `## Situation\n${summary}\n\n## Background\nSource: local assigned workflow records.\n\n## Assessment\n${handoff.active_conflicts.length} unresolved documentation discrepancies. No clinical assessment generated.\n\n## Workflow follow-up\nHuman review and explicit custody acceptance required.`,
         carried_forward_task_ids: tasks.filter(t => !['COMPLETED', 'CANCELLED'].includes(t.status)).map(t => t.id) } } };
     }
-    return { finalSpeech: summary + (data('create_handoff_draft') ? ' Local draft saved for review; custody has not transferred.' : '') +
+    return { finalSpeech: summary + (handoff.epic_source_summary || '') + (data('create_handoff_draft') ? ' Local draft saved for review; custody has not transferred.' : '') +
       (handoff.active_conflicts.length ? ' Please review the discrepancies before confirming task status.' : ''),
       dashboardCard: { title: 'Recorded shift workflow', type: handoff.active_conflicts.length ? 'CONFLICT_ALERT' : 'HANDOFF_SUMMARY',
         metrics, data: { source: assigned.provider, externalSync: 'NOT_REQUESTED' } } };
@@ -135,16 +136,19 @@ export class GeminiLLMProvider implements ILLMProvider {
 
 export class BedrockLLMProvider implements ILLMProvider {
   providerId = 'aws-bedrock'; providerName = 'AWS Bedrock Converse (external)';
+  private client?: import('@aws-sdk/client-bedrock-runtime').BedrockRuntimeClient;
+  close() { this.client?.destroy(); }
   constructor(private modelId = process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-5-sonnet-20241022-v2:0',
     private region = process.env.AWS_REGION || 'us-east-1') {}
   async decideNextStep(messages: AgentMessage[], availableTools: MCPToolDefinition[], context?: Record<string, unknown>): Promise<AgentTurnResult> {
     const { BedrockRuntimeClient, ConverseCommand } = await import('@aws-sdk/client-bedrock-runtime');
     // Use the SDK credential chain (including profiles/roles), rather than only environment credentials.
-    const client = new BedrockRuntimeClient({ region: this.region, requestHandler: { requestTimeout: 30000 } });
+    const client = this.client ||= new BedrockRuntimeClient({ region: this.region, maxAttempts: 1,
+      requestHandler: { requestTimeout: 30000 } });
     const tools: Tool[] = availableTools.filter(t => !['acknowledge_task', 'resume_workflow', 'save_workflow_checkpoint', 'voice_turn', 'get_voice_display', 'publish_reviewed_handoff_note'].includes(t.name))
       .map(t => ({ toolSpec: { name: t.name, description: t.description, inputSchema: { json: JSON.parse(JSON.stringify(t.inputSchema)) } } }));
-    try {
       const response = await client.send(new ConverseCommand({ modelId: this.modelId,
+        inferenceConfig: { maxTokens: Number(process.env.LLM_MAX_OUTPUT_TOKENS || 1024) },
         messages: toBedrockMessages(messages), system: [{ text: safety + '\nTrusted context: ' + JSON.stringify(context) }],
         toolConfig: { tools } }), { abortSignal: AbortSignal.timeout(30000) });
       const content = response.output?.message?.content || [];
@@ -156,7 +160,6 @@ export class BedrockLLMProvider implements ILLMProvider {
       const speech = content.map(c => c.text || '').join('');
       if (!speech) throw new Error('Bedrock returned an empty response');
       return { finalSpeech: speech };
-    } finally { client.destroy(); }
   }
 }
 export function getLLMProvider(id = process.env.LLM_PROVIDER || 'mock'): ILLMProvider {

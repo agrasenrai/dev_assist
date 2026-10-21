@@ -21,7 +21,7 @@ export async function sendVoiceTurn(utterance: string, revision: number): Promis
   if (existing && body.utterance !== utterance) throw new Error('The previous request has an uncertain outcome. Say “retry last request” first.');
   localStorage.setItem(key, JSON.stringify(body));
   const response = await fetch('/api/voice', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(90000) });
+    body: JSON.stringify(body), signal: AbortSignal.timeout(120000) });
   const data = await response.json();
   if (!response.ok) {
     // A revision rejection is known not to have committed; other errors may follow a commit.

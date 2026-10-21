@@ -1,0 +1,38 @@
+services:
+  app:
+    build: .
+    env_file: ${SHIFTWEAVE_ENV_FILE:-.env.deploy}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      SQLITE_DB_PATH: /app/storage/shiftweave.db
+      PRIVATE_KEY_PATH: /run/epic/private_key.pem
+    volumes:
+      - workflow-data:/app/storage
+      - workflow-backups:/app/backups
+      - ./keys:/run/epic:ro
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: '3' }
+  https:
+    image: caddy:2
+    env_file: ${SHIFTWEAVE_ENV_FILE:-.env.deploy}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app: { condition: service_healthy }
+    restart: unless-stopped
+volumes:
+  workflow-data:
+  workflow-backups:
+  caddy-data:
+  caddy-config:

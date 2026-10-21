@@ -1,0 +1,9 @@
+{$DOMAIN} {
+  reverse_proxy app:3000 {
+    flush_interval -1
+  }
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+  }
+}

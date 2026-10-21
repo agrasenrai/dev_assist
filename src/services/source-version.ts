@@ -9,5 +9,6 @@ export function sourceVersion(): string {
     assignments: db.prepare('SELECT * FROM task_assignments ORDER BY id').all(),
     conflicts: db.prepare('SELECT * FROM conflicts ORDER BY id').all(),
     patients: db.prepare('SELECT * FROM patients ORDER BY id').all()
+    ,epic: db.prepare('SELECT * FROM epic_patient_snapshots ORDER BY patient_id').all()
   })).digest('hex');
 }

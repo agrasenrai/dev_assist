@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS patients (
     room_number TEXT NOT NULL,
     bed_number TEXT NOT NULL DEFAULT 'A',
     admission_date TIMESTAMP NOT NULL,
-    acuity_level INTEGER NOT NULL CHECK(acuity_level BETWEEN 1 AND 5),
+    acuity_level INTEGER CHECK(acuity_level BETWEEN 1 AND 5),
     allergies TEXT,
     primary_diagnosis TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -175,11 +175,45 @@ CREATE TABLE IF NOT EXISTS operation_receipts (
     response_json TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS epic_patient_snapshots (
+    patient_id TEXT PRIMARY KEY REFERENCES patients(id),
+    epic_patient_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL,
+    sync_status TEXT NOT NULL,
+    last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS epic_snapshot_versions (
+    id TEXT PRIMARY KEY,
+    patient_id TEXT NOT NULL REFERENCES patients(id),
+    snapshot_json TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL
+);
 `;
 
 export function initializeDatabase() {
   console.log("Initializing ShiftWeave SQLite database tables...");
   db.exec(createTablesSQL);
+  // Older schemas required invented acuity for sources which do not supply it.
+  const acuity = (db.pragma('table_info(patients)') as Array<{ name: string; notnull: number }>).find(c => c.name === 'acuity_level');
+  if (acuity?.notnull) {
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`CREATE TABLE patients_nullable (
+          id TEXT PRIMARY KEY, mrn TEXT NOT NULL UNIQUE, full_name TEXT NOT NULL, room_number TEXT NOT NULL,
+          bed_number TEXT NOT NULL DEFAULT 'A', admission_date TIMESTAMP NOT NULL,
+          acuity_level INTEGER CHECK(acuity_level BETWEEN 1 AND 5), allergies TEXT,
+          primary_diagnosis TEXT NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
+          INSERT INTO patients_nullable SELECT * FROM patients;
+          DROP TABLE patients;
+          ALTER TABLE patients_nullable RENAME TO patients;`);
+        if ((db.pragma('foreign_key_check') as unknown[]).length) throw new Error('Patient migration failed foreign-key verification');
+      })();
+    } finally { db.pragma('foreign_keys = ON'); }
+  }
 
   // Safe migration for durable external sync columns on existing databases
   try { db.exec("ALTER TABLE handoffs ADD COLUMN external_sync_status TEXT NOT NULL DEFAULT 'NOT_REQUESTED'"); } catch {}

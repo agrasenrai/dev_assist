@@ -1,0 +1,15 @@
+node_modules
+client/node_modules
+client/dist
+build
+.git
+.env*
+keys
+backups
+data/*.db*
+*.pem
+*.key
+*.docx
+*.pdf
+.agents
+.codex

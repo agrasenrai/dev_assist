@@ -33,6 +33,9 @@ export class MCPClientBridge {
   private endpoint: string;
   private sessionId: string | null = null;
   private requestId = 1;
+  private authHeaders(): Record<string, string> {
+    return process.env.MCP_AUTH_TOKEN ? { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } : {};
+  }
 
   constructor(endpoint = process.env.MCP_SERVER_URL || "http://localhost:3000/mcp") {
     this.endpoint = endpoint;
@@ -62,6 +65,7 @@ export class MCPClientBridge {
       signal: AbortSignal.timeout(30000),
       method: "POST",
       headers: {
+        ...this.authHeaders(),
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream"
       },
@@ -114,7 +118,7 @@ export class MCPClientBridge {
     const response = await this.sendRequest("tools/call", {
       name,
       arguments: args
-    });
+    }, ['voice_turn', 'sync_epic_workspace'].includes(name) ? 95_000 : 30_000);
 
     if (response.error) {
       return {
@@ -129,8 +133,9 @@ export class MCPClientBridge {
   /**
    * Helper to send JSON-RPC 2.0 requests over Streamable HTTP
    */
-  private async sendRequest(method: string, params: Record<string, unknown> = {}): Promise<any> {
+  private async sendRequest(method: string, params: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<any> {
     const headers: Record<string, string> = {
+      ...this.authHeaders(),
       "Content-Type": "application/json",
       "Accept": "application/json, text/event-stream"
     };
@@ -141,7 +146,7 @@ export class MCPClientBridge {
     }
 
     const res = await fetch(this.endpoint, {
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(timeoutMs),
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -166,6 +171,7 @@ export class MCPClientBridge {
    */
   private async sendNotification(method: string, params: Record<string, unknown> = {}): Promise<void> {
     const headers: Record<string, string> = {
+      ...this.authHeaders(),
       "Content-Type": "application/json",
       "Accept": "application/json, text/event-stream"
     };
@@ -214,7 +220,7 @@ export class MCPClientBridge {
     if (!this.sessionId) return;
     try {
       const response = await fetch(this.endpoint, { method: 'DELETE', signal: AbortSignal.timeout(5000),
-        headers: { 'mcp-session-id': this.sessionId, 'MCP-Protocol-Version': '2025-11-25' } });
+        headers: { ...this.authHeaders(), 'mcp-session-id': this.sessionId, 'MCP-Protocol-Version': '2025-11-25' } });
       this.sessionId = null;
       if (!response.ok && response.status !== 404) throw new Error(`MCP close failed: ${response.status}`);
     } catch {

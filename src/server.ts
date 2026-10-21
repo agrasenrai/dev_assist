@@ -18,6 +18,11 @@ import { HandoffService } from "./services/handoff.service.js";
 import { EpicWriteBackService } from "./services/epic-writeback.service.js";
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
 import { VoiceService } from "./services/voice.service.js";
+import { host, allowedOrigins, demoAccess } from './runtime-config.js';
+import { MCPClientBridge } from './agent/mcp-client-bridge.js';
+import { runVoiceTurn } from './services/voice-agent.service.js';
+import { readEpicContext } from './services/epic-context.service.js';
+import { EpicWorkflowService } from './services/epic-workflow.service.js';
 
 const voiceInput = z.object({
   session_id: z.string().uuid(),
@@ -30,8 +35,7 @@ dotenv.config();
 
 // Ensure all database tables exist on server startup
 initializeDatabase();
-// Prune receipts older than 3 days at startup
-db.prepare("DELETE FROM operation_receipts WHERE created_at < datetime('now', '-3 days')").run();
+// Receipts must survive restarts and delayed retries; never prune independently of workflows.
 
 /**
  * Factory function to create a fully configured ShiftWeave MCP Server
@@ -235,6 +239,7 @@ export function createShiftWeaveServer(): McpServer {
               pending_tasks: pendingTasks,
               conflicted_tasks: conflictedTasks,
               active_conflicts: unresolvedConflicts
+              ,epic_source_summary: EpicWorkflowService.narrative(EpicWorkflowService.recordsForNurse(args.outgoing_nurse_id, args.shift_id))
             }, null, 2)
           }
         ]
@@ -256,6 +261,7 @@ export function createShiftWeaveServer(): McpServer {
       epic_clinical_context: z.array(z.any()).optional().describe("Imported Epic FHIR R4 clinical context to ground SBAR narrative")
     },
     async (args) => {
+      if (args.epic_clinical_context?.length) throw new Error('Epic context must come from the verified workspace sync, not caller-supplied clinical data');
       const result = HandoffService.createDraft(args as any);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     }
@@ -387,7 +393,7 @@ export function createShiftWeaveServer(): McpServer {
     'Local synthetic-data voice workflow. Pass the human transcript verbatim, a stable display session UUID, ' +
     'the latest display revision, and a retry UUID. Returns speech and matching display data. Name selection is not authentication. ' +
     'Never invent a human confirmation. Read get_voice_display to restore a session.',
-    voiceInput.shape, async args => ({ content: [{ type: 'text', text: JSON.stringify(VoiceService.turn(args)) }] }));
+    voiceInput.shape, async args => ({ content: [{ type: 'text', text: JSON.stringify(await runVoiceTurn(args, localMcpEndpoint())) }] }));
   server.tool('get_voice_display', 'Read the saved voice session and current nurse-scoped display. No login or live Epic access.',
     { session_id: z.string().uuid() }, async args => ({
       content: [{ type: 'text', text: JSON.stringify(VoiceService.read(args.session_id)) }]
@@ -404,6 +410,9 @@ export function createShiftWeaveServer(): McpServer {
       execution_mode: z.enum(['live', 'mock', 'simulate_uncertain']).optional().describe('Execution environment')
     },
     async (args) => {
+      if (args.execution_mode !== 'mock' && args.execution_mode !== 'simulate_uncertain' && process.env.EPIC_WRITES_ENABLED !== 'true') {
+        throw new Error('Live Epic note publication is disabled until target-environment write validation is complete');
+      }
       const result = await EpicWriteBackService.publishReviewedNote({
         handoffId: args.handoff_id,
         nurseId: args.nurse_id,
@@ -415,6 +424,16 @@ export function createShiftWeaveServer(): McpServer {
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     }
   );
+  server.tool('get_epic_patient_context',
+    'Read explicitly allowlisted Epic patient context. Supplemental records only; orders are not assigned nursing tasks. ' +
+    'Requires configured backend access. Failures and incomplete pages are errors; no local fallback.',
+    { patient_id: z.string().min(1), idempotency_key: z.string().min(1) }, async args => ({
+      content: [{ type: 'text', text: JSON.stringify(await readEpicContext(args)) }]
+    }));
+  server.tool('sync_epic_workspace', 'Fetch allowlisted Epic patients into durable source snapshots and local coordination tasks. Does not modify Epic orders or infer administrations. Existing custody is preserved.',
+    { nurse_id: z.string(), shift_id: z.string(), idempotency_key: z.string().min(1) }, async args => ({
+      content: [{ type: 'text', text: JSON.stringify(await EpicWorkflowService.sync(args)) }]
+    }));
   return server;
 }
 
@@ -449,17 +468,19 @@ const isInitializeRequest = (body: unknown): boolean => {
 };
 
 const app = express();
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(express.json({ limit: '256kb' }));
 
 // Enable CORS for React Dashboard
 app.use((_req, res, next) => {
   const origin = _req.headers.origin;
-  if (origin && !['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'].includes(origin)) {
+  if (origin && !allowedOrigins.has(origin)) {
     res.status(403).json({ error: 'Origin is not allowed' });
     return;
   }
   if (origin) res.header("Access-Control-Allow-Origin", origin);
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, mcp-session-id, MCP-Protocol-Version");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, mcp-session-id, MCP-Protocol-Version");
+  res.header('Access-Control-Expose-Headers', 'mcp-session-id, MCP-Protocol-Version');
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   if (_req.method === "OPTIONS") {
     res.sendStatus(200);
@@ -467,12 +488,24 @@ app.use((_req, res, next) => {
   }
   next();
 });
+// Minimal probe contains no clinical records or configuration.
+app.get('/readyz', (_req, res) => {
+  try { db.prepare('SELECT 1').get(); res.json({ ready: true }); }
+  catch { res.status(503).json({ ready: false }); }
+});
+app.use(demoAccess);
+app.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
 /**
  * Primary MCP Protocol Endpoint: POST /mcp
  * Compliant with MCP Spec 2025-11-25 over Streamable HTTP
  */
 app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
+  const requestedVersion = req.body?.method === 'initialize' ? req.body.params?.protocolVersion : req.headers['mcp-protocol-version'];
+  if (typeof requestedVersion === 'string' && requestedVersion < '2025-11-25') {
+    res.status(400).json({ jsonrpc: '2.0', error: { code: -32602, message: 'Minimum MCP protocol version is 2025-11-25' }, id: req.body?.id ?? null });
+    return;
+  }
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
   try {
@@ -555,10 +588,16 @@ app.delete("/mcp", async (req: Request, res: Response): Promise<void> => {
 // REST API COMPANION ENDPOINTS FOR REACT DASHBOARD
 // =========================================================================
 
-// Direct service call for low voice latency; external MCP clients use the voice_turn tool over /mcp.
-app.post('/api/voice', (req, res) => {
+// Browser transcript crosses the same MCP boundary as an external assistant.
+app.post('/api/voice', async (req, res) => {
   const input = voiceInput.parse(req.body);
-  res.json(VoiceService.turn(input));
+  const bridge = new MCPClientBridge(localMcpEndpoint());
+  try {
+    await bridge.initialize();
+    const result = await bridge.callTool('voice_turn', input);
+    if (result.isError) throw new Error(result.content.map(c => c.text).join('\n'));
+    res.json(JSON.parse(result.content[0]!.text));
+  } finally { await bridge.close(); }
 });
 app.get('/api/voice/:sessionId', (req, res) => {
   res.json(VoiceService.read(z.string().uuid().parse(req.params.sessionId)));
@@ -571,6 +610,9 @@ app.get("/health", async (_req, res) => {
   res.json({
     status: ping ? "ok" : "degraded",
     mode: "LOCAL_DEMO_NO_PRODUCTION_AUTH",
+    llmProvider: process.env.LLM_PROVIDER || 'mock',
+    voiceAgentCommand: 'Ask assistant, summarize my shift',
+    epicStatus: process.env.EPIC_CLIENT_ID ? 'CONFIGURED_NOT_VERIFIED' : 'NOT_CONFIGURED',
     server: "ShiftWeave MCP Server",
     specVersion: "2025-11-25",
     transport: "Streamable HTTP (/mcp)",
@@ -678,6 +720,9 @@ app.post('/api/handoffs/:id/publish-note', async (req, res) => {
   }).parse(req.body);
 
   try {
+    if (input.execution_mode !== 'mock' && input.execution_mode !== 'simulate_uncertain' && process.env.EPIC_WRITES_ENABLED !== 'true') {
+      throw new Error('Live Epic note publication is disabled until target-environment write validation is complete');
+    }
     const result = await EpicWriteBackService.publishReviewedNote({
       handoffId: String(req.params.id),
       nurseId: input.nurse_id,
@@ -800,7 +845,7 @@ function localMcpEndpoint() {
 }
 const PORT = Number(process.env.PORT || 3000);
 
-export const appServer = app.listen(PORT, "127.0.0.1", () => {
+export const appServer = app.listen(PORT, host, () => {
   console.log(`\n======================================================`);
   console.log(`🏥 ShiftWeave MCP Server (Spec 2025-11-25) Running`);
   console.log(`📡 Transport: Streamable HTTP at http://localhost:${PORT}/mcp`);
@@ -814,3 +859,12 @@ appServer.on('close', () => {
   sessions.clear();
 });
 export default app;
+
+if (process.env.SHIFTWEAVE_TEST !== '1') {
+  const shutdown = () => {
+    appServer.close(() => { db.close(); process.exit(0); });
+    setTimeout(() => process.exit(1), 25_000).unref();
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
+}
