@@ -2,7 +2,19 @@ import type { VoiceDisplay } from './voice-types.js';
 import { safeUUID } from './uuid.js';
 
 const sessionKey = 'shiftweave:voice:display-session';
+let pageSessionId: string | undefined;
+
+/** Start blank on each page load, while retaining old checkpoints and uncertain requests. */
+export function startFreshVoiceSession() {
+  if (!pageSessionId) {
+    pageSessionId = safeUUID();
+    localStorage.setItem(sessionKey, pageSessionId);
+  }
+  return pageSessionId;
+}
+
 export function voiceSessionId() {
+  if (pageSessionId) return pageSessionId;
   let id = localStorage.getItem(sessionKey);
   if (!id) { id = safeUUID(); localStorage.setItem(sessionKey, id); }
   return id;
