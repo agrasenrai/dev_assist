@@ -1,9 +1,10 @@
 import type { VoiceDisplay } from './voice-types.js';
+import { safeUUID } from './uuid.js';
 
 const sessionKey = 'shiftweave:voice:display-session';
 export function voiceSessionId() {
   let id = localStorage.getItem(sessionKey);
-  if (!id) { id = crypto.randomUUID(); localStorage.setItem(sessionKey, id); }
+  if (!id) { id = safeUUID(); localStorage.setItem(sessionKey, id); }
   return id;
 }
 export async function readVoiceDisplay(): Promise<VoiceDisplay> {
@@ -17,7 +18,7 @@ export async function sendVoiceTurn(utterance: string, revision: number): Promis
   const existing = localStorage.getItem(key);
   // Keep the exact request through network ambiguity, including a page refresh.
   const body = existing ? JSON.parse(existing) : { session_id: voiceSessionId(), utterance,
-    expected_revision: revision, idempotency_key: crypto.randomUUID() };
+    expected_revision: revision, idempotency_key: safeUUID() };
   if (existing && body.utterance !== utterance) throw new Error('The previous request has an uncertain outcome. Say “retry last request” first.');
   localStorage.setItem(key, JSON.stringify(body));
   const response = await fetch('/api/voice', { method: 'POST', headers: { 'Content-Type': 'application/json' },
