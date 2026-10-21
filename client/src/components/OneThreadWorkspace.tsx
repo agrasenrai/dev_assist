@@ -101,7 +101,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
   const inspect = (task: VoiceTask) => { submit(`Explain task ${task.id}`); };
   return <><main id="st" data-m={mode} data-np={!hasPanel ? '' : undefined} data-s={error ? 'int' : undefined} style={{ transform: `translate(${(size.w - 1920 * scale) / 2}px,${(size.h - 1080 * scale) / 2}px) scale(${scale})` }}>
     <header><div className="brand"><svg viewBox="0 0 40 34" fill="none" strokeWidth="3.5" strokeLinecap="round" aria-hidden="true"><path d="M3 9c10 0 10 16 17 16s9-16 17-16" stroke="#8EA0FF" /><path d="M3 25c10 0 10-16 17-16s9 16 17 16" stroke="#FFB86B" /></svg>ShiftWeave</div>
-      <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div><span className="pill">Alexa+ Voice Simulation</span></header>
+      <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div><span className="pill">Alexa · Voice simulation</span></header>
     <div id="lm">{display?.nurse && <Thread display={display} onTask={inspect} onHandoff={() => setDrawer('handoffs')} />}</div>
     {hasPanel && <section id="pn" className="in" data-t={error || display?.conflicts.length ? 'ro' : handoff?.status === 'FINALIZED' ? 'ok' : 'dy'} aria-label="Current workflow context">
       <div className="t">{error ? 'Request unavailable' : title}</div>
