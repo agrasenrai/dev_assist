@@ -655,8 +655,13 @@ app.get("/api/handoffs", (_req, res) => {
 });
 
 app.post('/api/handoffs/:id/finalize', (req, res) => {
-  const input = z.object({ nurse_id: z.string().min(1), idempotency_key: z.string().min(1), human_confirmed: z.literal(true) }).parse(req.body);
-  res.json(HandoffService.finalize(String(req.params.id), input.nurse_id, input.idempotency_key, input.human_confirmed));
+  try {
+    const input = z.object({ nurse_id: z.string().min(1), idempotency_key: z.string().min(1), human_confirmed: z.literal(true) }).parse(req.body);
+    res.json(HandoffService.finalize(String(req.params.id), input.nurse_id, input.idempotency_key, input.human_confirmed));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(err instanceof z.ZodError ? 400 : 422).json({ error: message });
+  }
 });
 
 /** Publish human-reviewed handoff note as external FHIR DocumentReference */
@@ -718,10 +723,20 @@ app.get('/api/conversations/:id', (req, res) => {
 
 /** Explicit local task acceptance/escalation; not medication administration. */
 app.post('/api/tasks/:id/acknowledge', (req, res) => {
-  const input = z.object({ nurse_id: z.string().min(1), action: z.enum(['ACCEPT_HANDOFF', 'FLAG_FOR_SUPERVISOR']),
-    handoff_id: z.string().optional(), resolution_note: z.string().optional(), idempotency_key: z.string().min(1),
-    human_confirmed: z.literal(true) }).parse(req.body);
-  res.json(HandoffService.acknowledge({ ...input, task_id: String(req.params.id) }));
+  try {
+    const input = z.object({
+      nurse_id: z.string().min(1),
+      action: z.enum(['ACCEPT_HANDOFF', 'FLAG_FOR_SUPERVISOR']),
+      handoff_id: z.string().optional(),
+      resolution_note: z.string().optional(),
+      idempotency_key: z.string().min(1),
+      human_confirmed: z.literal(true)
+    }).parse(req.body);
+    res.json(HandoffService.acknowledge({ ...input, task_id: String(req.params.id) }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(err instanceof z.ZodError ? 400 : 422).json({ error: message });
+  }
 });
 
 /** Exception injection tests durable resumption; does not claim to kill the server. */
