@@ -10,7 +10,7 @@ const root = realpathSync(tmpdir());
 const directory = mkdtempSync(path.join(root, 'shiftweave-deploy-'));
 Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), HOST: '127.0.0.1', PORT: '0',
   NODE_ENV: 'production', SHIFTWEAVE_TEST: '1', LLM_PROVIDER: 'mock', EPIC_CLIENT_ID: '', EPIC_READS_ENABLED: 'false',
-  EPIC_WRITES_ENABLED: 'false',
+  EPIC_WRITES_ENABLED: 'false',STAFF_AUTH_REQUIRED:'false',EPIC_CREATE_REVIEW_TASKS:'true',
   PUBLIC_ORIGIN: 'https://demo.shiftweave.test', DEMO_USER: 'judge', DEMO_PASSWORD: randomBytes(32).toString('hex'),
   MCP_AUTH_TOKEN: randomBytes(32).toString('hex') });
 const { appServer } = await import('../src/server.js');

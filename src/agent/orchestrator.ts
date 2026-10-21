@@ -138,7 +138,7 @@ export class ShiftWeaveOrchestrator {
         const decisionStart = Date.now();
         const reusedIntent = Boolean(pendingTool);
         let decision: AgentTurnResult = pendingTool ? { toolCall: pendingTool } : await this.llmProvider.decideNextStep(
-          this.conversationHistory, this.discoveredTools, executionContext);
+          this.conversationHistory, this.readOnly ? this.discoveredTools.filter(tool => readTools.has(tool.name)) : this.discoveredTools, executionContext);
         if (!reusedIntent) AuditService.log({ actorType: 'AGENT', actorId: nurseId, action: 'LLM:DECISION',
           targetResource: `workflow_run/${runId}`, outcome: 'SUCCESS', latencyMs: Date.now() - decisionStart,
           details: { provider: this.llmProvider.providerId, iteration, metric: 'complete_decision_ms' } });

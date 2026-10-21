@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import assert from 'node:assert/strict';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shiftweave-gemini-'));
-Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), LLM_PROVIDER: 'gemini', PORT: '0', HOST: '127.0.0.1', SHIFTWEAVE_TEST: '1', NODE_ENV: 'test', EPIC_READS_ENABLED: 'false', EPIC_WRITES_ENABLED: 'false' });
+Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), LLM_PROVIDER: 'gemini', PORT: '0', HOST: '127.0.0.1', SHIFTWEAVE_TEST: '1', NODE_ENV: 'test',STAFF_AUTH_REQUIRED:'false',DEMO_USER:'',DEMO_PASSWORD:'', EPIC_READS_ENABLED: 'false', EPIC_WRITES_ENABLED: 'false' });
 const { appServer } = await import('../src/server.js');
 const { db } = await import('../src/db/connection.js');
 const { importIncomingData } = await import('../src/db/ingest.js');

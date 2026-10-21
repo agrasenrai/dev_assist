@@ -1,0 +1,840 @@
+{
+  "checkedAt": "2026-10-21T18:38:22.340Z",
+  "source": "EPIC_OFFICIAL_PUBLIC_SANDBOX",
+  "directory": "https://fhir.epic.com/Documentation?docId=testpatients",
+  "endpoint": "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4",
+  "candidateCount": 7,
+  "accessiblePatientCount": 7,
+  "advertised": [
+    {
+      "type": "CareTeam",
+      "interactions": [
+        "read",
+        "search-type"
+      ],
+      "searchParameters": [
+        "patient",
+        "status",
+        "subject",
+        "_count",
+        "_id",
+        "category",
+        "date",
+        "encounter",
+        "identifier",
+        "participant"
+      ]
+    },
+    {
+      "type": "DocumentReference",
+      "interactions": [
+        "create",
+        "read",
+        "search-type",
+        "update"
+      ],
+      "searchParameters": [
+        "author",
+        "category",
+        "date",
+        "docstatus",
+        "encounter",
+        "patient",
+        "period",
+        "status",
+        "subject",
+        "type",
+        "_count",
+        "_id",
+        "_lastupdated",
+        "authenticator",
+        "contenttype",
+        "custodian",
+        "description",
+        "event",
+        "facility",
+        "format",
+        "identifier",
+        "language",
+        "related",
+        "relatesto",
+        "relation",
+        "security-label",
+        "setting"
+      ]
+    },
+    {
+      "type": "Encounter",
+      "interactions": [
+        "read",
+        "search-type"
+      ],
+      "searchParameters": [
+        "class",
+        "date",
+        "identifier",
+        "onlyscannable",
+        "patient",
+        "subject",
+        "_count",
+        "_id",
+        "_lastupdated",
+        "account",
+        "appointment",
+        "based-on",
+        "diagnosis",
+        "episode-of-care",
+        "location",
+        "location-period",
+        "part-of",
+        "participant",
+        "participant-type",
+        "practitioner",
+        "reason-code",
+        "reason-reference",
+        "service-provider",
+        "special-arrangement",
+        "status",
+        "type"
+      ]
+    },
+    {
+      "type": "List",
+      "interactions": [
+        "read",
+        "search-type"
+      ],
+      "searchParameters": [
+        "code",
+        "encounter",
+        "identifier",
+        "patient",
+        "subject",
+        "_count",
+        "_id",
+        "date",
+        "empty-reason",
+        "item",
+        "notes",
+        "source",
+        "status",
+        "title"
+      ]
+    },
+    {
+      "type": "Location",
+      "interactions": [
+        "read",
+        "search-type"
+      ],
+      "searchParameters": [
+        "type",
+        "_count",
+        "_id",
+        "address",
+        "address-city",
+        "address-country",
+        "address-postalcode",
+        "address-state",
+        "address-use",
+        "endpoint",
+        "identifier",
+        "name",
+        "operational-status",
+        "organization",
+        "partof",
+        "status"
+      ]
+    },
+    {
+      "type": "Observation",
+      "interactions": [
+        "create",
+        "read",
+        "search-type",
+        "update"
+      ],
+      "searchParameters": [
+        "based-on",
+        "category",
+        "code",
+        "date",
+        "focus",
+        "issued",
+        "patient",
+        "subject",
+        "_count",
+        "_id",
+        "_lastupdated",
+        "combo-code",
+        "combo-data-absent-reason",
+        "combo-value-concept",
+        "component-code",
+        "component-data-absent-reason",
+        "component-value-concept",
+        "data-absent-reason",
+        "derived-from",
+        "device",
+        "encounter",
+        "has-member",
+        "identifier",
+        "method",
+        "part-of",
+        "performer",
+        "specimen",
+        "status",
+        "value-concept",
+        "value-date",
+        "value-string"
+      ]
+    },
+    {
+      "type": "Patient",
+      "interactions": [
+        "create",
+        "read",
+        "search-type"
+      ],
+      "searchParameters": [
+        "address",
+        "address-city",
+        "address-postalcode",
+        "address-state",
+        "birthdate",
+        "doc-type",
+        "family",
+        "gender",
+        "given",
+        "identifier",
+        "legal-sex",
+        "name",
+        "own-name",
+        "own-prefix",
+        "partner-name",
+        "partner-prefix",
+        "telecom",
+        "_count",
+        "_id",
+        "active",
+        "address-country",
+        "address-use",
+        "death-date",
+        "email",
+        "general-practitioner",
+        "language",
+        "link",
+        "organization",
+        "phone",
+        "phonetic"
+      ]
+    },
+    {
+      "type": "Practitioner",
+      "interactions": [
+        "read",
+        "search-type"
+      ],
+      "searchParameters": [
+        "address",
+        "address-city",
+        "address-postalcode",
+        "address-state",
+        "family",
+        "given",
+        "identifier",
+        "name",
+        "_count",
+        "_id",
+        "active",
+        "address-country",
+        "address-use",
+        "communication",
+        "email",
+        "gender",
+        "phone",
+        "phonetic",
+        "telecom"
+      ]
+    },
+    {
+      "type": "PractitionerRole",
+      "interactions": [
+        "read",
+        "search-type"
+      ],
+      "searchParameters": [
+        "email",
+        "identifier",
+        "location",
+        "organization",
+        "phone",
+        "practitioner",
+        "role",
+        "specialty",
+        "telecom",
+        "_count",
+        "_id",
+        "active",
+        "date",
+        "endpoint",
+        "service"
+      ]
+    },
+    {
+      "type": "Task",
+      "interactions": [
+        "read",
+        "search-type",
+        "update"
+      ],
+      "searchParameters": [
+        "code",
+        "encounter",
+        "focus",
+        "patient",
+        "status",
+        "subject",
+        "_count",
+        "_id",
+        "authored-on",
+        "based-on",
+        "business-status",
+        "group-identifier",
+        "identifier",
+        "intent",
+        "modified",
+        "owner",
+        "part-of",
+        "performer",
+        "period",
+        "priority",
+        "requester"
+      ]
+    }
+  ],
+  "patients": [
+    {
+      "publishedName": "Camila Lopez",
+      "id": "erXuFYUfucBZaryVksYEcMg3",
+      "identityVerified": true,
+      "sections": {
+        "Condition": {
+          "status": "AVAILABLE",
+          "count": 7,
+          "warnings": []
+        },
+        "Encounter": {
+          "status": "AVAILABLE",
+          "count": 10,
+          "warnings": []
+        },
+        "MedicationAdministration": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "MedicationRequest": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "DocumentReference": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "AllergyIntolerance": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        }
+      },
+      "encounters": {
+        "statuses": [
+          "planned",
+          "unknown",
+          "in-progress",
+          "finished"
+        ],
+        "periods": [
+          {
+            "start": "2023-06-06T16:20:00Z"
+          },
+          {
+            "start": "2023-06-06T16:20:00Z",
+            "end": "2023-06-06T17:35:00Z"
+          },
+          {
+            "start": "2023-06-02T05:00:00Z",
+            "end": "2023-06-02T05:00:00Z"
+          },
+          {
+            "start": "2023-06-02T05:00:00Z",
+            "end": "2023-06-02T05:00:00Z"
+          },
+          {
+            "start": "2023-06-02T20:49:58Z"
+          },
+          {
+            "start": "2023-06-02T20:41:08Z"
+          },
+          {
+            "start": "2023-06-02T05:00:00Z",
+            "end": "2023-06-02T05:00:00Z"
+          },
+          {
+            "start": "2023-05-21T05:00:00Z",
+            "end": "2023-05-21T05:00:00Z"
+          },
+          {
+            "start": "2019-05-28T05:00:00Z",
+            "end": "2019-05-28T05:00:00Z"
+          },
+          {
+            "start": "2019-05-24T05:00:00Z",
+            "end": "2019-05-24T05:00:00Z"
+          }
+        ],
+        "withLocation": 10
+      },
+      "documents": [],
+      "careTeam": {
+        "status": "ERROR",
+        "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/CareTeam?patient=erXuFYUfucBZaryVksYEcMg3 failed with HTTP 403: {\"raw\":\"\"}"
+      }
+    },
+    {
+      "publishedName": "Derrick Lin",
+      "id": "eq081-VQEgP8drUUqCWzHfw3",
+      "identityVerified": true,
+      "sections": {
+        "MedicationAdministration": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "DocumentReference": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "AllergyIntolerance": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "MedicationRequest": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "Encounter": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "Condition": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        }
+      },
+      "encounters": {
+        "statuses": [
+          "in-progress"
+        ],
+        "periods": [
+          {
+            "start": "2019-05-28T05:00:00Z",
+            "end": "2019-05-28T05:00:00Z"
+          }
+        ],
+        "withLocation": 1
+      },
+      "documents": [],
+      "careTeam": {
+        "status": "ERROR",
+        "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/CareTeam?patient=eq081-VQEgP8drUUqCWzHfw3 failed with HTTP 403: {\"raw\":\"\"}"
+      }
+    },
+    {
+      "publishedName": "Desiree Powell",
+      "id": "eAB3mDIBBcyUKviyzrxsnAw3",
+      "identityVerified": true,
+      "sections": {
+        "DocumentReference": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "Condition": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "AllergyIntolerance": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "MedicationAdministration": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "Encounter": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "MedicationRequest": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        }
+      },
+      "encounters": {
+        "statuses": [
+          "in-progress"
+        ],
+        "periods": [
+          {
+            "start": "2019-05-28T05:00:00Z",
+            "end": "2019-05-28T05:00:00Z"
+          }
+        ],
+        "withLocation": 1
+      },
+      "documents": [],
+      "careTeam": {
+        "status": "ERROR",
+        "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/CareTeam?patient=eAB3mDIBBcyUKviyzrxsnAw3 failed with HTTP 403: {\"raw\":\"\"}"
+      }
+    },
+    {
+      "publishedName": "Elijah Davis",
+      "id": "egqBHVfQlt4Bw3XGXoxVxHg3",
+      "identityVerified": true,
+      "sections": {
+        "MedicationAdministration": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "AllergyIntolerance": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        },
+        "DocumentReference": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "Encounter": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        },
+        "MedicationRequest": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "Condition": {
+          "status": "AVAILABLE",
+          "count": 3,
+          "warnings": []
+        }
+      },
+      "encounters": {
+        "statuses": [
+          "finished",
+          "in-progress"
+        ],
+        "periods": [
+          {
+            "start": "2019-05-24T05:00:00Z",
+            "end": "2019-05-24T05:00:00Z"
+          },
+          {
+            "start": "2019-05-24T05:00:00Z",
+            "end": "2019-05-24T05:00:00Z"
+          }
+        ],
+        "withLocation": 2
+      },
+      "documents": [],
+      "careTeam": {
+        "status": "ERROR",
+        "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/CareTeam?patient=egqBHVfQlt4Bw3XGXoxVxHg3 failed with HTTP 403: {\"raw\":\"\"}"
+      }
+    },
+    {
+      "publishedName": "Linda Ross",
+      "id": "eIXesllypH3M9tAA5WdJftQ3",
+      "identityVerified": true,
+      "sections": {
+        "DocumentReference": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "Encounter": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "MedicationAdministration": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "AllergyIntolerance": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "Condition": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        },
+        "MedicationRequest": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        }
+      },
+      "encounters": {
+        "statuses": [
+          "finished"
+        ],
+        "periods": [
+          {
+            "start": "2019-05-24T20:32:25Z",
+            "end": "2019-05-24T20:58:00Z"
+          }
+        ],
+        "withLocation": 1
+      },
+      "documents": [],
+      "careTeam": {
+        "status": "ERROR",
+        "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/CareTeam?patient=eIXesllypH3M9tAA5WdJftQ3 failed with HTTP 403: {\"raw\":\"\"}"
+      }
+    },
+    {
+      "publishedName": "Olivia Roberts",
+      "id": "eh2xYHuzl9nkSFVvV3osUHg3",
+      "identityVerified": true,
+      "sections": {
+        "MedicationAdministration": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "MedicationRequest": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "DocumentReference": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "Encounter": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "AllergyIntolerance": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "Condition": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        }
+      },
+      "encounters": {
+        "statuses": [
+          "in-progress"
+        ],
+        "periods": [
+          {
+            "start": "2019-05-28T05:00:00Z",
+            "end": "2019-05-28T05:00:00Z"
+          }
+        ],
+        "withLocation": 1
+      },
+      "documents": [],
+      "careTeam": {
+        "status": "ERROR",
+        "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/CareTeam?patient=eh2xYHuzl9nkSFVvV3osUHg3 failed with HTTP 403: {\"raw\":\"\"}"
+      }
+    },
+    {
+      "publishedName": "Warren McGinnis",
+      "id": "e0w0LEDCYtfckT6N.CkJKCw3",
+      "identityVerified": true,
+      "sections": {
+        "MedicationAdministration": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "MedicationRequest": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "DocumentReference": {
+          "status": "EMPTY",
+          "count": 0,
+          "warnings": [
+            "Resource request returns no results."
+          ]
+        },
+        "Condition": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        },
+        "Encounter": {
+          "status": "AVAILABLE",
+          "count": 1,
+          "warnings": []
+        },
+        "AllergyIntolerance": {
+          "status": "AVAILABLE",
+          "count": 2,
+          "warnings": []
+        }
+      },
+      "encounters": {
+        "statuses": [
+          "in-progress"
+        ],
+        "periods": [
+          {
+            "start": "2019-05-28T15:22:00Z"
+          }
+        ],
+        "withLocation": 1
+      },
+      "documents": [],
+      "careTeam": {
+        "status": "ERROR",
+        "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/CareTeam?patient=e0w0LEDCYtfckT6N.CkJKCw3 failed with HTTP 403: {\"raw\":\"\"}"
+      }
+    }
+  ],
+  "practitioners": [
+    {
+      "reference": "Practitioner/eOyFJ.PiGBcbhr3T1oyJZ1A3",
+      "error": "Epic FHIR Practitioner/eOyFJ.PiGBcbhr3T1oyJZ1A3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "reference": "Practitioner/eM5CWtq15N0WJeuCet5bJlQ3",
+      "error": "Epic FHIR Practitioner/eM5CWtq15N0WJeuCet5bJlQ3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "reference": "Practitioner/elpRiy0AYgjhdjAhTBJ3Aiw3",
+      "error": "Epic FHIR Practitioner/elpRiy0AYgjhdjAhTBJ3Aiw3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "reference": "Practitioner/exAJI2s53wwSDac-DZlyA.g3",
+      "error": "Epic FHIR Practitioner/exAJI2s53wwSDac-DZlyA.g3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "reference": "Practitioner/ef9TegF2nfECi-0Skirbvpg3",
+      "error": "Epic FHIR Practitioner/ef9TegF2nfECi-0Skirbvpg3 failed with HTTP 403: {\"raw\":\"\"}"
+    }
+  ],
+  "locations": [
+    {
+      "reference": "Location/eih1L3clnoL-Odea34LokKYlHPndLwGjYudOa4y6QHvk3",
+      "error": "Epic FHIR Location/eih1L3clnoL-Odea34LokKYlHPndLwGjYudOa4y6QHvk3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "reference": "Location/eQSOrLdbVrMRc68KBcTBG4A3",
+      "error": "Epic FHIR Location/eQSOrLdbVrMRc68KBcTBG4A3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "reference": "Location/efR3SIdpRKF9BFBM5qakt9F5X1mWxjiAGu2hNTKbqOdI3",
+      "error": "Epic FHIR Location/efR3SIdpRKF9BFBM5qakt9F5X1mWxjiAGu2hNTKbqOdI3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "reference": "Location/e4W4rmGe9QzuGm2Dy4NBqVc0KDe6yGld6HW95UuN-Qd03",
+      "error": "Epic FHIR Location/e4W4rmGe9QzuGm2Dy4NBqVc0KDe6yGld6HW95UuN-Qd03 failed with HTTP 403: {\"raw\":\"\"}"
+    }
+  ],
+  "externalWrites": "NONE",
+  "activeWorkspaceChanges": "NONE",
+  "operationalChecks": [
+    {
+      "query": "PractitionerRole?practitioner=Practitioner%2FelpRiy0AYgjhdjAhTBJ3Aiw3",
+      "status": "ERROR",
+      "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/PractitionerRole?practitioner=Practitioner%2FelpRiy0AYgjhdjAhTBJ3Aiw3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "query": "List?patient=erXuFYUfucBZaryVksYEcMg3",
+      "status": "ERROR",
+      "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/List?patient=erXuFYUfucBZaryVksYEcMg3 failed with HTTP 400: {\"resourceType\":\"OperationOutcome\",\"issue\":[{\"severity\":\"fatal\",\"code\":\"required\",\"details\":{\"coding\":[{\"system\":\"urn:oid:1.2.840.114350.1.13.0.1.7.2.657369\",\"code\":\"59108\",\"display\":\"A required element is missing.\"}],\"text\":\"A required element is missing.\"},\"diagnostics\":\"Required code search parameter not provided\",\"location\":[\"/f:code\"],\"expression\":[\"code\"]}]}"
+    },
+    {
+      "query": "Task?patient=erXuFYUfucBZaryVksYEcMg3",
+      "status": "ERROR",
+      "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/Task?patient=erXuFYUfucBZaryVksYEcMg3 failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "query": "Observation?patient=eAB3mDIBBcyUKviyzrxsnAw3&category=vital-signs",
+      "status": "ERROR",
+      "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/Observation?patient=eAB3mDIBBcyUKviyzrxsnAw3&category=vital-signs failed with HTTP 403: {\"raw\":\"\"}"
+    },
+    {
+      "query": "Observation?patient=erXuFYUfucBZaryVksYEcMg3&category=laboratory",
+      "status": "ERROR",
+      "error": "Epic FHIR https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/Observation?patient=erXuFYUfucBZaryVksYEcMg3&category=laboratory failed with HTTP 403: {\"raw\":\"\"}"
+    }
+  ],
+  "operationalCheckedAt": "2026-10-21T18:39:34.952Z",
+  "grantedScope": "system/AllergyIntolerance.r system/AllergyIntolerance.s system/Binary.r system/Condition.r?category=http://terminology.hl7.org/CodeSystem/condition-category|encounter-diagnosis system/Condition.r?category=http://terminology.hl7.org/CodeSystem/condition-category|problem-list-item system/Condition.s?category=http://terminology.hl7.org/CodeSystem/condition-category|encounter-diagnosis system/Condition.s?category=http://terminology.hl7.org/CodeSystem/condition-category|problem-list-item system/DocumentReference.r system/DocumentReference.s system/Encounter.r system/Encounter.s system/List.r system/List.s system/MedicationAdministration.r system/MedicationAdministration.s system/MedicationRequest.r system/MedicationRequest.s system/Patient.r"
+}

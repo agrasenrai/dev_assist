@@ -1,0 +1,12 @@
+{
+  "configuredAt": "2026-10-21T19:09:05.941Z",
+  "environment": "SHIFTWEAVE_OPERATIONAL_SANDBOX",
+  "epicPatientCount": 7,
+  "staffCount": 8,
+  "taskCount": 21,
+  "shiftId": "shift:65580ab8-c301-45f0-a89d-284c7451ddfe",
+  "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX",
+  "operationalSource": "SHIFTWEAVE_OPERATIONAL_SANDBOX",
+  "externalEpicWrites": "DISABLED",
+  "credentialsFile": ".sandbox/staff-credentials.json"
+}

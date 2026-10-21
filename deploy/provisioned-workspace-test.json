@@ -1,0 +1,72 @@
+{
+  "verifiedAt": "2026-10-21T19:34:39.010Z",
+  "status": "PASSED",
+  "source": "PROVISIONED_EPIC_AND_OPERATIONAL_SANDBOX",
+  "externalEpicWrites": "NONE",
+  "checks": [
+    {
+      "username": "administrator",
+      "role": "ADMIN",
+      "visiblePatients": 7,
+      "visibleTasks": 21,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    },
+    {
+      "username": "seema",
+      "role": "STAFF_NURSE",
+      "visiblePatients": 4,
+      "visibleTasks": 12,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    },
+    {
+      "modelProvider": "bedrock",
+      "status": "LIVE_AUTHENTICATED_TURN_PASSED",
+      "elapsedMs": 19862,
+      "epicSnapshots": 4,
+      "recordedModelDecisions": 6,
+      "exactRetry": "IDENTICAL_SAVED_RESPONSE"
+    },
+    {
+      "username": "reema",
+      "role": "STAFF_NURSE",
+      "visiblePatients": 4,
+      "visibleTasks": 12,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    },
+    {
+      "username": "jordan",
+      "role": "STAFF_NURSE",
+      "visiblePatients": 3,
+      "visibleTasks": 9,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    },
+    {
+      "username": "asha",
+      "role": "STAFF_NURSE",
+      "visiblePatients": 3,
+      "visibleTasks": 9,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    },
+    {
+      "username": "doctor.mira",
+      "role": "PHYSICIAN",
+      "visiblePatients": 4,
+      "visibleTasks": 12,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    },
+    {
+      "username": "doctor.arun",
+      "role": "PHYSICIAN",
+      "visiblePatients": 3,
+      "visibleTasks": 9,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    },
+    {
+      "username": "charge.meera",
+      "role": "CHARGE_NURSE",
+      "visiblePatients": 7,
+      "visibleTasks": 21,
+      "clinicalSource": "EPIC_OFFICIAL_PUBLIC_SANDBOX"
+    }
+  ]
+}

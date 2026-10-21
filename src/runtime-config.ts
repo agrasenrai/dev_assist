@@ -8,11 +8,15 @@ const user = process.env.DEMO_USER || '';
 const password = process.env.DEMO_PASSWORD || '';
 const token = process.env.MCP_AUTH_TOKEN || '';
 const exposed = !['127.0.0.1', 'localhost', '::1'].includes(host);
-if ((exposed || process.env.NODE_ENV === 'production') &&
-    (!user || password.length < 24 || token.length < 32 || !publicOrigin)) {
-  throw new Error('Hosted mode requires PUBLIC_ORIGIN, DEMO_USER, DEMO_PASSWORD (24+ characters), MCP_AUTH_TOKEN (32+ characters)');
+if(process.env.STAFF_AUTH_REQUIRED==='true'){
+  if((process.env.SANDBOX_SESSION_SECRET||'').length<32||token.length<32)throw new Error('Authenticated sandbox requires persistent random SANDBOX_SESSION_SECRET and MCP_AUTH_TOKEN values of at least 32 characters');
+  if(process.env.SHIFTWEAVE_TEST!=='1'&&!['gemini','bedrock'].includes(process.env.LLM_PROVIDER||''))throw new Error('Authenticated sandbox requires an explicitly configured Gemini or Bedrock provider; no mock fallback is enabled');
 }
-if ([user, password, token, publicOrigin].some(value => /REPLACE_|example\.com/.test(value))) {
+if ((exposed || process.env.NODE_ENV === 'production') &&
+    (token.length < 32 || !publicOrigin || process.env.STAFF_AUTH_REQUIRED!=='true'&&(!user || password.length < 24))) {
+  throw new Error('Hosted mode requires PUBLIC_ORIGIN and MCP_AUTH_TOKEN (32+ characters); legacy demo mode also requires DEMO_USER and DEMO_PASSWORD (24+ characters)');
+}
+if ([...(process.env.STAFF_AUTH_REQUIRED==='true' ? [process.env.SANDBOX_SESSION_SECRET||''] : [user,password]), token, publicOrigin].some(value => /REPLACE_|example\.com/.test(value))) {
   throw new Error('Replace hosted deployment placeholders before startup');
 }
 let parsedOrigin: URL | null = null;
@@ -39,6 +43,7 @@ function equals(a: string, b: string) {
 }
 /** Shared demo gate, not hospital nurse authentication. Tokens only authorize /mcp. */
 export const demoAccess: RequestHandler = (req, res, next) => {
+  if(process.env.STAFF_AUTH_REQUIRED==='true')return next();
   if (!user && !password) return next();
   const authorization = req.headers.authorization || '';
   if (req.path === '/mcp' && token && equals(authorization, `Bearer ${token}`)) return next();

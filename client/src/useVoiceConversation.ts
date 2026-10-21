@@ -5,15 +5,16 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
   const [enabled, setEnabled] = useState(false);
   const [status, setStatus] = useState('Ready');
   const [error, setError] = useState('');
+  const [transcript, setTranscript] = useState('');
   const callback = useRef(onTranscript); callback.current = onTranscript;
   const control = useRef({ enabled: false, processing: false, disposed: false, recognition: null as any,
-    timer: 0, speechTimer: 0, finishSpeech: null as (() => void) | null });
+    timer: 0, speechTimer: 0, generation: 0, finishSpeech: null as (() => void) | null });
   const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
   const supported = Boolean(SpeechRecognition);
   const listenRef = useRef<() => void>(() => {});
 
   const stop = () => {
-    const c = control.current; c.enabled = false;
+    const c = control.current; c.enabled = false; c.generation++;
     window.clearTimeout(c.timer);
     c.recognition?.abort(); c.recognition = null;
     window.speechSynthesis?.cancel(); c.finishSpeech?.();
@@ -22,28 +23,45 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
   const speak = (text: string) => new Promise<void>(resolve => {
     if (!window.speechSynthesis) { setError('Speech playback is unavailable. The response is displayed on screen.'); resolve(); return; }
     const c = control.current;
+    const generation = c.generation;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US'; utterance.rate = 1;
-    const finish = () => { window.clearTimeout(c.speechTimer); c.finishSpeech = null; resolve(); };
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true; window.clearTimeout(c.speechTimer); c.finishSpeech = null; resolve();
+    };
     c.finishSpeech = finish;
     utterance.onend = finish;
-    utterance.onerror = () => { if (!c.disposed) setError('Speech playback stopped. The response remains on screen.'); finish(); };
-    c.speechTimer = window.setTimeout(() => { window.speechSynthesis.cancel(); finish(); }, 120000);
-    window.speechSynthesis.speak(utterance);
+    utterance.onerror = () => { if (!c.disposed && c.generation === generation) setError('Speech playback stopped. The response remains on screen.'); finish(); };
+    c.speechTimer = window.setTimeout(() => {
+      if (!c.disposed) setError('Speech playback timed out. The response remains on screen.');
+      window.speechSynthesis.cancel(); finish();
+    }, 120000);
+    try { window.speechSynthesis.speak(utterance); }
+    catch { setError('Speech playback is unavailable. The response remains on screen.'); finish(); }
   });
   const submit = async (text: string) => {
     const c = control.current;
     if (c.processing) return;
+    setTranscript(text);
+    const generation = c.generation;
     c.processing = true;
     c.recognition?.abort(); c.recognition = null;
     setStatus('Working'); setError('');
     try {
       const answer = await callback.current(text);
-      if (!c.disposed) {
+      if (!c.disposed && c.generation === generation) {
         setStatus('Speaking');
         await speak(answer);
       }
-    } catch (e) { if (!c.disposed) setError(e instanceof Error ? e.message : String(e)); }
+    } catch (e) {
+      if (!c.disposed && c.generation === generation) {
+        setError(e instanceof Error ? e.message : String(e));
+        setStatus('Speaking');
+        await speak('I could not complete that request. Please retry the last request before starting another action.');
+      }
+    }
     finally {
       c.processing = false;
       if (!c.disposed) {
@@ -58,23 +76,58 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
     if (!c.enabled || c.processing || c.disposed || c.recognition || !SpeechRecognition) return;
     const recognition = new SpeechRecognition();
     c.recognition = recognition;
-    recognition.lang = 'en-US'; recognition.continuous = false; recognition.interimResults = false;
+    recognition.lang = navigator.language || 'en-US'; recognition.continuous = false; recognition.interimResults = true;
     recognition.onstart = () => setStatus('Listening');
     recognition.onresult = (event: any) => {
-      const text = event.results?.[0]?.[0]?.transcript;
-      if (text) void submit(text);
+      if (!c.enabled || c.recognition !== recognition || c.disposed || c.processing) return;
+      const results = Array.from(event.results || []) as Array<{ isFinal: boolean; [index: number]: { transcript: string } }>;
+      const heard = results.map(result => result[0]?.transcript || '').join(' ').trim();
+      if (heard) { setTranscript(heard); setError(''); }
+      const final = results.filter(result => result.isFinal).map(result => result[0]?.transcript || '').join(' ').trim();
+      if (final) void submit(final);
     };
     recognition.onend = () => {
       if (c.recognition === recognition) c.recognition = null;
       if (c.enabled && !c.processing && !c.disposed) c.timer = window.setTimeout(() => listenRef.current(), 450);
     };
     recognition.onerror = (event: any) => {
-      if (['aborted', 'no-speech'].includes(event.error)) return;
-      stop(); setError(`Microphone unavailable: ${event.error}. Check browser permission or use text fallback.`);
+      if (c.recognition !== recognition || c.disposed || !c.enabled) return;
+      if (event.error === 'aborted') return;
+      if (event.error === 'no-speech') { setError('No speech detected. Check your microphone; still listening.'); return; }
+      stop();
+      const errors: Record<string,string> = {
+        'not-allowed': 'Microphone permission is blocked. Allow the microphone in this browser’s site settings, then try again.',
+        'service-not-allowed': 'Speech recognition is blocked in this browser. Open the voice workspace in Chrome or Edge.',
+        'audio-capture': 'No microphone is available. Connect a microphone and check your system input settings.',
+        network: 'The browser’s speech recognition service could not connect. Check your connection and try again.'
+      };
+      setError(errors[event.error] || `Speech recognition stopped: ${event.error}. Try the microphone again.`);
     };
     try { recognition.start(); } catch (e) { stop(); setError(String(e)); }
   };
-  const start = () => { control.current.enabled = true; setEnabled(true); setError(''); listenRef.current(); };
+  const start = async () => {
+    if (!window.isSecureContext) { setError('Microphone access requires HTTPS or localhost. On this computer, open http://localhost:3000.'); return; }
+    if (!supported) { setError('This browser does not support speech recognition. Open the voice workspace in Chrome or Edge.'); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { setError('Microphone capture is unavailable in this browser. Open the voice workspace in Chrome or Edge.'); return; }
+    const c = control.current;
+    if (c.enabled || c.processing || c.disposed) return;
+    const generation = c.generation;
+    c.enabled = true; setEnabled(true); setError(''); setTranscript(''); setStatus('Requesting microphone');
+    try {
+      // Request permission explicitly and release the probe stream; recognition owns its own microphone capture.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+      if (c.generation !== generation || c.disposed || !c.enabled) return;
+      listenRef.current();
+    } catch (error) {
+      if (c.generation !== generation || c.disposed) return;
+      stop();
+      const name = error instanceof Error ? error.name : '';
+      setError(name === 'NotAllowedError' ? 'Microphone permission is blocked. Allow the microphone in this browser’s site settings, then try again.'
+        : name === 'NotFoundError' ? 'No microphone was found. Connect a microphone and try again.'
+        : 'The microphone could not start. Check your browser permission and system input settings.');
+    }
+  };
   useEffect(() => {
     control.current.disposed = false;
     return () => {
@@ -84,5 +137,5 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
       window.speechSynthesis?.cancel(); c.finishSpeech?.();
     };
   }, []);
-  return { enabled, status, error, supported, start, stop, submit };
+  return { enabled, status, error, transcript, supported, start, stop, submit };
 }

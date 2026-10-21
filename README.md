@@ -2,6 +2,8 @@
 
 Nursing workflow coordination, local handoff drafts, human discrepancy review, and durable interruption recovery.
 
+**Authenticated staff workspace:** [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md) covers the Epic-sourced clinical dataset, administrator/nurse/physician accounts, duty roster, care teams, explicit handoff custody, reviewed sandbox documents and recovery. This is a separate profile from the original fixture demo below. Staff and operational observations are labelled simulation records, not Epic hospital staff.
+
 **End-to-end setup:** [DEPLOYMENT.md](DEPLOYMENT.md) covers local setup, Docker/HTTPS deployment, LLM and Epic placeholders, persistent storage, backup and verification. Recommended hosted topology: one EC2 host with EBS-backed SQLite and optional Bedrock. See [deployment architecture](deploy/ARCHITECTURE.md) for the design tradeoffs.
 
 **Epic workflow:** [EPIC_WORKFLOW.md](EPIC_WORKFLOW.md) documents verified live sandbox reads through MCP, sourced voice handoff, explicit custody transfer, and note review. The live note-create attempt returned HTTP 403; write-back remains disabled pending Epic authorization.
@@ -27,7 +29,7 @@ Use `LLM_PROVIDER=mock` in your local `.env`. Never commit credentials.
 
 ## What works
 
-- Nine discoverable MCP workflow tools with validated inputs and stateful HTTP sessions.
+- Discoverable MCP workflow tools, including authenticated operational dispatch, with validated inputs and stateful HTTP sessions.
 - Database-backed conversation history and pending tool intent, restored in a fresh orchestrator.
 - Stable retry receipts, atomic local mutation/checkpoint commits, and persisted workflow completion.
 - Recovery reuses committed tool results; source changes invalidate stale reads. A lost response to a committed draft is retried with the original key.

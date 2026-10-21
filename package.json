@@ -19,6 +19,7 @@
     "test:handoff": "tsx scripts/test-handoff-integration.ts",
     "test:recovery": "tsx scripts/test-integration-recovery.ts",
     "test:browser": "tsx scripts/test-browser-journey.ts",
+    "test:voice-browser": "tsx scripts/verify-voice-browser.ts",
     "test:writeback": "tsx scripts/test-writeback.ts",
     "build": "tsc -p tsconfig.build.json && npm run build:client",
     "start": "node build/scripts/preflight.js && node build/src/server.js",
@@ -30,7 +31,9 @@
     "epic:connect": "tsx scripts/connect-epic.ts",
     "epic:probe": "tsx scripts/probe-epic.ts",
     "test:epic-workflow": "tsx scripts/verify-epic-workflow.ts",
-    "test:epic-live": "tsx scripts/verify-epic-workflow.ts --live"
+    "test:epic-live": "tsx scripts/verify-epic-workflow.ts --live",
+    "sandbox:setup": "tsx scripts/setup-operational-sandbox.ts",
+    "test:operations": "tsx scripts/verify-operational-sandbox.ts"
   },
   "repository": {
     "type": "git",

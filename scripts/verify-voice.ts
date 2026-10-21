@@ -111,6 +111,81 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
     assert.equal((db.prepare("SELECT count(*) AS n FROM task_events WHERE task_id = 'voice_task'").get() as any).n, 1);
     assert.equal((db.prepare("SELECT status FROM tasks WHERE id = 'voice_task'").get() as any).status, 'IN_PROGRESS');
   });
+  result = await say('What is the latest update on my patient?');
+  check('patient question retrieves stored clinical fields without inventing missing allergies', () => {
+    assert.match(result.speech, /Synthetic record/); assert.match(result.speech, /negative allergy history is not verified/);
+    assert.match(result.speech, /IN PROGRESS/);
+  });
+  result = await say('Show me patient Missing Person');
+  check('unknown patient is clarified instead of using the sole patient', () => assert.match(result.speech, /could not identify one patient/));
+  result = await say('Show my patient in room 999');
+  check('unknown room cannot silently reuse the previous patient', () => assert.match(result.speech,/could not identify one patient/));
+  result = await say('Mark this task in room 999 completed');
+  check('unknown explicit room cannot reuse the previously selected task for a mutation', () => assert.equal(result.pending,null));
+  result = await say('What tasks are pending?');
+  check('pending filter excludes in-progress tasks', () => assert.match(result.speech, /No pending assigned tasks/));
+  result = await say('What tasks are in progress?');
+  check('status query speaks actual task records', () => { assert.match(result.speech, /Review documented shift checklist/); assert.match(result.speech, /IN PROGRESS/); });
+  result = await say('Update the status of this task');
+  check('status update asks for a missing target status', () => { assert.equal(result.pending.ready, false); });
+  result = await say('Completed');
+  check('status follow-up stages a change without writing', () => {
+    assert.equal(result.pending.ready, true);
+    assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get('voice_task') as any).status, 'IN_PROGRESS');
+  });
+  const update = { session_id:session,utterance:'Confirm',expected_revision:revision,idempotency_key:randomUUID() };
+  const updated = await post(update); revision = updated.data.revision;
+  const updateRetry = await post(update);
+  check('confirmed task update persists once and returns the same response on retry', () => {
+    assert.equal(updated.status,200); assert.deepEqual(updateRetry.data,updated.data);
+    assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get('voice_task') as any).status,'COMPLETED');
+    assert.equal((db.prepare('SELECT count(*) AS n FROM task_events WHERE task_id=?').get('voice_task') as any).n,2);
+  });
+  result = await say('Has this task been completed?');
+  check('follow-up completion query reflects persisted status', () => assert.match(result.speech,/COMPLETED/));
+  result = await say('Assign this task to the appropriate person');
+  check('unsupported automatic assignment does not fabricate a successful action', () => { assert.equal(result.pending,null); assert.match(result.speech,/cannot choose an assignee/); });
+  await say('Set this task to in progress'); await say('Confirm');
+  db.prepare(`INSERT INTO tasks (id,patient_id,title,category,status,priority,scheduled_time)
+    VALUES ('voice_second','voice_patient','Review discharge checklist','CONSULT','PENDING','ROUTINE','2026-10-21')`).run();
+  db.prepare(`INSERT INTO task_assignments (id,task_id,nurse_id,shift_id,assigned_by)
+    VALUES ('voice_second_assignment','voice_second','voice_nora','voice_shift','DEMO')`).run();
+  result = await say('Show me the latest information about the patient in room 901');
+  check('patient summary includes multiple stored tasks for one patient', () => {
+    assert.match(result.speech,/Review discharge checklist/); assert.match(result.speech,/Review documented shift checklist/);
+  });
+  result = await say('Mark the task in room 901 completed');
+  check('multiple tasks in one room require clarification before a write', () => assert.equal(result.pending,null));
+  result = await say('Show my pending tasks');
+  check('multiple-record status filtering returns only matching tasks', () => {
+    assert.match(result.speech,/Review discharge checklist/); assert.doesNotMatch(result.speech,/Review documented shift checklist/);
+  });
+  result = await say('What tasks are assigned in room 901?');
+  check('room task list includes all matching records instead of requiring one task', () => {
+    assert.match(result.speech,/Review discharge checklist/); assert.match(result.speech,/Review documented shift checklist/);
+  });
+  result = await say('What tasks are pending in room 999?');
+  check('task list never falls back to all records for an unknown room',()=>assert.match(result.speech,/could not identify/));
+  db.prepare("DELETE FROM task_assignments WHERE task_id='voice_second'").run();
+  db.prepare("DELETE FROM tasks WHERE id='voice_second'").run();
+  await say('Explain task voice_task');
+  await say('Set this task to completed');
+  db.prepare("UPDATE tasks SET priority='STAT' WHERE id='voice_task'").run();
+  result = await say('Confirm');
+  check('task update confirmation revalidates current source state',()=>{
+    assert.match(result.speech,/records changed/);
+    assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get('voice_task')as any).status,'IN_PROGRESS');
+  });
+  db.exec(`CREATE TEMP TRIGGER voice_write_failure BEFORE UPDATE OF status ON tasks
+    WHEN NEW.id='voice_task' AND NEW.status='COMPLETED' BEGIN SELECT RAISE(ABORT,'simulated task storage failure'); END`);
+  try {
+    await say('Set this task to completed');
+    result = await say('Confirm');
+    check('failed backend mutation is spoken honestly and leaves the task unchanged',()=>{
+      assert.match(result.speech,/action was not completed/);
+      assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get('voice_task')as any).status,'IN_PROGRESS');
+    });
+  } finally { db.exec('DROP TRIGGER voice_write_failure'); }
   result = await say('Do not prepare my handoff for Maya');
   check('negated request does not create a draft', () => assert.match(result.speech, /No action taken/));
   result = await say('Prepare my handoff for Maya');

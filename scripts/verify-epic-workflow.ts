@@ -10,7 +10,7 @@ const live = process.argv.includes('--live');
 const root = fs.realpathSync(os.tmpdir());
 const directory = fs.mkdtempSync(path.join(root, 'shiftweave-epic-flow-'));
 Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), PORT: '0', HOST: '127.0.0.1',
-  SHIFTWEAVE_TEST: '1', LLM_PROVIDER: 'mock', EPIC_READS_ENABLED: 'true', EPIC_WRITES_ENABLED: 'false',
+  SHIFTWEAVE_TEST: '1', LLM_PROVIDER: 'mock', EPIC_READS_ENABLED: 'true', EPIC_WRITES_ENABLED: 'false',STAFF_AUTH_REQUIRED:'false',EPIC_CREATE_REVIEW_TASKS:'true',
   EPIC_TEST_PATIENT_IDS: live ? 'erXuFYUfucBZaryVksYEcMg3' : 'fixture', DEMO_USER: '', DEMO_PASSWORD: '', MCP_AUTH_TOKEN: '', NODE_ENV: 'test' });
 if (!live) {
   fs.writeFileSync(path.join(directory, 'dummy.pem'), 'fixture-only-not-a-key');
@@ -57,6 +57,11 @@ try {
   const say = async (utterance: string) => { const display = await call('voice_turn', { session_id: session, utterance, expected_revision: revision, idempotency_key: randomUUID() }); revision = display.revision; return display; };
   let display = await say('I am Seema');
   assert.equal(display.epicRecords.length, 1); assert.equal(display.tasks.length, 1);
+  display = await say('Show me the latest available information about my patient');
+  assert(display.speech.includes(display.epicRecords[0].name));
+  assert(display.speech.includes(source.retrievedAt));
+  assert.match(display.speech, /MedicationAdministration: EMPTY; 0 records/);
+  console.log('PASS patient voice query uses the retrieved Epic snapshot and explicitly preserves empty sections');
   display = await say('Prepare my handoff for Reema');
   const handoff = display.handoffs.find((h: any) => h.id === display.selectedHandoffId);
   assert.match(handoff.summary, /Epic source context/);
@@ -106,6 +111,9 @@ try {
     EpicOAuthService.readPatient = async () => { throw new Error('simulated patient denial'); };
     const failed = await call('sync_epic_workspace', { ...input, idempotency_key: randomUUID() }); assert.equal(failed.status, 'FAILED');
     assert.equal((db.prepare('SELECT sync_status FROM epic_patient_snapshots').get() as any).sync_status, 'FAILED');
+    const retained = await say('What is the latest update on my patient?');
+    assert.match(retained.speech, /Latest refresh failed/);
+    assert.match(retained.speech, /may be stale/);
     assert.throws(() => EpicOAuthService.resolveResourceUrl('https://attacker.test/steal'), /outside/);
     console.log('PASS visible partial/failed sync, retained snapshots, and cross-origin token-leak protection');
   }

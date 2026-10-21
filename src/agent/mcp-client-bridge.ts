@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { staffContext } from '../services/staff-context.js';
 
 dotenv.config();
 
@@ -34,7 +35,8 @@ export class MCPClientBridge {
   private sessionId: string | null = null;
   private requestId = 1;
   private authHeaders(): Record<string, string> {
-    return process.env.MCP_AUTH_TOKEN ? { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } : {};
+    const token = staffContext.getStore()?.sessionToken;
+    return { ...(process.env.MCP_AUTH_TOKEN ? { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } : {}), ...(token ? { 'X-ShiftWeave-Staff-Session': token } : {}) };
   }
 
   constructor(endpoint = process.env.MCP_SERVER_URL || "http://localhost:3000/mcp") {

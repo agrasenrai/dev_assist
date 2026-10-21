@@ -1,4 +1,5 @@
 import { db } from "./connection.js";
+import { initializeOperationalSchema } from './operational-schema.js';
 
 export const createTablesSQL = `
 -- 1. NURSES
@@ -196,6 +197,7 @@ CREATE TABLE IF NOT EXISTS epic_snapshot_versions (
 export function initializeDatabase() {
   console.log("Initializing ShiftWeave SQLite database tables...");
   db.exec(createTablesSQL);
+  initializeOperationalSchema();
   // Older schemas required invented acuity for sources which do not supply it.
   const acuity = (db.pragma('table_info(patients)') as Array<{ name: string; notnull: number }>).find(c => c.name === 'acuity_level');
   if (acuity?.notnull) {
