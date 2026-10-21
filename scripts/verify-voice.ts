@@ -41,7 +41,7 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   });
   result = await say('Hii');
   check('casual greeting is answered naturally before identity selection',()=>{
-    assert.match(result.speech,/Hi!.*Alexa/);assert.doesNotMatch(result.speech,/nurse name/);
+    assert.match(result.speech,/Hey.*here/);assert.doesNotMatch(result.speech,/nurse name/);
   });
   result = await say('Alexa, what is your name?');
   check('assistant identifies itself as Alexa',()=>assert.match(result.speech,/Alexa.*nursing workflow assistant/));
@@ -52,13 +52,17 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   revision = original.data.revision;
   check('voice introduction scopes tasks and speech to the nurse', () => {
     assert.equal(original.data.nurse.id, 'voice_nora'); assert.equal(original.data.tasks.length, 1);
-    assert.match(original.data.speech, /1 assigned tasks/); assert.equal(original.data.tasks[0].id, 'voice_task');
+    assert.match(original.data.speech, /1 assigned task/); assert.equal(original.data.tasks[0].id, 'voice_task');
   });
   const retry = await post(intro);
   check('lost voice response retry returns exact saved response', () => assert.deepEqual(retry.data, original.data));
   result = await say('Alexa, what tasks are assigned to me?');
   check('Alexa-prefixed nurse query uses selected context and stored records',()=>{
     assert.match(result.speech,/Review documented shift checklist/);assert.equal(result.nurse.id,'voice_nora');
+  });
+  check('task summaries speak the answer without reciting database metadata',()=>{
+    assert.doesNotMatch(result.speech,/Recorded local workflow status|Scheduled:|updated \d|Source:/);
+    assert.match(result.speech,/waiting for a discrepancy review/);
   });
   const changed = await post({ ...intro, utterance: 'I am Maya' });
   check('voice retry key cannot be reused for another identity', () => assert.equal(changed.status, 409));
@@ -104,6 +108,25 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   });
   result = await say('No');
   check('spoken cancellation discards the pending mutation', () => assert.equal(result.pending, null));
+  await say('Resolve discrepancy in room 901');
+  result = await say('In progress');
+  check('review asks only for the missing note after receiving the status',()=>{
+    assert.equal(result.pending.ready,false);assert.equal(result.speech,'What should I note about your review?');
+  });
+  result = await say('I reviewed the completed source records at the bedside');
+  check('a natural answer to the review question is staged without scripted prefixes or a write',()=>{
+    assert.equal(result.pending.ready,true);assert.match(result.speech,/I reviewed the completed source records at the bedside/);
+    assert.match(result.speech,/mark the local task in progress/);
+    assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get('voice_task')as any).status,'FLAGGED_CONFLICT');
+  });
+  await say('Cancel');
+  await say('Escalate task voice_task');
+  result = await say('The source records need another review');
+  check('escalation accepts a natural reason while still requiring confirmation',()=>{
+    assert.equal(result.pending.ready,true);assert.match(result.speech,/The source records need another review/);
+    assert.match(result.speech,/Say “confirm”/);
+  });
+  await say('Cancel');
   await say('Resolve discrepancy in room 901 as in progress because records reviewed');
   result = await say('I am Unknown Person');
   check('unknown speaker clears identity, display, and pending confirmation', () => {
@@ -111,7 +134,7 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   });
   await say('I am Nora Test');
   result = await say('Confirm');
-  check('switching identity cannot confirm the previous action', () => assert.match(result.speech, /no complete action/));
+  check('switching identity cannot confirm the previous action', () => assert.match(result.speech, /nothing ready to confirm/));
   await say('Resolve discrepancy in room 901 as in progress because records reviewed');
   db.prepare("UPDATE tasks SET priority = 'URGENT' WHERE id = 'voice_task'").run();
   result = await say('Confirm');
@@ -127,19 +150,25 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   });
   result = await say('What is the latest update on my patient?');
   check('patient question retrieves stored clinical fields without inventing missing allergies', () => {
-    assert.match(result.speech, /Synthetic record/); assert.match(result.speech, /negative allergy history is not verified/);
-    assert.match(result.speech, /IN PROGRESS/);
+    assert.match(result.speech, /Synthetic record/); assert.match(result.speech, /can’t confirm a negative allergy history/);
+    assert.match(result.speech, /in progress/);
+  });
+  result = await say('What allergies does my patient have?');
+  check('a specific patient question gets a focused answer with honest missing data',()=>{
+    assert.match(result.speech,/don’t have allergy information/);
+    assert.doesNotMatch(result.speech,/Synthetic record|Review documented shift checklist|Admission:/);
+    assert.equal(result.selectedTaskId,'voice_task');
   });
   result = await say('Show me patient Missing Person');
-  check('unknown patient is clarified instead of using the sole patient', () => assert.match(result.speech, /could not identify one patient/));
+  check('unknown patient is clarified instead of using the sole patient', () => assert.match(result.speech, /Which patient do you mean/));
   result = await say('Show my patient in room 999');
-  check('unknown room cannot silently reuse the previous patient', () => assert.match(result.speech,/could not identify one patient/));
+  check('unknown room cannot silently reuse the previous patient', () => assert.match(result.speech,/Which patient do you mean/));
   result = await say('Mark this task in room 999 completed');
   check('unknown explicit room cannot reuse the previously selected task for a mutation', () => assert.equal(result.pending,null));
   result = await say('What tasks are pending?');
-  check('pending filter excludes in-progress tasks', () => assert.match(result.speech, /No pending assigned tasks/));
+  check('pending filter excludes in-progress tasks', () => assert.match(result.speech, /don’t have any assigned tasks marked pending/));
   result = await say('What tasks are in progress?');
-  check('status query speaks actual task records', () => { assert.match(result.speech, /Review documented shift checklist/); assert.match(result.speech, /IN PROGRESS/); });
+  check('status query speaks actual task records', () => { assert.match(result.speech, /Review documented shift checklist/); assert.match(result.speech, /in progress/); });
   result = await say('Update the status of this task');
   check('status update asks for a missing target status', () => { assert.equal(result.pending.ready, false); });
   result = await say('Completed');
@@ -160,7 +189,9 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
     assert.equal((db.prepare('SELECT count(*) AS n FROM task_events WHERE task_id=?').get('voice_task') as any).n,2);
   });
   result = await say('Has this task been completed?');
-  check('follow-up completion query reflects persisted status', () => assert.match(result.speech,/COMPLETED/));
+  check('follow-up completion query reflects persisted status', () => {
+    assert.match(result.speech,/is completed/);assert.doesNotMatch(result.speech,/Source:|Scheduled|Priority/);
+  });
   result = await say('Assign this task to the appropriate person');
   check('unsupported automatic assignment does not fabricate a successful action', () => { assert.equal(result.pending,null); assert.match(result.speech,/cannot choose an assignee/); });
   await say('Set this task to in progress'); await say('Confirm');
@@ -236,4 +267,9 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
     assert.equal(ended.nurse, null); assert.equal(ended.handoffs.length, 0); assert.equal(ended.tasks.length, 0);
   });
   check('independent display sessions do not inherit another nurse', () => assert.equal(VoiceService.read(randomUUID()).nurse, null));
+  const hello = await post({session_id:randomUUID(),utterance:'I am Maya',expected_revision:0,idempotency_key:randomUUID()});
+  check('a simple introduction greets the nurse without launching into a task report',()=>{
+    assert.equal(hello.data.nurse.id,'voice_maya');assert.equal(hello.data.speech,'Hi Maya. What can I help you with?');
+    assert.doesNotMatch(hello.data.speech,/assigned|unfinished|discrepanc|You can ask/);
+  });
 }

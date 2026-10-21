@@ -105,9 +105,9 @@ try {
     console.log(`PASS transcript → HTTP/MCP → stored data → speech → listening: ${text}`);
   };
   await say('Alexa', /Alexa.*listening/);
-  await say('Hii', /Hi!.*Alexa/);
+  await say('Hii', /Hey.*here/);
   await say('Alexa, what is your name?', /Alexa.*nursing workflow assistant/);
-  await say('Seema', /assigned tasks/);
+  await say('Seema', /Hi Seema/);
   const beforePauseRequests = voiceRequests;
   const beforePauseSpeech = await page.evaluate(() => (window as any).spoken.length);
   await page.evaluate(() => (window as any).say('Alexa, what tasks'));
@@ -124,27 +124,27 @@ try {
   assert.equal(voiceRequests,beforePauseRequests+1);
   await page.waitForFunction((count:number)=>(window as any).recognitionStarts>count,previousStarts+1);
   console.log('PASS short pauses and browser recognition restarts preserve one complete sentence without early execution');
-  await say('What tasks are assigned to me?', /Recorded local workflow status/);
+  await say('What tasks are assigned to me?', /is (?:completed|in progress|pending|waiting for a discrepancy review)/);
   await say('What tasks are pending?', /pending|PENDING/);
   const task = db.prepare(`SELECT t.*,p.full_name FROM tasks t JOIN patients p ON p.id=t.patient_id
     WHERE NOT EXISTS (SELECT 1 FROM conflicts c WHERE c.task_id=t.id AND c.status='UNRESOLVED') LIMIT 1`).get() as any;
   await say(`Show the latest information about patient ${task.full_name}`, new RegExp(task.full_name));
-  await say(`Explain task ${task.id}`, /Recorded local workflow status/);
+  await say(`Explain task ${task.id}`, /is (?:completed|in progress|pending|waiting for a discrepancy review)/);
   await say('Set this task to completed', /Say “confirm”/);
-  await say('Confirm', /saved as COMPLETED/);
-  await say('Has this task been completed?', /COMPLETED/);
+  await say('Confirm', /now completed/);
+  await say('Has this task been completed?', /completed/);
   assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get(task.id) as any).status,'COMPLETED');
-  await say('Show patient Missing Person', /could not identify one patient/);
+  await say('Show patient Missing Person', /Which patient do you mean/);
   await say('Assign this task to the appropriate person', /cannot choose an assignee/);
   await page.route('**/api/voice', (route: any) => route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Test backend unavailable'})}));
   await say('Show my tasks', /could not complete.*backend unavailable/i);
   await page.unroute('**/api/voice');
-  await say('Retry last request', /Recorded local workflow status/);
+  await say('Retry last request', /is (?:completed|in progress|pending|waiting for a discrepancy review)/);
   const starts = await page.evaluate(() => (window as any).recognitionStarts);
   await page.evaluate(() => (window as any).recognition.onerror({error:'no-speech'}));
   await page.evaluate(() => (window as any).recognition.onend());
   await page.waitForFunction((starts: number) => (window as any).recognitionStarts > starts, starts);
-  await say('What tasks are completed?', /COMPLETED/);
+  await say('What tasks are completed?', /completed/);
   const beforeStoppedDraft = voiceRequests;
   await page.evaluate(() => (window as any).say('Set this task to pending'));
   await page.getByRole('button',{name:'Stop microphone',exact:true}).click();
@@ -174,14 +174,14 @@ try {
   assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get(task.id)as any).status,'COMPLETED');
   console.log('PASS reopening starts blank without deleting prior recovery state or committed task updates');
   await page.getByRole('button',{name:'Start microphone',exact:true}).click();
-  await say('Seema', /assigned tasks/);
+  await say('Seema', /Hi Seema/);
   await page.evaluate(() => (window as any).recognition.onerror({error:'not-allowed'}));
   await page.getByRole('alert').filter({hasText:'Microphone permission is blocked'}).waitFor();
   await page.getByRole('button',{name:'Start microphone',exact:true}).click();
   await page.waitForFunction(()=>(window as any).recognitionStarts>0 && (window as any).recognition);
-  await say('Show my tasks', /Recorded local workflow status/);
+  await say('Show my tasks', /is (?:completed|in progress|pending|waiting for a discrepancy review)/);
   await page.evaluate(() => { (window as any).failSpeech = true; });
-  await say('Show my tasks', /Recorded local workflow status/);
+  await say('Show my tasks', /is (?:completed|in progress|pending|waiting for a discrepancy review)/);
   await page.getByRole('alert').filter({hasText:'Speech playback stopped'}).waitFor();
   await page.evaluate(() => { (window as any).failSpeech = false; });
   let release: () => void = () => {};
@@ -197,7 +197,24 @@ try {
   console.log('PASS paused voice session does not play a late backend response');
   await page.unroute('**/api/voice');
   await page.getByRole('button',{name:'Start microphone',exact:true}).click();
-  await say('What tasks are completed?', /COMPLETED/);
+  await say('What tasks are completed?', /completed/);
+  const {BedrockLLMProvider}=await import('../src/agent/llm-provider.js');
+  const originalDecision=BedrockLLMProvider.prototype.decideNextStep;
+  process.env.LLM_PROVIDER='bedrock';
+  let semanticCalls=0;
+  BedrockLLMProvider.prototype.decideNextStep=async(messages,tools,context)=>{
+    semanticCalls++;assert.equal(context?.voiceWorkflow,true);assert(tools.some(t=>t.name==='read_voice_context'));
+    const index=messages.findLastIndex(m=>m.role==='user'),steps=messages.slice(index+1);
+    if(!steps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
+    const result=steps.find(m=>m.role==='tool'&&m.toolName==='interpret_voice_request');
+    if(!result)return{toolCall:{toolName:'interpret_voice_request',arguments:{intent:'TASKS',status:'ALL'}}};
+    const facts=JSON.parse(result.content).facts as Array<{id:string}>;
+    return{toolCall:{toolName:'reply_to_nurse',arguments:{kind:'RECORDS',speech:`Here’s where things stand. ${facts.map(f=>`{{${f.id}}}`).join(' ')}`,evidence:facts.map(f=>f.id)}}};
+  };
+  try{
+    await say('Give me a picture of where things stand',/Here’s where things stand.*assigned task/);
+    assert(semanticCalls>=3);console.log('PASS simulated speech → semantic Bedrock adapter → scoped MCP → grounded model reply → playback → listening');
+  }finally{BedrockLLMProvider.prototype.decideNextStep=originalDecision;process.env.LLM_PROVIDER='mock';}
 } finally {
   await browser?.close();
   appServer.closeAllConnections();

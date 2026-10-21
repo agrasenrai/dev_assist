@@ -60,7 +60,7 @@ try {
   display = await say('Show me the latest available information about my patient');
   assert(display.speech.includes(display.epicRecords[0].name));
   assert(display.speech.includes(source.retrievedAt));
-  assert.match(display.speech, /MedicationAdministration: EMPTY; 0 records/);
+  assert.match(display.speech, /No medication administration records were returned/);
   console.log('PASS patient voice query uses the retrieved Epic snapshot and explicitly preserves empty sections');
   display = await say('Prepare my handoff for Reema');
   const handoff = display.handoffs.find((h: any) => h.id === display.selectedHandoffId);
@@ -112,7 +112,7 @@ try {
     const failed = await call('sync_epic_workspace', { ...input, idempotency_key: randomUUID() }); assert.equal(failed.status, 'FAILED');
     assert.equal((db.prepare('SELECT sync_status FROM epic_patient_snapshots').get() as any).sync_status, 'FAILED');
     const retained = await say('What is the latest update on my patient?');
-    assert.match(retained.speech, /Latest refresh failed/);
+    assert.match(retained.speech, /latest refresh failed/i);
     assert.match(retained.speech, /may be stale/);
     assert.throws(() => EpicOAuthService.resolveResourceUrl('https://attacker.test/steal'), /outside/);
     console.log('PASS visible partial/failed sync, retained snapshots, and cross-origin token-leak protection');

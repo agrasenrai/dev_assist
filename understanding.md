@@ -27,7 +27,7 @@ ShiftWeave is a **nursing shift handoff and workflow coordination system** built
 | MCP protocol | `@modelcontextprotocol/sdk` v1.32+ |
 | Database | `better-sqlite3` (WAL mode, synchronous FULL) |
 | Input validation | `zod` v4 |
-| LLM adapters | Mock (default), Google Gemini, AWS Bedrock Converse |
+| LLM adapters | Mock (default), AWS Bedrock Converse |
 | Frontend | React + Vite (TypeScript) |
 | Build | `tsx` for dev, `tsc` for production build |
 
@@ -39,7 +39,7 @@ npm run build:client
 npm run dev
 ```
 
-**Key env vars:** `LLM_PROVIDER` (mock/gemini/bedrock), `EPIC_CLIENT_ID`, `EPIC_READS_ENABLED`, `EPIC_WRITES_ENABLED`, `GEMINI_API_KEY`, `AWS_REGION`, `BEDROCK_MODEL_ID`
+**Key env vars:** `LLM_PROVIDER` (mock/bedrock), `EPIC_CLIENT_ID`, `EPIC_READS_ENABLED`, `EPIC_WRITES_ENABLED`, `AWS_REGION`, `BEDROCK_MODEL_ID`
 
 ---
 
@@ -51,7 +51,7 @@ src/
   runtime-config.ts            # host, allowedOrigins, demoAccess middleware
   agent/
     orchestrator.ts            # ShiftWeaveOrchestrator — multi-turn LLM+MCP agentic loop
-    llm-provider.ts            # MockAutonomousAgent, GeminiLLMProvider, BedrockLLMProvider
+    llm-provider.ts            # MockAutonomousAgent, BedrockLLMProvider
     mcp-client-bridge.ts       # HTTP MCP client (JSON-RPC 2.0 + SSE parsing)
   db/
     connection.ts              # better-sqlite3 singleton
@@ -108,7 +108,7 @@ scripts/
   test-epic-reads.ts           # Epic FHIR R4 canonical mapping tests
   test-epic-oauth.ts           # Epic OAuth token exchange tests
   verify-epic-workflow.ts      # full Epic workspace sync + MCP workflow
-  verify-gemini-live.ts        # live Gemini LLM integration test
+  verify-voice-conversation-live.ts # live Bedrock voice integration checks
   connect-epic.ts              # Epic workspace setup script
   probe-epic.ts                # Epic FHIR scope probe
   publish-approved-epic-note.ts # manual Epic note write (explicit only)
@@ -205,9 +205,8 @@ The core agentic loop:
 ### LLM Providers (`src/agent/llm-provider.ts`)
 
 - **MockAutonomousAgent** (default, `mock-autonomous`): Deterministic rule-based agent. Calls tools in order: get_assigned_tasks → get_handoff_context → create_handoff_draft. Refuses clinical actions. Renders facts from actual tool results only.
-- **GeminiLLMProvider** (`gemini`): Uses `@google/generative-ai`, native function declarations. Strips `$schema`/`$id` from MCP JSON Schema via `toGeminiToolSchema()`. Parallel tool calls rejected.
 - **BedrockLLMProvider** (`bedrock`): Uses `@aws-sdk/client-bedrock-runtime` ConverseCommand. Tool-use IDs and tool-result messages preserved via `toBedrockMessages()`. SDK credential chain (no hardcoded creds). 30s timeout per call. Parallel tool calls rejected.
-- **Important:** If cloud LLM returns `finalSpeech` directly (not through mock-autonomous), it is discarded and `MockAutonomousAgent` re-runs the decision. Clinical prose from cloud models is never displayed as verified facts.
+- **Voice path:** Bedrock interprets ordinary utterances through typed intents, reads nurse-scoped context over MCP, and composes replies using source fact references. Existing services enforce confirmations, scope, checkpoints and receipts. The separate legacy chat orchestrator retains its deterministic final renderer; cloud voice no longer uses that route.
 
 ### MCPClientBridge (`src/agent/mcp-client-bridge.ts`)
 
@@ -465,7 +464,7 @@ Additional targeted scripts:
 - **SQLite single-writer** — no multi-region, no NFS/EFS, one EC2 host architecture.
 - **MCP sessions invalidated on server restart** — workflow checkpoints survive in SQLite.
 - **No TTFT streaming** — LLM responses buffered; browser speech starts after complete response.
-- **Bedrock and Gemini not verified by automated tests** — only message construction and config errors are tested locally.
+- **Model verification:** Local adapter tests and live Bedrock checks are separate. Consult VOICE_VERIFICATION.md for observed results; physical microphone and audible output are not established by text or simulated speech tests.
 
 ---
 

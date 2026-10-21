@@ -7,7 +7,7 @@ import { db } from '../src/db/connection.js';
 import { importIncomingData } from '../src/db/ingest.js';
 import { MCPClientBridge } from '../src/agent/mcp-client-bridge.js';
 import { ShiftWeaveOrchestrator } from '../src/agent/orchestrator.js';
-import { toBedrockMessages, toGeminiMessages, toGeminiToolSchema, GeminiLLMProvider, getLLMProvider, type AgentMessage } from '../src/agent/llm-provider.js';
+import { toBedrockMessages, getLLMProvider, type AgentMessage } from '../src/agent/llm-provider.js';
 import { CheckpointService } from '../src/services/checkpoint.service.js';
 import { HandoffService } from '../src/services/handoff.service.js';
 import { ConflictService } from '../src/services/conflict.service.js';
@@ -168,18 +168,8 @@ try {
       toolCallId: 'abc', toolCall: { toolName: 'get_assigned_tasks', arguments: {} } },
       { role: 'tool', toolName: 'get_assigned_tasks', toolCallId: 'abc', content: '{"tasks":[]}' }];
     check('Bedrock keeps matching toolUse/toolResult IDs', () => assert.equal(toBedrockMessages(messages)[2]?.content?.[0]?.toolResult?.toolUseId, 'abc'));
-    check('Gemini uses native function responses', () => assert('functionResponse' in toGeminiMessages(messages)[2]!.parts[0]!));
-    check('Gemini schema conversion removes dialect metadata without losing tool argument names or mutating MCP schemas', () => {
-      const original = { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', required: ['nurse_id'], properties: {
-        nurse_id: { type: 'string' }, $schema: { type: 'string' }, filters: { type: 'array', items: { $id: 'nested', type: 'object', properties: { status: { type: 'string', enum: ['PENDING'] } } } }
-      } };
-      const converted = toGeminiToolSchema(original) as any;
-      assert(!('$schema' in converted)); assert(!('$id' in converted.properties.filters.items));
-      assert.deepEqual(converted.required, ['nurse_id']); assert.equal(converted.properties.$schema.type, 'string');
-      assert.deepEqual(converted.properties.filters.items.properties.status.enum, ['PENDING']); assert(original.$schema);
-    });
-    await assert.rejects(new GeminiLLMProvider('').decideNextStep(messages, []), /GEMINI_API_KEY/);
     check('unknown LLM mode is not silently mocked', () => assert.throws(() => getLLMProvider('invalid'), /Unknown/));
+    check('removed Gemini mode is rejected explicitly',()=>assert.throws(()=>getLLMProvider('gemini'),/Unknown/));
   }
 
   if (mode === 'all' || mode === 'chaos') {

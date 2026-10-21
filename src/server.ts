@@ -663,7 +663,7 @@ app.get("/health", async (_req, res) => {
     status: ping ? "ok" : "degraded",
     mode: "LOCAL_DEMO_NO_PRODUCTION_AUTH",
     llmProvider: process.env.LLM_PROVIDER || 'mock',
-    voiceAgentCommand: 'Ask assistant, summarize my shift',
+    voiceAgentMode: (process.env.LLM_PROVIDER || 'mock') === 'mock' ? 'LOCAL_DETERMINISTIC' : 'BEDROCK_SEMANTIC_VOICE',
     epicStatus: process.env.EPIC_CLIENT_ID ? 'CONFIGURED_NOT_VERIFIED' : 'NOT_CONFIGURED',
     server: "ShiftWeave MCP Server",
     specVersion: "2025-11-25",
