@@ -116,7 +116,8 @@ export class VoiceService {
     return MutationService.execute('VOICE_TURN', `voice-turn:${input.idempotency_key}`, input, 'voice-demo', () => {
       const state = this.load(input.session_id);
       if (state.revision !== input.expected_revision) throw new Error('Voice session changed. Refresh before speaking again.');
-      const text = input.utterance.trim();
+      const spokenText = input.utterance.trim();
+      const text = spokenText.replace(/^(?:(?:hey|hi+|hello)[\s,.:!?-]+)?alexa\b[\s,.:!?-]*/i, '').trim();
       const normalized = normal(text);
       let speech: string;
       const introduction = text.match(/\b(?:i am|i['’]?m|this is|my name is|switch to)\s+(.+)/i) ||
@@ -143,6 +144,26 @@ export class VoiceService {
             ORDER BY start_time DESC LIMIT 1`).get(state.nurse.department) as Shift || null;
           speech = `Hello ${state.nurse.name}. ${state.shift ? this.summary(state) : 'No active demo shift is configured for your unit.'}`;
         }
+      } else if (!text && /\balexa\b/i.test(spokenText)) {
+        speech = "Yes, I'm Alexa. I'm listening. Take your time.";
+      } else if (/^(?:hi+|hey+|hello+|good (?:morning|afternoon|evening))(?: there)?(?: how are you(?: doing)?)?(?: alexa)?$/.test(normalized)) {
+        state.pending = null;
+        speech = "Hi! I'm Alexa. How can I help you today?";
+      } else if (/^(?:what(?:s| is) your name|who are you|what should i call you)$/.test(normalized)) {
+        state.pending = null;
+        speech = "I'm Alexa, your nursing workflow assistant.";
+      } else if (/^(?:how are you|how are you doing|how is it going)$/.test(normalized)) {
+        state.pending = null;
+        speech = "I'm here and ready to help. How can I help you today?";
+      } else if (/^(?:thanks|thank you|thanks alexa|thank you alexa)$/.test(normalized)) {
+        state.pending = null;
+        speech = "You're welcome. I'm here if you need anything else.";
+      } else if (/^(?:are you there|can you hear me|listen|are you listening)$/.test(normalized)) {
+        state.pending = null;
+        speech = "Yes, I'm listening. Take your time.";
+      } else if (/^(?:what can you do|how can you help(?: me)?|help|what do you do|can you help me)$/.test(normalized)) {
+        state.pending = null;
+        speech = 'I can look up your existing patient and task records, track local workflow status, and help with reviewed handoffs. What would you like help with?';
       } else if (/^(?:alexa )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
         Object.assign(state, initial(), { revision: state.revision });
         speech = 'Your session has ended. The display is cleared. Introduce yourself to begin another session.';
@@ -155,7 +176,7 @@ export class VoiceService {
       }
       state.revision++;
       state.speech = speech;
-      state.messages = [...state.messages, { role: 'nurse' as const, text }, { role: 'assistant' as const, text: speech }].slice(-30);
+      state.messages = [...state.messages, { role: 'nurse' as const, text: spokenText }, { role: 'assistant' as const, text: speech }].slice(-30);
       db.prepare(`INSERT OR IGNORE INTO workflow_runs (id, workflow_type, initiated_by, status)
         VALUES (?, 'GENERATE_HANDOFF', ?, 'IN_PROGRESS')`).run(runId(input.session_id), state.nurse?.id || 'voice-demo');
       db.prepare('UPDATE workflow_runs SET initiated_by = ? WHERE id = ?').run(state.nurse?.id || 'voice-demo', runId(input.session_id));
