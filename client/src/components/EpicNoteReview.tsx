@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { safeUUID } from '../uuid.js';
 
 type Preview = { handoffId: string; patientId: string; encounterReference: string; authorReference: string;
   authorVerification: string; note: string; reviewHash: string; writesEnabled: boolean; externalSync: string };
@@ -8,7 +9,7 @@ export function EpicNoteReview({ handoffId, nurseId }: { handoffId: string; nurs
   const [reviewed, setReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [key] = useState(() => crypto.randomUUID());
+  const [key] = useState(() => safeUUID());
   const [attempted, setAttempted] = useState(false);
   async function load() {
     setBusy(true); setMessage(''); setReviewed(false);

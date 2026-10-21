@@ -854,7 +854,7 @@ function localMcpEndpoint() {
   if (!address || typeof address === 'string') throw new Error('HTTP server is not ready');
   return `http://127.0.0.1:${address.port}/mcp`;
 }
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3000 );
 
 export const appServer = app.listen(PORT, host, () => {
   console.log(`\n======================================================`);

@@ -1,4 +1,5 @@
 import type { ClinicalTask, ConflictItem, AuditLogItem, HandoffItem, ProviderHealth } from './types.js';
+import { safeUUID } from './uuid.js';
 
 const API_BASE = ''; // Vite proxies /api and /health in dev; production uses the same origin.
 async function request<T>(path: string, body?: unknown): Promise<T> {
@@ -11,7 +12,7 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 const workflowKey = 'shiftweave:workflow:nurse_reema_02';
 function workflowId() {
   let id = localStorage.getItem(workflowKey);
-  if (!id) { id = `wf_run_${crypto.randomUUID()}`; localStorage.setItem(workflowKey, id); }
+  if (!id) { id = `wf_run_${safeUUID()}`; localStorage.setItem(workflowKey, id); }
   return id;
 }
 export function fetchHealth() { return request<ProviderHealth>('/health'); }
@@ -22,7 +23,7 @@ export async function fetchHandoffs() { return (await request<{ handoffs: Handof
 const pendingKeys = new Map<string, string>();
 function retryKey(action: string) {
   let key = pendingKeys.get(action);
-  if (!key) { key = crypto.randomUUID(); pendingKeys.set(action, key); }
+  if (!key) { key = safeUUID(); pendingKeys.set(action, key); }
   return key;
 }
 export async function resolveConflict(conflictId: string, resolvedBy: string, finalStatus: string, resolutionNote: string) {

@@ -15,12 +15,23 @@ if ((exposed || process.env.NODE_ENV === 'production') &&
 if ([user, password, token, publicOrigin].some(value => /REPLACE_|example\.com/.test(value))) {
   throw new Error('Replace hosted deployment placeholders before startup');
 }
-if (publicOrigin && new URL(publicOrigin).origin !== publicOrigin) throw new Error('PUBLIC_ORIGIN must be an exact origin without a trailing slash');
+let parsedOrigin: URL | null = null;
+if (publicOrigin) {
+  try {
+    parsedOrigin = new URL(publicOrigin);
+  } catch {
+    throw new Error('PUBLIC_ORIGIN must be a valid URL with protocol (e.g. http://10.118.249.165:3000 or https://shiftweave.example.com) without a trailing slash');
+  }
+  if (parsedOrigin.origin !== publicOrigin) {
+    throw new Error('PUBLIC_ORIGIN must be an exact origin without a trailing slash');
+  }
+}
 export const allowedOrigins = new Set([
   'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173',
   ...(!exposed && /^\d+$/.test(process.env.PORT || '') && Number(process.env.PORT) > 0 && Number(process.env.PORT) <= 65535
     ? [`http://localhost:${Number(process.env.PORT)}`, `http://127.0.0.1:${Number(process.env.PORT)}`] : []),
-  ...(publicOrigin ? [publicOrigin] : [])
+  ...(publicOrigin ? [publicOrigin] : []),
+  ...(parsedOrigin && process.env.NODE_ENV !== 'production' ? [`${parsedOrigin.protocol}//${parsedOrigin.hostname}:5173`] : [])
 ]);
 function equals(a: string, b: string) {
   const left = Buffer.from(a), right = Buffer.from(b);

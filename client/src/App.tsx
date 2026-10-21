@@ -1,1 +1,1 @@
-export { VoiceWorkspace as App, VoiceWorkspace as default } from './components/VoiceWorkspace.js';
+export { OneThreadWorkspace as App, OneThreadWorkspace as default } from './components/OneThreadWorkspace.js';
