@@ -429,6 +429,17 @@ interface SessionRecord {
 
 const sessions = new Map<string, SessionRecord>();
 
+const sessionCleanupTimer = setInterval(() => {
+  const cutoff = Date.now() - 30 * 60_000;
+  for (const [id, s] of sessions) {
+    if (s.lastActive < cutoff) {
+      void s.server.close();
+      sessions.delete(id);
+    }
+  }
+}, 5 * 60_000);
+sessionCleanupTimer.unref();
+
 const isInitializeRequest = (body: unknown): boolean => {
   return typeof body === "object" && body !== null &&
     ((body as { method?: string }).method === "initialize" ||
@@ -771,6 +782,7 @@ export const appServer = app.listen(PORT, "127.0.0.1", () => {
 });
 
 appServer.on('close', () => {
+  clearInterval(sessionCleanupTimer);
   for (const session of sessions.values()) void session.server.close();
   sessions.clear();
 });
