@@ -1,373 +1,495 @@
-# ShiftWeave — Complete Codebase Understanding
+# ShiftWeave — Full Codebase Understanding
 
-> Last updated: 21 October 2026. Covers every file and directory in the repository.
-
----
-
-## What This Project Is
-
-**ShiftWeave** is an AI-assisted nursing shift handoff coordinator built for the Amazon Developer Hackathon (Alexa+ Track). It is not a chatbot. It is a fault-tolerant, stateful, MCP-native workflow engine that:
-
-- Coordinates the handoff of clinical tasks from one nurse (Seema, outgoing) to another (Reema, incoming).
-- Detects and surfaces EHR data discrepancies for mandatory human review.
-- Persists multi-step workflow progress across crashes/reconnects using SQLite checkpoints.
-- Exposes 11 MCP tools over Streamable HTTP (`POST /mcp`, protocol `2025-11-25`).
-- Simulates Alexa+ voice interaction in the browser using Web Speech API.
-
-All data is synthetic. There is no real patient data, no production authentication, and no live hospital connection by default.
+**Last updated:** 2026-10-21  
+**Based on:** Complete file-by-file reading of all source, service, provider, agent, client, script, deploy, and documentation files.
 
 ---
 
-## Directory Map
+## 1. What ShiftWeave Is
 
-```
-dev_assist/
-├── src/                  — Backend TypeScript (Node.js, Express, MCP server)
-│   ├── server.ts         — Main entry point: Express app + MCP tool registrations
-│   ├── db/               — SQLite layer
-│   ├── agent/            — LLM orchestrator + MCP client bridge
-│   ├── providers/        — EHR provider abstraction (SQLite / FHIR)
-│   └── services/         — Core business logic services
-├── client/               — React + TypeScript frontend (Vite)
-│   └── src/
-│       ├── components/   — UI components
-│       ├── api.ts        — Frontend REST API calls
-│       ├── voice-api.ts  — Voice session API
-│       └── types.ts      — Shared frontend types
-├── scripts/              — Test and verification scripts
-├── data/
-│   ├── shiftweave.db     — SQLite database (WAL mode)
-│   └── incoming/         — Drop zone for JSON clinical fixture files
-├── keys/                 — RSA private key for Epic OAuth (not committed)
-└── .agents/              — Agent skill rules for AI coding assistants
+ShiftWeave is a **nursing shift handoff and workflow coordination system** built for the Amazon Developer Hackathon (Alexa+ track). It is:
+
+- A full-stack MCP server over **Streamable HTTP** (`POST /mcp`, spec `2025-11-25`)
+- A multi-turn voice/chat agent with durable interruption recovery
+- A React dashboard for nurses to see tasks, conflicts, handoffs, and audit traces
+- An Epic FHIR R4 integration for read-only clinical context supplementation
+- 100% locally runnable with synthetic demo data, zero cloud required (mock LLM + SQLite)
+
+**Clinical safety boundary:** No autonomous diagnosis, treatment, medication administration, or order modification. All state-changing actions require explicit human confirmation.
+
+---
+
+## 2. Stack & Entry Points
+
+| Component | Technology |
+|---|---|
+| Backend server | Node.js v22, TypeScript 5.7+, Express 5 |
+| MCP protocol | `@modelcontextprotocol/sdk` v1.32+ |
+| Database | `better-sqlite3` (WAL mode, synchronous FULL) |
+| Input validation | `zod` v4 |
+| LLM adapters | Mock (default), Google Gemini, AWS Bedrock Converse |
+| Frontend | React + Vite (TypeScript) |
+| Build | `tsx` for dev, `tsc` for production build |
+
+**Dev startup:**
+```sh
+npm install && npm --prefix client install
+npm run db:init && npm run import:data
+npm run build:client
+npm run dev
 ```
 
----
-
-## Backend Source Files (`src/`)
-
-### `src/server.ts`
-The central file. Does everything:
-- Starts Express on `PORT` (default 3000).
-- Serves the React client build from `client/dist/`.
-- Mounts `StreamableHTTPServerTransport` on `POST /mcp` — one `McpServer` instance per session (factory pattern to avoid "already connected" errors).
-- Manages MCP session lifecycles: runs a background maintenance interval (every 5 minutes) evicting sessions idle for >30 minutes with `.unref()` and server shutdown cleanup.
-- Registers all **11 MCP tools** with Zod-validated inputs.
-- Exposes companion REST endpoints: `/api/chat` (with dynamic nurse-unit active shift resolution), `/api/tasks`, `/api/conflicts`, `/api/handoffs`, `/api/execution-trace` (configurable limit via `?limit=`, default 100, max 500), `/api/provider/switch`, `/api/chaos/simulate`, `/health`, and voice endpoints.
-- Optimizes voice turn latency: `POST /api/voice` dispatches directly to `VoiceService.turn()` in-process, bypassing redundant self-connecting MCP HTTP overhead (~80–150ms faster per turn) while preserving the external `voice_turn` MCP tool over `/mcp`.
-- Implements route-level error handling on `/api/handoffs/:id/finalize` and `/api/tasks/:id/acknowledge`, returning HTTP 400 for schema validation failures and HTTP 422 for clinical prerequisites (e.g., unresolved discrepancies, unaccepted custody).
-- Calls `initializeDatabase()` on startup and automatically prunes `operation_receipts` older than 3 days.
-
-**MCP Tools registered in server.ts:**
-
-| # | Tool name | Purpose |
-|---|-----------|---------|
-| 1 | `get_assigned_tasks` | Tasks for a nurse/shift, with optional status filter |
-| 2 | `get_task_details` | Single task with patient info and conflict flag |
-| 3 | `get_task_changes` | Events since a timestamp or checkpoint |
-| 4 | `get_handoff_context` | Outgoing nurse metrics, unresolved conflicts, candidate tasks |
-| 5 | `create_handoff_draft` | Creates DRAFT handoff record; does NOT transfer custody |
-| 6 | `get_workflow_checkpoint` | Retrieves latest checkpoint for a run ID |
-| 7 | `save_workflow_checkpoint` | Commits a step snapshot with idempotency key |
-| 8 | `resume_workflow` | Reconciles DB state, returns recovery plan |
-| 9 | `acknowledge_task` | Human custody acceptance or supervisor escalation |
-| 10 | `voice_turn` | Processes one nurse voice/text turn via VoiceService |
-| 11 | `get_voice_display` | Returns current voice session display state |
+**Key env vars:** `LLM_PROVIDER` (mock/gemini/bedrock), `EPIC_CLIENT_ID`, `EPIC_READS_ENABLED`, `EPIC_WRITES_ENABLED`, `GEMINI_API_KEY`, `AWS_REGION`, `BEDROCK_MODEL_ID`
 
 ---
 
-### `src/db/`
+## 3. Project Structure
 
-**`connection.ts`** — Opens `better-sqlite3` on `SQLITE_DB_PATH`. Enables WAL mode, foreign keys, and `NORMAL` synchronous writes. Exports the singleton `db` instance used everywhere.
-
-**`schema.ts`** — Defines and runs `CREATE TABLE IF NOT EXISTS` for all **12 tables** (11 domain + 1 additive receipts). Also runs safe `ALTER TABLE` migrations for Epic sync columns on existing databases.
-
-Tables:
-| Table | Purpose |
-|-------|---------|
-| `nurses` | Nurse identity records |
-| `shifts` | Shift windows per unit |
-| `patients` | Patient demographics and room |
-| `tasks` | Clinical/workflow tasks |
-| `task_assignments` | Nurse ↔ task ↔ shift linkage with transfer status |
-| `task_events` | Immutable event log (status changes, notes, conflicts) |
-| `conflicts` | EHR discrepancies requiring human resolution |
-| `handoffs` | Handoff draft/review/finalized records with external sync state |
-| `workflow_runs` | Top-level workflow execution records |
-| `workflow_checkpoints` | Step-level state snapshots with idempotency key |
-| `audit_log` | Every tool/agent/nurse action with latency |
-| `operation_receipts` | Durable receipts binding idempotency key → request+response |
-
-**`init.ts`** — CLI entry point (`npm run db:init`). Just calls `initializeDatabase()`.
-
-**`ingest.ts`** — CLI entry point (`npm run import:data`). Reads all `.json` files from `data/incoming/`, validates with Zod, and runs an atomic SQLite transaction inserting nurses, shifts, patients, tasks, assignments, and conflicts. Uses `MutationService.execute` so re-importing the same file is idempotent (SHA-256 content hash as key). Enforces: flagged tasks must have explicit conflict records.
-
----
-
-### `src/agent/`
-
-**`mcp-client-bridge.ts`** — HTTP client implementing MCP `2025-11-25`. Sends `initialize` → `notifications/initialized` → `tools/list` → `tools/call` over `POST /mcp`. Handles both JSON and SSE (`text/event-stream`) response formats. Sends `DELETE /mcp` on `close()`. Preserves session ID via `mcp-session-id` header.
-
-**`llm-provider.ts`** — Defines `ILLMProvider` interface and three implementations:
-- `MockAutonomousAgent` — Deterministic rule-based agent. Decides tool calls based on utterance keywords and already-received tool results. Enforces clinical safety boundary (refuses diagnosis/treatment requests). Default for local/test runs.
-- `GeminiLLMProvider` — Uses `@google/generative-ai`. Filters out voice/mutation tools from function declarations. Requires `GEMINI_API_KEY`.
-- `BedrockLLMProvider` — Uses `@aws-sdk/client-bedrock-runtime` Converse API. Uses SDK credential chain. Preserves tool-use IDs. Requires `AWS_REGION` + `BEDROCK_MODEL_ID`.
-
-Also exports `toBedrockMessages()` and `toGeminiMessages()` for native format conversion.
-
-`getLLMProvider(id)` selects by `LLM_PROVIDER` env var: `mock` | `gemini` | `bedrock`.
-
-**`orchestrator.ts`** — `ShiftWeaveOrchestrator` class. Multi-turn loop:
-1. Loads latest checkpoint for the run ID.
-2. Checks for pending tool (from interrupted run) and replays its result if already receipted.
-3. Calls `llmProvider.decideNextStep()` to get next tool call or final speech.
-4. Executes tool via `mcpBridge.callTool()`.
-5. Saves checkpoint after each mutation tool.
-6. Repeats until `finalSpeech` is returned.
-7. Persists conversation history + pending tool intent in SQLite checkpoint.
-
-Supports `simulateInterruptionAtStep` for chaos testing (throws after a specified step).
-
----
-
-### `src/providers/`
-
-**`types.ts`** — Core domain types (`Patient`, `Task`, `TaskEvent`, `Nurse`, `Shift`) and the `IEHRProvider` interface with methods: `ping`, `getPatientsByUnit`, `getTasksForNurse`, `getTaskDetails`, `getRecentEvents`, `updateTaskStatus`, and optional `syncFromExternalFHIR` / `writeHandoffDocument`.
-
-**`sqlite-cache-provider.ts`** — `SQLiteCacheProvider` implements `IEHRProvider` using direct `better-sqlite3` queries. Primary local provider. Returns tasks with patient name/room joined. `isEdgeCache = true`.
-
-**`fhir-api-provider.ts`** — `LiveFHIRProvider` implements `IEHRProvider`. Currently configured to return an explicit configuration error rather than silently fall back. Selecting this provider returns an error (no live Epic mapping is configured yet). `isEdgeCache = false`.
-
-**`index.ts`** — Singleton provider instances. `getActiveProvider()` returns current provider. `setActiveProvider()` switches provider but blocks `live-fhir-api` with a clear error. `listAvailableProviders()` lists both with active flag.
-
-**`epic-oauth.service.ts`** — `EpicOAuthService`. Implements RFC 7523 RS384 JWT client assertion generation, token exchange against Epic's OAuth endpoint, in-memory token caching with 60-second expiry buffer, and automatic refresh on 401. Requires `./keys/private_key.pem` and `EPIC_CLIENT_ID`.
-
-**`epic-mapping.service.ts`** — `EpicMappingService`. Maps Epic FHIR R4 resources (Patient, Encounter, Condition, AllergyIntolerance, MedicationRequest, DocumentReference) to ShiftWeave canonical models. Resolves room/bed from Encounter.location. Decodes Binary document content inline.
-
----
-
-### `src/services/`
-
-**`audit.service.ts`** — `AuditService.log()`. Inserts a row into `audit_log` with actor, action, resource, outcome, latency, and details (JSON-serialized).
-
-**`checkpoint.service.ts`** — `CheckpointService`. Key methods:
-- `initWorkflowRun()` — Creates a `workflow_runs` row, returns run ID.
-- `saveCheckpoint()` — Inserts into `workflow_checkpoints` with idempotency check. Rejects key reuse for different state.
-- `getLatestCheckpoint()` — Returns highest step_index checkpoint for a run.
-- `getAllCheckpoints()` — Returns all checkpoints for a run (used for recovery).
-- `completeWorkflowRun()` — Sets run status to `COMPLETED`.
-
-**`mutation.service.ts`** — `MutationService.execute()`. Wraps any domain write in a single SQLite `IMMEDIATE` transaction that: checks `operation_receipts` for prior execution (idempotency), runs the action, saves a checkpoint, completes the run, writes the receipt, and logs to audit. If the key already exists with the same request, returns the stored response without re-executing.
-
-**`recovery.service.ts`** — `RecoveryService.reconcileAndResume()`. Loads the latest checkpoint and all checkpoints for a run. Reads committed mutation receipts. Determines pending tool from checkpoint state. Checks if source data changed (via `sourceVersion()`). Returns a `RecoveryPlan` with `alreadyCommittedSteps`, `remainingStepsToExecute`, and `avoidedDuplicateStepsCount`.
-
-**`conflict.service.ts`** — `ConflictService`. `getUnresolvedConflicts()` joins `conflicts` + `tasks` + `patients`. `resolveConflict()` requires `resolvedBy`, `finalStatus`, `resolutionNote`, `human_confirmed: true`, and an idempotency key. Updates the conflict record via `MutationService`.
-
-**`handoff.service.ts`** — `HandoffService`. Three methods:
-- `createDraft()` — Validates nurses exist, validates carry-forward tasks are unfinished, builds SBAR narrative (from Epic context via `FieldAuthorityService` if provided, otherwise from local records), inserts DRAFT handoff row. Does NOT transfer custody.
-- `acknowledge()` — Handles `ACCEPT_HANDOFF` (transfers task_assignment from outgoing to incoming nurse, requires `handoff_id`) or `FLAG_FOR_SUPERVISOR` (requires a note). Both require `human_confirmed: true`.
-- `finalize()` — Requires: incoming nurse, no unresolved conflicts on any handoff task, all carry-forward tasks accepted. Sets handoff to `FINALIZED`.
-
-**`voice.service.ts`** — `VoiceService`. The most complex service. Manages a stateful voice session per `session_id`. State includes: active nurse, active shift, pending confirmation, message history, task/conflict/handoff focus. Key behaviors:
-- Identity: matches nurse by first/full name or badge. Clears session on unknown name.
-- Deterministic phrase interpreter: handles task summaries, room details, discrepancy explanation, draft creation, custody acceptance, finalization, escalation, session end, confirmation, cancellation.
-- Pending confirmation: stages an action (RESOLVE/ACCEPT/FINALIZE/ESCALATE) with a 5-minute expiry. "Confirm"/"Yes" executes it; "Cancel"/"No" dismisses it. Any mutation, identity change, or expired time invalidates it.
-- Immediate expiry check: `load()` clears expired pending confirmations immediately (`expiresAt < Date.now()`), preventing the dashboard or subsequent voice turns from displaying or acting on stale confirmations.
-- State is persisted in SQLite checkpoints using `voice:{session_id}` run ID. Operation receipts and revision checks prevent duplicate mutations on retried requests.
-
-**`field-authority.service.ts`** — `FieldAuthorityService`. Defines which fields are authoritative from Epic vs local ShiftWeave (e.g., allergies and diagnoses from Epic, task status and custody from local). `buildIntegratedHandoffNarrative()` merges Epic clinical context with local task/conflict state into a grounded SBAR narrative while enforcing source boundaries.
-
-**`epic-writeback.service.ts`** — `EpicWriteBackService`. Constructs a US Core FHIR R4 `DocumentReference` payload (LOINC `11506-3`, base64 attachment) for clinical notes write-back. Enforces safety gates: explicit human review, zero unresolved conflicts, accepted custody. Manages an external sync state machine (`NOT_REQUESTED` → `PENDING` → `SYNCED`/`FAILED`/`UNCERTAIN`). Performs remote reconciliation before retries. Currently blocked by Epic sandbox read-only permissions (`system/DocumentReference.c` requires production approval).
-
-**`source-version.ts`** — `sourceVersion()`. Returns a hash of the current patient/task data state. Used by recovery to detect whether source records changed between a checkpoint and resume.
-
-**`canonical-json.ts`** — `canonicalJson()`. Deterministic JSON serialization (sorted keys) used for idempotency key comparisons.
+```
+src/
+  server.ts                    # Express app, MCP server factory, all REST endpoints
+  runtime-config.ts            # host, allowedOrigins, demoAccess middleware
+  agent/
+    orchestrator.ts            # ShiftWeaveOrchestrator — multi-turn LLM+MCP agentic loop
+    llm-provider.ts            # MockAutonomousAgent, GeminiLLMProvider, BedrockLLMProvider
+    mcp-client-bridge.ts       # HTTP MCP client (JSON-RPC 2.0 + SSE parsing)
+  db/
+    connection.ts              # better-sqlite3 singleton
+    schema.ts                  # 11 tables + migration helpers (initializeDatabase)
+    init.ts                    # standalone db:init script
+    ingest.ts                  # fixture import (nurses, patients, tasks, conflicts, shifts)
+  providers/
+    types.ts                   # IEHRProvider interface + all canonical types
+    index.ts                   # singleton provider registry, getActiveProvider/setActiveProvider
+    sqlite-cache-provider.ts   # local SQLite IEHRProvider implementation
+    fhir-api-provider.ts       # live FHIR R4 IEHRProvider (currently disabled)
+    epic-oauth.service.ts      # RFC 7523 RS384 JWT client assertion + token cache
+    epic-mapping.service.ts    # Epic FHIR R4 → canonical ShiftWeave type mapping
+    epic-workflow-source.ts    # fetchEpicWorkflowSnapshot (multi-section parallel FHIR fetch)
+  services/
+    handoff.service.ts         # createDraft, acknowledge, finalize
+    checkpoint.service.ts      # saveCheckpoint, getLatestCheckpoint, markInterrupted, complete
+    mutation.service.ts        # atomic receipt+domain+checkpoint+audit transaction wrapper
+    recovery.service.ts        # reconcileAndResume — recovery plan builder
+    conflict.service.ts        # flagConflict, resolveConflict, getUnresolvedConflicts
+    audit.service.ts           # log, getRecentLogs
+    voice.service.ts           # full voice state machine (VoiceService.turn)
+    voice-agent.service.ts     # runVoiceTurn — bridges voice_turn MCP tool to VoiceService
+    epic-workflow.service.ts   # EpicWorkflowService.sync, recordsForPatients, narrative
+    epic-writeback.service.ts  # EpicWriteBackService.publishReviewedNote (mock/uncertain/live)
+    epic-note.service.ts       # EpicNoteService.preview, publish
+    epic-context.service.ts    # readEpicContext helper
+    field-authority.service.ts # FIELD_AUTHORITY_MATRIX, buildIntegratedHandoffNarrative
+    source-version.ts          # fingerprint of current source data for stale-read detection
+    canonical-json.ts          # deterministic JSON serialization for receipt comparison
+client/
+  src/
+    App.tsx / main.tsx         # React root
+    api.ts                     # typed API client functions
+    voice-api.ts               # voice session API helpers
+    voice-types.ts             # voice display types
+    useVoiceConversation.ts    # React hook for voice state
+    components/
+      VoiceWorkspace.tsx       # primary voice/chat UI (large component)
+      AlexaVoiceSim.tsx        # simulated voice input/output panel
+      TaskBoard.tsx            # task list with status display
+      ConflictReviewDrawer.tsx # conflict review with note + final status
+      ShiftHeader.tsx          # nurse/shift header bar
+      ExecutionTracePanel.tsx  # live audit trace display
+      ChaosControlBar.tsx      # simulate crash / resume controls
+      EpicNoteReview.tsx       # note preview + publish button
+scripts/
+  run-tests.ts                 # isolated test runner (mcp/agent/chaos/all)
+  verify-workflows.ts          # full test suite (protocol, API, recovery, human actions)
+  test-browser-journey.ts      # end-to-end Seema→Reema workflow test (12 checks)
+  test-writeback.ts            # EpicWriteBackService tests (8 checks)
+  test-handoff-integration.ts  # FieldAuthority + draft/acknowledge/finalize tests
+  test-integration-recovery.ts # chaos + process-restart recovery tests
+  test-epic-reads.ts           # Epic FHIR R4 canonical mapping tests
+  test-epic-oauth.ts           # Epic OAuth token exchange tests
+  verify-epic-workflow.ts      # full Epic workspace sync + MCP workflow
+  verify-gemini-live.ts        # live Gemini LLM integration test
+  connect-epic.ts              # Epic workspace setup script
+  probe-epic.ts                # Epic FHIR scope probe
+  publish-approved-epic-note.ts # manual Epic note write (explicit only)
+  verify-deployment.ts         # deployment smoke tests
+  backup.ts, smoke.ts, preflight.ts, restart-worker.ts
+deploy/
+  ARCHITECTURE.md              # topology, tradeoffs, latency notes
+  VERIFICATION.md              # deployment verification checklist
+  epic-live-report.json        # evidence of live Epic reads
+  epic-workflow-live-report.json
+  epic-write-report.json       # evidence of HTTP 403 on write attempt
+  epic-note-preview.json/md    # exact note that was attempted
+  Caddyfile                    # HTTPS reverse proxy config
+data/
+  shiftweave.db                # main SQLite database
+  epic-demo-*.db               # fresh Epic demo database (post-sync)
+  incoming/                    # fixture template
+backups/                       # SQLite backup files
+keys/
+  private_key.pem              # Epic RS384 private key (never committed)
+```
 
 ---
 
-## Frontend (`client/src/`)
+## 4. Database Schema (11 Tables + 2 Epic Tables)
 
-### Build setup
-- Vite + React + TypeScript.
-- `vite.config.ts` proxies `/api`, `/health`, `/mcp` to `localhost:3000` in dev.
-- Production build goes to `client/dist/` and is served by Express.
+### Core tables
+1. **nurses** — id, badge_number, full_name, email, department, role
+2. **shifts** — id, unit_id, shift_type (DAY/NIGHT/ROTATING), start_time, end_time, status (ACTIVE/HANDOFF_IN_PROGRESS/…)
+3. **patients** — id, mrn, full_name, room_number, bed_number, admission_date, acuity_level (nullable), allergies, primary_diagnosis
+4. **tasks** — id, patient_id, title, description, category (VITAL/MEDICATION_CHECK/LAB_DRAW/WOUND_CARE/MOBILITY/CONSULT/DISCHARGE_PREP), status (PENDING/IN_PROGRESS/COMPLETED/CANCELLED/FLAGGED_CONFLICT), priority (STAT/URGENT/ROUTINE), scheduled_time, completed_time, source_system
+5. **task_assignments** — id, task_id, nurse_id, shift_id, transfer_status (ACTIVE/CARRIED_FORWARD/TRANSFERRED/UNASSIGNED)
+6. **task_events** — id, task_id, event_type, previous_value, new_value, source, actor_id, idempotency_key, metadata
+7. **conflicts** — id, task_id, conflict_type (STATUS_MISMATCH/DUPLICATE_ORDER/STALE_DATA/UNASSIGNED_CARRIED_FORWARD), system_a_name/val, system_b_name/val, status (UNRESOLVED/VERIFIED_RESOLVED/DISMISSED), resolution_note, resolved_by, resolved_at
+8. **handoffs** — id, shift_id, outgoing_nurse_id, incoming_nurse_id, status (DRAFT/UNDER_REVIEW/ACKNOWLEDGED/FINALIZED), summary_markdown, data_snapshot (JSON), unresolved_conflicts_count, external_sync_status (NOT_REQUESTED/PENDING/SYNCED/FAILED/UNCERTAIN), external_resource_id, external_sync_error, external_synced_at, external_sync_payload
+9. **workflow_runs** — id, workflow_type (GENERATE_HANDOFF/RECOVER_INTERRUPTED_SHIFT/VERIFY_CONFLICTS), initiated_by, status (INITIATED/IN_PROGRESS/INTERRUPTED/COMPLETED/FAILED), error_message
+10. **workflow_checkpoints** — id, workflow_run_id, step_index, step_name, state_payload (JSON), idempotency_key (UNIQUE)
+11. **audit_log** — id, actor_type (NURSE/AGENT/MCP_SERVER/SYSTEM), actor_id, action, target_resource, outcome (SUCCESS/FAILURE/RECOVERED), details, latency_ms
 
-### `App.tsx`
-Minimal — just renders `<VoiceWorkspace />`.
+### Additive tables
+- **operation_receipts** — idempotency_key (PK), operation, request_json, response_json, created_at
+- **epic_patient_snapshots** — patient_id (FK), epic_patient_id, endpoint, snapshot_json, retrieved_at, sync_status, last_error
+- **epic_snapshot_versions** — id, patient_id, snapshot_json, retrieved_at (versioned history)
 
-### `main.tsx`
-Bootstraps React into `#app` div.
-
-### `api.ts`
-All REST calls to the backend. Key exports:
-- `fetchTasks()`, `fetchConflicts()`, `fetchHandoffs()`, `fetchExecutionTrace()`, `fetchHealth()` — GET calls.
-- `resolveConflict()`, `acknowledgeTask()`, `finalizeHandoff()` — mutation calls with per-action retry key management.
-- `sendChatMessage()` — posts to `/api/chat` with workflow run ID from localStorage without hardcoding a shift ID, allowing server-side dynamic shift resolution from the nurse's active unit.
-- `triggerChaos(action)` — `crash` or `recover` via `/api/chaos/simulate`.
-- `switchProvider()` — calls `/api/provider/switch`.
-- Retry keys are stored in a `Map<string, string>` and cleared on success. On failure, the same key is reused for safe retry.
-
-### `voice-api.ts`
-Voice session calls: `readVoiceDisplay()` (GET `/api/voice/display`), `sendVoiceTurn()` (POST `/api/voice/turn`). Saves the last uncertain request locally for "retry last request" support.
-
-### `voice-types.ts`
-`VoiceDisplay` and `VoiceTask` interfaces — the full state shape returned by `GET /api/voice/display`.
-
-### `types.ts`
-Frontend type definitions: `ClinicalTask`, `ConflictItem`, `AuditLogItem`, `HandoffItem`, `ProviderHealth`, `ChatMessage`.
-
-### `useVoiceConversation.ts`
-React hook wrapping Web Speech API (`SpeechRecognition` + `speechSynthesis`). Handles: recognition start/stop, synthesis playback, microphone suspension during responses, error handling, listening restart.
-
-### Components
-
-**`VoiceWorkspace.tsx`** — Main page component. Two tabs:
-1. `Clinical Shift Workspace`: shows nurse identity, current speech, task cards, conflict cards, handoff cards, pending confirmation drawer, quick-action prompt chips (10-step demo walkthrough), and direct action buttons on cards.
-2. `Observable MCP Telemetry & Chaos Recovery`: shows `ExecutionTracePanel` and `ChaosControlBar`.
-Separated background polling: clinical display polls at 2.5s (guarded by `!busyRef.current` to prevent re-render jitter during active voice turns), while execution trace telemetry polls at 5.0s. Integrates `useVoiceConversation` for browser speech.
-
-**`AlexaVoiceSim.tsx`** — Legacy chat bubble component (chat + voice). Shows message history, sample prompts, microphone toggle. Used by the older `/api/chat` orchestrator path.
-
-**`ExecutionTracePanel.tsx`** — Lists audit log entries from `/api/execution-trace`. Shows actor, action, outcome, latency, timestamp.
-
-**`ChaosControlBar.tsx`** — Two buttons: "Simulate Wi-Fi Drop / Crash" and "Resume Saved Workflow". Calls `triggerChaos('crash')` and `triggerChaos('recover')` respectively.
-
-**`ConflictReviewDrawer.tsx`** — Drawer for resolving a discrepancy. Requires a note and a final status selection before enabling confirm.
-
-**`TaskBoard.tsx`** — Legacy kanban board showing tasks by status column.
-
-**`ShiftHeader.tsx`** — Legacy header showing shift info and provider health.
+### Key migration notes
+- `patients.acuity_level` was made nullable via safe table-rename migration
+- `handoffs` external sync columns added via safe `ALTER TABLE … ADD COLUMN` (ignored if already exist)
+- Schema initializes via `initializeDatabase()` called on server startup
 
 ---
 
-## Scripts (`scripts/`)
+## 5. MCP Tools (13 registered)
 
-**`run-tests.ts`** — Test runner. Creates a temp directory with a fresh `test.db`, sets `PORT=0`, `LLM_PROVIDER=mock`, spawns `verify-workflows.ts` as a child process. Cleans up the temp DB on exit. Never touches `data/shiftweave.db`.
+All tools run on `POST /mcp` with Streamable HTTP, session-isolated factory pattern, minimum protocol version `2025-11-25`.
 
-**`verify-workflows.ts`** — Main test suite (73 checks). Covers: MCP protocol handshake, all 9 core tools, idempotency/retry deduplication, conflict resolution, custody acceptance, handoff finalization, source reconciliation, Bedrock/Gemini message format conversion, process-exit recovery (kills worker, starts fresh orchestrator, verifies checkpoint restoration). Also runs 23 voice checks.
+| # | Tool Name | Purpose |
+|---|---|---|
+| 1 | `get_assigned_tasks` | Get nurse's tasks for a shift |
+| 2 | `get_task_details` | Full task + patient + conflict detail |
+| 3 | `get_task_changes` | Recent events since a timestamp |
+| 4 | `get_handoff_context` | Full handoff context (tasks, conflicts, field authority matrix, Epic narrative) |
+| 5 | `create_handoff_draft` | Persist a handoff draft; proposes carry-forward, does NOT transfer custody |
+| 6 | `get_workflow_checkpoint` | Read latest checkpoint for a workflow run |
+| 7 | `save_workflow_checkpoint` | Commit checkpoint with idempotency |
+| 8 | `resume_workflow` | Reconcile and resume an interrupted workflow |
+| 9 | `acknowledge_task` | Human-confirmed: ACCEPT_HANDOFF, FLAG_FOR_SUPERVISOR |
+| 10 | `voice_turn` | Local demo voice state machine turn |
+| 11 | `get_voice_display` | Read current voice session display state |
+| 12 | `preview_epic_handoff_note` | Preview finalized note with review hash |
+| 13 | `publish_reviewed_handoff_note` | Publish human-reviewed note to FHIR EHR (gated by EPIC_WRITES_ENABLED) |
+| + | `get_epic_patient_context` | Read allowlisted Epic patient context |
+| + | `sync_epic_workspace` | Fetch Epic patients into durable source snapshots |
 
-**`verify-voice.ts`** — Voice-specific test suite (23 checks): identity selection, ambiguity, scoped records, retries, confirmation lifecycle, state changes, custody, sign-off, session clearing.
-
-**`test-epic-oauth.ts`** — 5 checks: JWT signing, token exchange against live Epic sandbox, first authorized read (Camila Lopez).
-
-**`test-epic-reads.ts`** — 8 checks: Patient, Encounter, Condition, Allergy, MedicationRequest, DocumentReference mapping via `EpicMappingService`.
-
-**`test-handoff-integration.ts`** — 9 checks: `FieldAuthorityService` boundaries, integrated SBAR narrative generation with Epic context.
-
-**`test-integration-recovery.ts`** — 7 checks: token refresh on 401, permission denial handling, timeout with AbortSignal, idempotent ingestion deduplication, chaos interruption recovery with checkpoint reconciliation.
-
-**`test-browser-journey.ts`** — 12 checks: full Seema→draft→Reema→accept→finalize journey via HTTP, including 409 stale revision, clinical boundary refusal, idempotent turn replay.
-
-**`test-writeback.ts`** — 8 checks: `EpicWriteBackService` payload construction, safety gate enforcement, sync state machine, remote reconciliation.
-
-**`restart-worker.ts`** — Used in process-exit recovery test. Spawns an orchestrator worker, kills it mid-run, starts a fresh one to verify checkpoint-based recovery.
-
-**`test-agent.ts`, `test-chaos-recovery.ts`, `test-mcp-client.ts`, `test-providers.ts`, `test-recovery.ts`** — Legacy single-line stubs that delegate to `run-tests.ts`.
-
----
-
-## Data (`data/`)
-
-**`shiftweave.db`** — Live SQLite database. WAL mode (`.db-wal`, `.db-shm` files normal). Contains synthetic fixture: 2 nurses (Seema, Reema), 1 shift, 2 patients, 2 tasks, task assignments, and 1 seeded `STATUS_MISMATCH` conflict (Vancomycin order discrepancy in Room 305).
-
-**`incoming/`** — Drop zone for JSON fixture files.
-- `sample_template.json` — Template showing the expected JSON shape for importing nurses, shifts, patients, tasks, assignments, and conflicts.
-- `README.md` — Brief instructions for the data import format.
+**Session management:** Each `initialize` request creates a new `(McpServer, StreamableHTTPServerTransport)` pair stored in a `Map<sessionId, SessionRecord>`. Sessions expire after 30 minutes idle. GET `/mcp` handles SSE streams; DELETE `/mcp` terminates session.
 
 ---
 
-## Configuration Files
+## 6. Agent / Orchestrator Architecture
 
-**`package.json`** — Node.js ESM project. Key scripts:
-- `dev` — `tsx watch src/server.ts` (hot reload)
-- `db:init` — Initialize tables
-- `import:data` — Ingest JSON fixtures
-- `test` / `test:mcp` / `test:agent` / `test:chaos` — Run isolated test suite
-- `typecheck` — `tsc --noEmit`
-- `build:client` — Vite build
-- `test:epic*`, `test:handoff`, `test:recovery`, `test:browser`, `test:writeback` — Integration test scripts
+### ShiftWeaveOrchestrator (`src/agent/orchestrator.ts`)
 
-Key deps: `@modelcontextprotocol/sdk ^1.32.1`, `better-sqlite3 ^13.0.3`, `express ^5.3.0`, `zod ^4.6.7`, `@aws-sdk/client-bedrock-runtime ^3.x`, `@google/generative-ai ^0.24.1`.
+The core agentic loop:
+1. **Initialize** — MCP session + tool discovery. If `readOnly=true`, filters to read-only tools.
+2. **processUtterance** — multi-turn loop (max 12 iterations, 55s budget):
+   - Checks `busyRuns` set (per-run concurrency guard)
+   - Checks `operation_receipts` for exact HTTP retry replay
+   - Detects resume intent (`/resume|recover|continue/`) → calls `resume_workflow` MCP tool
+   - Otherwise validates nurse identity, shift ownership, and workflow ownership
+   - Iterates: LLM decides → intent persisted → tool called → result persisted → repeat
+   - Final speech triggers receipt commit + `workflow_checkpoints` completion
+3. **Recovery path:** If `sourceVersion` changed since checkpoint, stale read results are stripped and mutation-committed results are preserved. `avoidedDuplicateStepsCount` counts reused results.
+4. **Constraint enforcement:** Only `create_handoff_draft` + read tools allowed from agent. All human-confirmation actions go through dashboard controls, not agent.
 
-**`tsconfig.json`** — TypeScript config. ESM (`"module": "NodeNext"`), `strict: true`, target ES2022.
+### LLM Providers (`src/agent/llm-provider.ts`)
 
-**`.env` / `.env.example`** — Environment config. Key vars:
-- `PORT=3000`
-- `LLM_PROVIDER=mock` (or `gemini` / `bedrock`)
-- `SQLITE_DB_PATH=./data/shiftweave.db`
-- `INCOMING_DATA_DIR=./data/incoming`
-- `GEMINI_API_KEY` / `GEMINI_MODEL`
-- `AWS_REGION` / `BEDROCK_MODEL_ID`
-- `EPIC_CLIENT_ID` / `EPIC_PRIVATE_KEY_PATH`
+- **MockAutonomousAgent** (default, `mock-autonomous`): Deterministic rule-based agent. Calls tools in order: get_assigned_tasks → get_handoff_context → create_handoff_draft. Refuses clinical actions. Renders facts from actual tool results only.
+- **GeminiLLMProvider** (`gemini`): Uses `@google/generative-ai`, native function declarations. Strips `$schema`/`$id` from MCP JSON Schema via `toGeminiToolSchema()`. Parallel tool calls rejected.
+- **BedrockLLMProvider** (`bedrock`): Uses `@aws-sdk/client-bedrock-runtime` ConverseCommand. Tool-use IDs and tool-result messages preserved via `toBedrockMessages()`. SDK credential chain (no hardcoded creds). 30s timeout per call. Parallel tool calls rejected.
+- **Important:** If cloud LLM returns `finalSpeech` directly (not through mock-autonomous), it is discarded and `MockAutonomousAgent` re-runs the decision. Clinical prose from cloud models is never displayed as verified facts.
 
-**`client/package.json`** — React + TypeScript client. Uses Vite, React 18, lucide-react icons.
+### MCPClientBridge (`src/agent/mcp-client-bridge.ts`)
 
-**`client/vite.config.ts`** — Vite config with proxy rules for `/api`, `/health`, `/mcp` → `localhost:3000`.
-
-**`.gitignore`** — Ignores `node_modules`, `dist`, `data/*.db*`, `.env`, `keys/`.
-
----
-
-## Documentation Files
-
-**`README.md`** — Quick start guide, feature summary, demo walkthrough, test/verify commands, optional model setup, and scope/limitations.
-
-**`review.md`** — Pre-demo production review covering latency optimizations, UI polling separation, session map TTL, error handling ergonomics, execution trace sizing, dynamic shift resolution, and startup receipt hygiene.
-
-**`AGENTS.md`** — Mandatory rules for AI coding agents: MCP spec compliance, multi-turn state requirement, idempotency/checkpointing, clinical safety boundary, free-local default, no silent fallbacks.
-
-**`important.md`** — Hackathon track requirements, judging criteria (idea quality, technical, design, impact), bonus friction log rule.
-
-**`goal.md`** — Architecture boundary explanation (Alexa+ is the client, ShiftWeave is the MCP server), winning strategy analysis, judging criterion breakdown, demo narrative, Epic FHIR integration roadmap with ordered milestones.
-
-**`plan.md`** — Phase-by-phase implementation plan (Phase 0–8), timeline matrix, Epic registration milestone record.
-
-**`IMPLEMENTATION_STATUS.md`** — Ground truth document. What is actually verified to work, what the runtime contracts are, and what remains unimplemented (live Epic write-back, production auth, browser audio, arbitrary distributed failure recovery).
-
-**`remaining.md`** — Post-voice-workspace handover document. Lists completed work per area with file references, verification evidence (73 checks passed), and remaining work in priority order.
-
-**`memory.md`** — Running project memory log. Records each major implementation event with verification results and next steps.
-
-**`architecture.md`** — System architecture spec with layered diagram: Client → Agent → MCP → Domain Engine → SQLite → EHR Integration.
-
-**`mcp.md`** — Deep dive on MCP protocol usage, Streamable HTTP session lifecycle, tool schema design, and UI execution trace architecture.
-
-**`schema.md`** / **`plain_schema.md`** / **`field_schema.md`** — Database schema documentation at varying levels of detail.
-
-**`incomingapikey.md`** — Authoritative guide for Epic FHIR R4 API selection. Written in Hindi/English. Clarifies Incoming vs Outgoing API direction, lists all relevant R4 endpoints for nursing (Patient, Encounter, Condition, AllergyIntolerance, MedicationRequest, DocumentReference, etc.) with per-API caveats. Supersedes `apicall.md` and `callapi.md`.
-
-**`apicall.md`** / **`callapi.md`** — Older Epic API reference docs. Superseded by `incomingapikey.md`.
-
-**`FRICTION_LOG.md`** — Developer experience log documenting real friction encountered: MCP multi-session transport lifecycle, SSE parsing edge cases, Express 5 router changes, Bedrock tool-use ID preservation, SQLite WAL concurrency. Submitted for the 10% bonus.
-
-**`how_it_works.md`** — End-to-end flow walkthrough from nurse utterance to MCP tool execution to response.
+HTTP JSON-RPC 2.0 client. Handles:
+- SSE (`text/event-stream`) response parsing alongside plain JSON
+- Session ID header management (`mcp-session-id`, `MCP-Protocol-Version: 2025-11-25`)
+- 30s default timeout, 95s for `voice_turn` and `sync_epic_workspace`
+- `close()` sends DELETE to server, tolerates 404
 
 ---
 
-## `.agents/` (Agent Skill)
+## 7. Core Services
 
-**`.agents/skills/hackathon-guidelines/SKILL.md`** — Loaded by AI coding agents at task start. References `important.md`, mandates reading `incomingapikey.md` for Epic API selection, and enforces checks at each implementation step (transport, durable state, idempotency, clinical boundaries, free local default, honest outcomes).
+### MutationService (`src/services/mutation.service.ts`)
+**Every write goes through this.** Single method `execute(operation, key, request, actorId, action)`:
+- Runs in `db.transaction().immediate()`
+- Checks `operation_receipts` for idempotency; returns prior response if key matches
+- Rejects key reuse with different operation/request
+- On new request: runs `action()`, saves checkpoint, completes run, writes receipt, writes audit log
+- All in one atomic SQLite transaction
 
-**`.agents/skills/hackathon-guidelines/references/`** — Project context references for agent use.
+### CheckpointService (`src/services/checkpoint.service.ts`)
+- `saveCheckpoint(runId, stepIndex, stepName, statePayload, idempotencyKey)` — upserts workflow_run + inserts checkpoint
+- `getLatestCheckpoint(runId)` — highest stepIndex for the run
+- `markInterrupted(runId, errorMessage)` — sets status INTERRUPTED
+- `completeWorkflowRun(runId)` — sets status COMPLETED
+- Checkpoint `statePayload` contains: `messages`, `pendingTool`, `turnId`, `toolIndex`, `context`, `requestKey`, `requestJson`, `sourceVersion`, `finalSpeech`
+
+### RecoveryService (`src/services/recovery.service.ts`)
+- `reconcileAndResume(workflowRunId, idempotencyKey)` returns `RecoveryPlan`
+- Inspects all checkpoints to find committed RESULT:* steps
+- Detects pending mutation key in `operation_receipts` (was it already committed?)
+- Detects source version change (`sourceVersion` vs `sourceVersion()`)
+- Returns: `ALREADY_COMPLETED`, `RECOVERED`, or `CANNOT_RECOVER`
+- `reconciledState.sourceChanged` tells orchestrator to strip stale reads
+- `reconciledState.pendingMutationCommitted` tells orchestrator whether pending tool already ran
+
+### HandoffService (`src/services/handoff.service.ts`)
+- `createDraft(args)` — validates nurses, tasks, carry-forward candidates; builds SBAR summary; inserts handoff row; returns `{handoff_id, status:'DRAFT', ...}`
+  - If `epic_clinical_context` provided → `FieldAuthorityService.buildIntegratedHandoffNarrative()`
+  - Always appends Epic source narrative via `EpicWorkflowService.narrative()`
+  - Snapshot includes `epicRecords`, `tasks`, `carriedForwardIds`, optionally `epicClinicalContext` + `fieldAuthority`
+- `acknowledge(args)` — ACCEPT_HANDOFF: transfers task_assignment from outgoing to incoming nurse, sets handoff to UNDER_REVIEW; FLAG_FOR_SUPERVISOR: adds task_event with note
+- `finalize(handoffId, nurseId, key, humanConfirmed)` — verifies no unresolved conflicts, verifies incoming nurse accepted all carry-forward tasks (ACTIVE assignment), sets handoff FINALIZED
+
+### ConflictService (`src/services/conflict.service.ts`)
+- `getUnresolvedConflicts()` — joins conflicts + tasks + patients
+- `getConflictByTaskId(taskId)` — latest UNRESOLVED conflict for a task
+- `flagConflict(...)` — inserts conflict record, sets task status to FLAGGED_CONFLICT
+- `resolveConflict(conflictId, nurseId, finalStatus, note, key)` — requires non-empty note; sets conflict VERIFIED_RESOLVED; updates task status; inserts task_event
+
+### VoiceService (`src/services/voice.service.ts`)
+Full voice state machine. Key points:
+- State: `{revision, nurse, shift, pending, selectedTaskId, selectedHandoffId, focus, messages, speech}`
+- Stored in `workflow_checkpoints` under runId `voice:{session_id}`
+- `turn(input)` — intent classification via regex; MutationService for idempotency
+- Confirmation flow: `stage(state, pending)` → expired/stale-source check → `confirm` executes transaction
+- Actions handled: identify, sign-out, task summary, room/patient detail, conflict review (multi-turn with RESOLVE), escalation, prepare handoff, accept custody, finalize, review handoff
+- **Not authentication** — name matching is demo identity selection only
+- `saveAssistantTurn(input, speech)` — used by voice-agent service when LLM generates speech externally
+
+### EpicWorkflowService (`src/services/epic-workflow.service.ts`)
+- `sync(input)` — gated behind `EPIC_READS_ENABLED=true`; iterates `EPIC_TEST_PATIENT_IDS`; for each: calls `fetchEpicWorkflowSnapshot`, upserts patients table, inserts review task + assignment, saves snapshots; atomic via MutationService; full idempotency
+- `recordsForPatients(ids)` — reads `epic_patient_snapshots` + joins `patients`
+- `recordsForNurse(nurseId, shiftId)` — finds assigned patient IDs, delegates to `recordsForPatients`
+- `narrative(records)` — generates text block with source labels, per-section counts, medication orders (explicitly labeled as orders, not administrations), warnings
+
+### FieldAuthorityService (`src/services/field-authority.service.ts`)
+- `FIELD_AUTHORITY_MATRIX` — 8 fields with authoritative system and reconciliation rule
+  - Epic authoritative: patient.demographics, primaryDiagnosis, allergies, task.medicationOrder
+  - ShiftWeave authoritative: task.nursingCustody, task.workflowStatus, task.acknowledgementAndEvents, handoff.custodyTransfer
+- `namespaceId(system, resourceType, rawId)` → e.g. `epic:Patient:erXuFYUfucBZaryVksYEcMg3`
+- `buildIntegratedHandoffNarrative(params)` — SBAR sections: Situation, Clinical Context (Epic FHIR), Bedside Workflow State (ShiftWeave), Assessment & Discrepancies, Workflow Follow-up
+
+### EpicWriteBackService (`src/services/epic-writeback.service.ts`)
+- `publishReviewedNote(input)` — only handles `mock` and `simulate_uncertain` modes internally; delegates `live` to `EpicNoteService.publish()`
+- Gates: humanConfirmed=true, unresolved_conflicts_count=0, active custody (ACTIVE task assignment)
+- Already SYNCED: returns cached result
+- `reconcileRemoteNote()` — checks in-memory mock store for prior commit (prevents duplicate on retry)
+- `simulate_uncertain`: sets UNCERTAIN, pre-commits to mock store (tests reconciliation flow)
+- `mock`: generates `doc_mock_*` ID, commits to mock store + DB
+- `buildDocumentReferencePayload()` — US Core FHIR R4 DocumentReference (LOINC 11506-3, base64 text/plain)
+
+### EpicOAuthService (`src/providers/epic-oauth.service.ts`)
+- RFC 7523 RS384 client assertion JWT (`alg:RS384, typ:JWT, kid:keyId`)
+- Token exchange with Epic (`client_credentials` grant)
+- In-memory token cache with 60s expiry buffer; single in-flight token request (deduplication via Promise)
+- Auto-refresh on HTTP 401 from FHIR calls
+- `authorizedFetch<T>(resourcePath, options)` — injects Bearer token, handles 401 retry, surfaces errors explicitly
+- `resolveResourceUrl()` — validates resource path stays within configured FHIR base URL (SSRF protection)
+
+### EpicMappingService (`src/providers/epic-mapping.service.ts`)
+- `mapToCanonicalPatient(epicPatient, encounters, conditions, allergies)` → `Patient`
+- `mapMedicationRequestToTask(medReq, patientName, roomNumber)` → `Task` (category: MEDICATION_CHECK, source_system: EPIC_FHIR_R4)
+- `getPatientClinicalContext(patientId)` → `EpicClinicalContext` (parallel fetch: Patient, Encounter, Condition, AllergyIntolerance, MedicationRequest, DocumentReference; rejects paginated results; rejects non-Bundle responses)
+- `resolveDocumentContent(docRef)` — decodes inline base64 or follows Binary URL reference
 
 ---
 
-## Key Design Decisions
+## 8. REST API Endpoints
 
-**Server-per-session MCP factory**: `createShiftWeaveServer()` is called per HTTP request rather than once. This avoids the `McpServer` "already connected" error when multiple browser tabs or test clients connect simultaneously.
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/mcp` | Primary MCP Streamable HTTP endpoint |
+| GET | `/mcp` | SSE stream for active session |
+| DELETE | `/mcp` | Terminate MCP session |
+| GET | `/health` | Server health + provider info |
+| GET | `/readyz` | SQLite probe for load balancer |
+| POST | `/api/voice` | Voice turn (bridges through MCP) |
+| GET | `/api/voice/:sessionId` | Read voice session display |
+| GET | `/api/execution-trace` | Recent audit log (max 500) |
+| GET | `/api/conflicts` | Unresolved conflicts |
+| POST | `/api/conflicts/:id/resolve` | Resolve conflict (requires human_confirmed:true) |
+| POST | `/api/provider/switch` | Switch active provider (live-fhir-api currently throws) |
+| GET | `/api/providers` | List available providers |
+| GET | `/api/tasks` | All tasks with patient/nurse info |
+| GET | `/api/handoffs` | All handoffs |
+| POST | `/api/handoffs/:id/finalize` | Finalize handoff |
+| GET | `/api/handoffs/:id/epic-note-preview` | Preview Epic note |
+| POST | `/api/handoffs/:id/publish-note` | Publish Epic note (gated) |
+| POST | `/api/tasks/:id/acknowledge` | Acknowledge task (human_confirmed:true) |
+| POST | `/api/chat` | Chat/utterance processing via orchestrator |
+| GET | `/api/conversations/:id` | Conversation history |
+| POST | `/api/chaos/simulate` | Inject chaos or recover |
 
-**MutationService as the single write path**: Every state-changing operation goes through `MutationService.execute()`. This guarantees: idempotency check, atomic commit, receipt storage, checkpoint, audit log — all in one SQLite `IMMEDIATE` transaction.
+---
 
-**Revision-based voice state**: `VoiceDisplay` has a `revision` counter. Voice turn requests must send `expected_revision`; mismatches return 409. This prevents two concurrent tabs from diverging state silently.
+## 9. Provider Architecture
 
-**Clinical boundary is hard-coded, not configurable**: `MockAutonomousAgent` and the safety string in `llm-provider.ts` both refuse diagnosis, treatment, medication administration, and autonomous conflict resolution. Conflicts require human review with an explicit note and final status.
+`IEHRProvider` interface defines: `getPatientsByUnit`, `getTasksForNurse`, `getTaskDetails`, `getRecentEvents`, `updateTaskStatus`, optional `syncFromExternalFHIR`, `writeHandoffDocument`.
 
-**External write-back is gated**: `EpicWriteBackService` cannot be triggered unless: `human_confirmed: true`, zero unresolved conflicts, custody accepted. Even then, it is blocked in the sandbox by Epic's read-only permissions for non-production clients.
+**SQLiteCacheProvider** (default, `sqlite-edge-cache`): reads from local SQLite. Always selected.  
+**LiveFHIRProvider** (`live-fhir-api`): `setActiveProvider('live-fhir-api')` throws an explicit error — not yet configured. Selecting it does not silently fall back to mock.
 
-**Tests never touch the real DB**: `run-tests.ts` creates a temp directory with a fresh `test.db` and sets `SQLITE_DB_PATH` for the child process. Test cleanup is automatic.
+Provider singleton managed by `src/providers/index.ts`. `getActiveProvider()` always returns the current instance.
 
-**Direct in-process voice dispatch**: `POST /api/voice` executes `VoiceService.turn()` directly without self-connecting through local HTTP MCP handshakes, cutting 80–150ms of latency per utterance while keeping the external `voice_turn` MCP tool available over `/mcp`.
+---
 
-**Dynamic shift scoping over static assumptions**: Both chat and voice workflows resolve the active shift dynamically from the nurse's assigned unit rather than relying on hardcoded shift IDs.
+## 10. Voice Workspace
 
-**Durable receipt pruning**: `operation_receipts` older than 3 days are purged on server startup to maintain long-term query performance and prevent unbounded storage growth.
+**Browser simulation of Alexa+ voice/chat:**
+- `VoiceWorkspace.tsx` — main panel with voice input, display cards, task/conflict/handoff views
+- `AlexaVoiceSim.tsx` — speech recognition (Web Speech API) + synthesis (SpeechSynthesis)
+- `useVoiceConversation.ts` — React hook managing session_id, revision, idempotency key
+- `voice-agent.service.ts` — `runVoiceTurn(input, mcpEndpoint)`: if utterance starts with `ask ` or `alexa ask`, routes to orchestrator (read-only mode); otherwise routes to `VoiceService.turn()`
+
+**Voice state machine flow:**
+1. Nurse says "I am Seema" → name matched → shift loaded → summary spoken
+2. "Explain room 305" → task detail read from DB
+3. "Resolve discrepancy in room 305 because in progress" → RESOLVE pending staged, prompt spoken
+4. "Confirm" → `ConflictService.resolveConflict()` committed
+5. "Prepare my handoff for Reema" → draft created, custody NOT transferred
+6. "I am Reema" → identity switch
+7. "Accept all handoff tasks" → ACCEPT pending staged
+8. "Confirm" → `HandoffService.acknowledge()` transfers task_assignment
+9. "Finalize handoff" + "Confirm" → `HandoffService.finalize()` (checks: no conflicts, accepted custody)
+10. "End my session" → state cleared
+
+---
+
+## 11. Epic Integration Status
+
+**Non-production credentials registered:**
+- Client ID: `ccc8c11f-4af0-4caf-b981-848012aab1a2`
+- JWKS hosted: `https://agrasenrai.github.io/epic-sandbox-jwks/jwks.json`
+- Key algorithm: RS384, RSA-2048
+- SMART v2 scopes: `system/DocumentReference.r`, `system/DocumentReference.s` (read/search only)
+- Sandbox: `https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4`
+
+**Verified live (21 Oct 2026):**
+- OAuth token exchange: ✅
+- Patient read (`erXuFYUfucBZaryVksYEcMg3` — Camila Maria Lopez): ✅
+- Encounter (10 records), Condition (7), AllergyIntolerance (1), MedicationRequest (1): ✅
+- MedicationAdministration/DocumentReference: returned OperationOutcome warning (no records — not failure)
+- Practitioner.Read: HTTP 403
+- DocumentReference.Create: HTTP 403 (write scopes not granted)
+
+**Current Epic database:** `data/epic-demo-1792585651290.db` (fresh, post-sync, integrity verified)
+
+**Epic reads gated:** `EPIC_READS_ENABLED=true` required in `.env`  
+**Epic writes disabled:** `EPIC_WRITES_ENABLED=true` required, currently not set
+
+---
+
+## 12. Idempotency & Recovery Architecture
+
+Every mutation flows through `MutationService.execute()` which provides:
+1. **Read receipt** — if key exists with matching op+request, return prior response
+2. **Execute action** — run domain write
+3. **Write receipt** — save `operation_receipts` row
+4. **Checkpoint** — save `workflow_checkpoints` row
+5. **Audit** — save `audit_log` row
+6. All in one `db.transaction().immediate()` call
+
+**Chat turn idempotency:** `requestKey` (caller-supplied `idempotency_key`) is stored in checkpoint. Exact HTTP retry returns the original `OrchestrationResult` from `operation_receipts`. Key reuse with different request throws.
+
+**Source version tracking:** `sourceVersion()` fingerprints the current DB state. If a checkpoint's `sourceVersion` differs from current on resume, stale read results are dropped and only committed mutation results are retained.
+
+**Process-exit recovery:** The test suite (`test:chaos`) spawns a worker process, commits a draft, kills the process before checkpoint, then starts a fresh process and calls `resume_workflow`. The fresh process reads `workflow_checkpoints` and `operation_receipts` from SQLite to reconstruct state.
+
+---
+
+## 13. Conflict/Custody Human Gate Invariants
+
+- **No custody transfer from draft creation alone.** `create_handoff_draft` only writes a DRAFT handoff row.
+- **ACCEPT_HANDOFF requires `handoff_id`** and incoming nurse must be `incoming_nurse_id`.
+- **Task must be a carry-forward candidate** (in `data_snapshot.carriedForwardIds`) with no unresolved conflict.
+- **Finalize requires:** all carry-forward tasks accepted by incoming nurse (ACTIVE assignment in correct shift), zero UNRESOLVED conflicts on all snapshot tasks.
+- **Conflict resolution requires:** `human_confirmed:true`, `finalStatus`, non-empty `resolutionNote`, valid `idempotency_key`.
+- **Agent cannot:** acknowledge tasks, resolve conflicts, finalize handoffs, publish notes — these all require explicit human action through dashboard endpoints or voice confirm flow.
+
+---
+
+## 14. Field Authority Matrix Summary
+
+| Field | Authoritative System | Rule |
+|---|---|---|
+| patient.demographics | Epic FHIR R4 | EHR authoritative; local reflects master on read |
+| patient.primaryDiagnosis | Epic FHIR R4 | EHR authoritative; agent never alters |
+| patient.allergies | Epic FHIR R4 | EHR authoritative; missing is surfaced explicitly |
+| task.medicationOrder | Epic FHIR R4 | Order parameters from EHR; bedside changes need physician orders |
+| task.nursingCustody | ShiftWeave | Local SQLite; EHR doesn't track bedside shift transfers |
+| task.workflowStatus | ShiftWeave | Bedside execution; divergence from EHR triggers human review |
+| task.acknowledgementAndEvents | ShiftWeave | Committed with idempotency; never overwritten by EHR reads |
+| handoff.custodyTransfer | ShiftWeave | Two-party human review; draft ≠ custody transfer |
+
+---
+
+## 15. Test Suite
+
+Run with `npm test` (uses isolated SQLite, isolated HTTP server):
+
+- **MCP protocol tests** (`test:mcp`): initialize, tool list, protocol version, session management
+- **Agent tests** (`test:agent`): chat turns, receipt replay, source reconciliation, LLM message adapters
+- **Chaos tests** (`test:chaos`): simulated interruption + recovery, worker process exit recovery
+- **Human action tests**: conflict resolution, custody acceptance, finalization invariants
+
+Additional targeted scripts:
+- `npm run test:epic` — OAuth token exchange (5 checks, requires Epic config)
+- `npm run test:epic-reads` — canonical FHIR mapping (8 checks)
+- `npm run test:handoff` — FieldAuthority + handoff integration (9 checks)
+- `npm run test:recovery` — chaos + reconciliation (7 checks)
+- `npm run test:browser` — full Seema→Reema voice journey (12 checks)
+- `npm run test:writeback` — EpicWriteBackService mock/uncertain/reconcile (8 checks)
+
+---
+
+## 16. Known Limitations & Boundaries
+
+- **No production nurse authentication.** Nurse IDs are demo context bindings.
+- **No live Epic write-back.** `EPIC_WRITES_ENABLED` not set; HTTP 403 was received on write attempt.
+- **Live FHIR provider disabled.** Selecting it throws explicit error.
+- **Two patients, two tasks** in synthetic fixture.
+- **No production hospital task mappings** (Episode Checklist, Community Resource Task APIs differ from generic task APIs).
+- **SQLite single-writer** — no multi-region, no NFS/EFS, one EC2 host architecture.
+- **MCP sessions invalidated on server restart** — workflow checkpoints survive in SQLite.
+- **No TTFT streaming** — LLM responses buffered; browser speech starts after complete response.
+- **Bedrock and Gemini not verified by automated tests** — only message construction and config errors are tested locally.
+
+---
+
+## 17. Deployment Notes
+
+- **Recommended:** EC2 with EBS-backed SQLite, Caddy HTTPS, optional Bedrock
+- **Caddy config:** `deploy/Caddyfile` — HTTPS reverse proxy with demo access gate
+- **Docker:** `Dockerfile` + `compose.yaml` present
+- **`runtime-config.ts`** controls: `host` (loopback by default), `allowedOrigins` (CORS), `demoAccess` middleware (token gate for deployed demo)
+- **Backups:** `npm run backup` → copies SQLite to `backups/` with timestamp prefix
+- **Preflight:** `npm run preflight` runs before `npm start` to verify environment
+- **Health endpoint:** `GET /readyz` for load balancer probe (SQLite `SELECT 1`)
+
+---
+
+## 18. Friction Log Key Points (for Judging)
+
+Seven documented friction items:
+1. MCP multi-session `Already connected to transport` → per-session factory + Map registry
+2. Streamable HTTP header `Accept: application/json, text/event-stream` requirement
+3. Express 5 `path-to-regexp` v8 wildcard `*` breakage → filter middleware
+4. ESM `verbatimModuleSyntax` + `import type` requirement for Express types
+5. MCP tool schema ↔ Bedrock Converse schema translation (`inputSchema.json` wrapping)
+6. Public FHIR sandbox latency (800-4500ms) + write restrictions → hybrid edge-cache architecture
+7. Epic JWKS hosting (GitHub Pages), SMART v2 scope selection, FHIR ID generation scheme choices
+
+Up to 10% bonus from friction log in Stage 1 downselection.

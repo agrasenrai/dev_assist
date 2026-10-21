@@ -147,11 +147,15 @@ export class BedrockLLMProvider implements ILLMProvider {
   providerId = 'aws-bedrock'; providerName = 'AWS Bedrock Converse (external)';
   private client?: import('@aws-sdk/client-bedrock-runtime').BedrockRuntimeClient;
   close() { this.client?.destroy(); }
-  constructor(private modelId = process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+  constructor(private modelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-sonnet-4-6',
     private region = process.env.AWS_REGION || 'us-east-1') {}
   async decideNextStep(messages: AgentMessage[], availableTools: MCPToolDefinition[], context?: Record<string, unknown>): Promise<AgentTurnResult> {
     const { BedrockRuntimeClient, ConverseCommand } = await import('@aws-sdk/client-bedrock-runtime');
-    // Use the SDK credential chain (including profiles/roles), rather than only environment credentials.
+    // SDK auto-detects AWS_BEARER_TOKEN_BEDROCK for API-key auth, falls back to IAM credential chain.
+    if (!this.client) {
+      const authMode = process.env.AWS_BEARER_TOKEN_BEDROCK ? 'bearer-token' : 'iam-credential-chain';
+      console.log(`[Bedrock] auth=${authMode} model=${this.modelId} region=${this.region}`);
+    }
     const client = this.client ||= new BedrockRuntimeClient({ region: this.region, maxAttempts: 1,
       requestHandler: { requestTimeout: 30000 } });
     const tools: Tool[] = availableTools.filter(t => !['acknowledge_task', 'resume_workflow', 'save_workflow_checkpoint', 'voice_turn', 'get_voice_display', 'publish_reviewed_handoff_note'].includes(t.name))
