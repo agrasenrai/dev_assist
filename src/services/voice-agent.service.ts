@@ -4,10 +4,14 @@ import { db } from '../db/connection.js';
 import { canonicalJson } from './canonical-json.js';
 import { AuditService } from './audit.service.js';
 import { MCPClientBridge } from '../agent/mcp-client-bridge.js';
+import { StaffAuthService } from './staff-auth.service.js';
+import { currentStaff, staffAuthRequired } from './staff-context.js';
 
 const busy = new Set<string>();
 /** Await remote calls outside SQLite transactions; commit the display only at the expected revision. */
 export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
+  // Authorize even an exact saved-response retry before reading its receipt.
+  if (staffAuthRequired()) StaffAuthService.bindVoiceSession(input.session_id);
   if (busy.has(input.session_id)) throw new Error('Voice session busy; retry the same request');
   busy.add(input.session_id);
   const start = Date.now();
@@ -70,7 +74,7 @@ export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
     } finally { await agent.close(); }
   } finally {
     busy.delete(input.session_id);
-    AuditService.log({ actorType: 'SYSTEM', actorId: 'voice-gateway', action: 'VOICE:TURN_FINISHED',
+    AuditService.log({ actorType: 'SYSTEM', actorId: currentStaff()?.id || 'voice-gateway', action: 'VOICE:TURN_FINISHED',
       targetResource: `voice:${input.session_id}`, outcome: succeeded ? 'SUCCESS' : 'FAILURE', latencyMs: Date.now() - start,
       details: { metric: 'server_turn_duration_ms', receiptCommitted: Boolean(db.prepare(
         'SELECT 1 FROM operation_receipts WHERE idempotency_key = ?').get(`voice-turn:${input.idempotency_key}`)) } });

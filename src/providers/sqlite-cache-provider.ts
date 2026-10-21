@@ -105,6 +105,11 @@ export class SQLiteCacheProvider implements IEHRProvider {
     idempotencyKey: string,
     note?: string
   ): Promise<{ success: boolean; committedVersion: string }> {
+    return this.updateLocalTaskStatus(taskId, newStatus, actorId, idempotencyKey, note);
+  }
+
+  /** Synchronous commit for callers already inside a voice-turn transaction. */
+  updateLocalTaskStatus(taskId: string, newStatus: TaskStatus, actorId: string, idempotencyKey: string, note?: string) {
     return MutationService.execute('UPDATE_LOCAL_TASK', idempotencyKey,
       { taskId, newStatus, actorId, note }, actorId, () => {
         const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as { status: string } | undefined;

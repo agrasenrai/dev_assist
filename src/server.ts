@@ -24,6 +24,10 @@ import { MCPClientBridge } from './agent/mcp-client-bridge.js';
 import { runVoiceTurn } from './services/voice-agent.service.js';
 import { readEpicContext } from './services/epic-context.service.js';
 import { EpicWorkflowService } from './services/epic-workflow.service.js';
+import { operationalDispatch } from './services/operational-dispatch.js';
+import { StaffAuthService } from './services/staff-auth.service.js';
+import { staffMiddleware, authorizeMcpTool } from './services/staff-http.js';
+import { currentStaff, staffAuthRequired } from './services/staff-context.js';
 
 const voiceInput = z.object({
   session_id: z.string().uuid(),
@@ -391,11 +395,11 @@ export function createShiftWeaveServer(): McpServer {
   );
 
   server.tool('voice_turn',
-    'Local synthetic-data voice workflow. Pass the human transcript verbatim, a stable display session UUID, ' +
-    'the latest display revision, and a retry UUID. Returns speech and matching display data. Name selection is not authentication. ' +
+    'Nursing voice workflow using the configured source profile. Pass the human transcript verbatim, a stable display session UUID, ' +
+    'the latest display revision, and a retry UUID. Returns speech and matching display data. Staff-auth mode binds identity to the signed-in account; legacy demo name selection is not authentication. ' +
     'Never invent a human confirmation. Read get_voice_display to restore a session.',
     voiceInput.shape, async args => ({ content: [{ type: 'text', text: JSON.stringify(await runVoiceTurn(args, localMcpEndpoint())) }] }));
-  server.tool('get_voice_display', 'Read the saved voice session and current nurse-scoped display. No login or live Epic access.',
+  server.tool('get_voice_display', 'Read the saved voice session and current nurse-scoped display, including available imported Epic snapshots. Staff-auth mode requires the owning account.',
     { session_id: z.string().uuid() }, async args => ({
       content: [{ type: 'text', text: JSON.stringify(VoiceService.read(args.session_id)) }]
     }));
@@ -439,6 +443,8 @@ export function createShiftWeaveServer(): McpServer {
     { nurse_id: z.string(), shift_id: z.string(), idempotency_key: z.string().min(1) }, async args => ({
       content: [{ type: 'text', text: JSON.stringify(await EpicWorkflowService.sync(args)) }]
     }));
+  server.tool('operational_sandbox','Authenticated staff directory, roster, care-team assignments, coordination tasks, sourced notes and reviewed sandbox document publication. Clinical orders are never modified.',
+    {action:z.string(),input:z.record(z.string(),z.unknown())},async args=>({content:[{type:'text',text:JSON.stringify(await operationalDispatch(args.action,args.input))}]}));
   return server;
 }
 
@@ -447,6 +453,7 @@ export function createShiftWeaveServer(): McpServer {
 // =========================================================================
 
 interface SessionRecord {
+  staffId?: string | undefined;
   transport: StreamableHTTPServerTransport;
   server: McpServer;
   open: number;
@@ -499,6 +506,36 @@ app.get('/readyz', (_req, res) => {
   catch { res.status(503).json({ ready: false }); }
 });
 app.use(demoAccess);
+app.use(staffMiddleware);
+app.get('/api/staff/config',(_req,res)=>res.json({required:staffAuthRequired(),environment:'SHIFTWEAVE_OPERATIONAL_SANDBOX'}));
+const loginAttempts=new Map<string,{count:number;until:number}>();
+app.post('/api/staff/login',(req,res)=>{
+  try{
+    const ip=req.ip||'unknown';const previous=loginAttempts.get(ip);const now=Date.now();
+    if(previous&&previous.until>now&&previous.count>=20){res.status(429).json({error:'Too many sign-in attempts. Try again after one minute'});return;}
+    if(loginAttempts.size>=1000)for(const[key,value]of loginAttempts)if(value.until<=now)loginAttempts.delete(key);
+    loginAttempts.set(ip,previous&&previous.until>now?{...previous,count:previous.count+1}:{count:1,until:now+60_000});
+    const a=z.object({username:z.string(),password:z.string().max(200),idempotency_key:z.string().uuid()}).parse(req.body);
+    const result=StaffAuthService.login(a.username,a.password,a.idempotency_key);
+    res.cookie('shiftweave_staff',result.token,{httpOnly:true,sameSite:'strict',secure:process.env.PUBLIC_ORIGIN?.startsWith('https://')||false,maxAge:8*60*60_000,path:'/'});
+    res.json({principal:result.principal,expiresAt:result.expiresAt});
+  }catch(error){res.status(401).json({error:error instanceof Error?error.message:String(error)});}
+});
+app.get('/api/staff/me',(_req,res)=>res.json({principal:currentStaff()||null}));
+app.post('/api/staff/logout',(req,res)=>{
+  try{const result=StaffAuthService.logout(z.string().min(1).parse(req.body.idempotency_key));res.clearCookie('shiftweave_staff',{path:'/'});res.json(result);}
+  catch(error){res.status(401).json({error:error instanceof Error?error.message:String(error)});}
+});
+app.post('/api/operations/:action',async(req,res)=>{
+  const bridge=new MCPClientBridge(localMcpEndpoint());
+  try{
+    await bridge.initialize();
+    const result=await bridge.callTool('operational_sandbox',{action:String(req.params.action),input:req.body});
+    if(result.isError)throw new Error(result.content.map(c=>c.text).join('\n'));
+    res.json(JSON.parse(result.content[0]!.text));
+  }catch(error){res.status(422).json({error:error instanceof Error?error.message:String(error)});}
+  finally{await bridge.close();}
+});
 app.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
 /**
@@ -506,6 +543,14 @@ app.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(
  * Compliant with MCP Spec 2025-11-25 over Streamable HTTP
  */
 app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
+  if(staffAuthRequired()){
+    try{
+      const existing=sessions.get(String(req.headers['mcp-session-id']||''));
+      if(existing&&existing.staffId!==currentStaff()?.id)throw new Error('MCP session belongs to another staff member');
+      if(req.body?.method==='tools/call')authorizeMcpTool(req.body.params?.name,req.body.params?.arguments||{});
+      if(Array.isArray(req.body))throw new Error('Batch MCP requests are not enabled for staff sessions');
+    }catch(error){res.status(403).json({jsonrpc:'2.0',id:req.body?.id??null,error:{code:-32003,message:error instanceof Error?error.message:String(error)}});return;}
+  }
   const requestedVersion = req.body?.method === 'initialize' ? req.body.params?.protocolVersion : req.headers['mcp-protocol-version'];
   if (typeof requestedVersion === 'string' && requestedVersion < '2025-11-25') {
     res.status(400).json({ jsonrpc: '2.0', error: { code: -32602, message: 'Minimum MCP protocol version is 2025-11-25' }, id: req.body?.id ?? null });
@@ -528,7 +573,7 @@ app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sid: string) => {
-          sessions.set(sid, { transport, server: newServer, open: 0, lastActive: Date.now() });
+          sessions.set(sid, { transport, server: newServer, open: 0, lastActive: Date.now(),staffId:currentStaff()?.id });
         }
       });
 
@@ -566,6 +611,7 @@ app.get("/mcp", async (req: Request, res: Response): Promise<void> => {
     return;
   }
   const session = sessions.get(sessionId);
+  if(staffAuthRequired()&&session?.staffId!==currentStaff()?.id){res.status(403).json({error:'MCP session belongs to another staff member'});return;}
   if (!session) {
     res.status(404).json({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null });
     return;
@@ -581,6 +627,7 @@ app.delete("/mcp", async (req: Request, res: Response): Promise<void> => {
     return;
   }
   const session = sessions.get(sessionId);
+  if(staffAuthRequired()&&session?.staffId!==currentStaff()?.id){res.status(403).json({error:'MCP session belongs to another staff member'});return;}
   if (!session) {
     res.status(404).json({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null });
     return;
@@ -635,7 +682,8 @@ app.get("/health", async (_req, res) => {
 /** Telemetry stream endpoint for React Dashboard live trace */
 app.get("/api/execution-trace", (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
-  const logs = AuditService.getRecentLogs(limit).map(log => ({ id: log.id, actorType: log.actor_type,
+  const actor=currentStaff();
+  const logs = AuditService.getRecentLogs(limit).filter(log=>!staffAuthRequired()||log.actor_id===actor?.id).map(log => ({ id: log.id, actorType: log.actor_type,
     actorId: log.actor_id, action: log.action, targetResource: log.target_resource,
     outcome: log.outcome, details: log.details ? JSON.parse(log.details) : null,
     latencyMs: log.latency_ms || 0, timestamp: log.timestamp }));

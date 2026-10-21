@@ -1,0 +1,8 @@
+{
+  "verifiedAt": "2026-10-21T20:10:20.935Z",
+  "source": "ISOLATED_SYNTHETIC_FIXTURES",
+  "checks": 46,
+  "status": "PASSED",
+  "workflow": "Authenticated HTTP -> Streamable HTTP MCP -> role-scoped operations -> conflict review -> explicit custody -> finalization -> patient-specific document publication/readback -> session revocation",
+  "externalEpicWrites": "NONE"
+}

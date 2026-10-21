@@ -70,6 +70,7 @@ export class EpicWorkflowService {
             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(patient_id) DO UPDATE SET snapshot_json=excluded.snapshot_json,
             retrieved_at=excluded.retrieved_at, sync_status=excluded.sync_status, last_error=NULL`).run(localId, patientId, endpoint, JSON.stringify(snapshot), snapshot.retrievedAt, status);
           const taskId = `${localId}:review:${input.shift_id}`;
+          if (process.env.EPIC_CREATE_REVIEW_TASKS !== 'false') {
           db.prepare(`INSERT OR IGNORE INTO tasks (id, patient_id, title, description, category, status, priority, scheduled_time, source_system)
             VALUES (?, ?, 'Review Epic source records for handoff', 'Local coordination task. Not an Epic medication order or administration.',
             'CONSULT', 'PENDING', 'ROUTINE', ?, 'SHIFTWEAVE_COORDINATION_WITH_EPIC_CONTEXT')`).run(taskId, localId, snapshot.retrievedAt);
@@ -77,6 +78,7 @@ export class EpicWorkflowService {
           if (!db.prepare('SELECT id FROM task_assignments WHERE task_id = ? AND shift_id = ?').get(taskId, input.shift_id)) {
             db.prepare('INSERT INTO task_assignments (id, task_id, nurse_id, shift_id, assigned_by) VALUES (?, ?, ?, ?, ?)')
               .run(`${taskId}:initial`, taskId, input.nurse_id, input.shift_id, 'EPIC_WORKSPACE_SETUP');
+          }
           }
           return { patientId: localId, status };
         });

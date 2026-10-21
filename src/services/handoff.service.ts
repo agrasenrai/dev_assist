@@ -4,6 +4,7 @@ import { MutationService } from './mutation.service.js';
 import type { EpicClinicalContext } from '../providers/epic-mapping.service.js';
 import { FieldAuthorityService, FIELD_AUTHORITY_MATRIX } from './field-authority.service.js';
 import { EpicWorkflowService } from './epic-workflow.service.js';
+import { currentStaff, staffAuthRequired, requireStaff } from './staff-context.js';
 
 export interface HandoffDraftInput {
   outgoing_nurse_id: string; incoming_nurse_id: string; shift_id: string;
@@ -12,6 +13,7 @@ export interface HandoffDraftInput {
 }
 export class HandoffService {
   static finalize(handoffId: string, nurseId: string, key: string, humanConfirmed: boolean) {
+    if(staffAuthRequired()&&requireStaff(['STAFF_NURSE','CHARGE_NURSE']).id!==nurseId)throw new Error('Finalizing nurse must match authenticated staff');
     if (!humanConfirmed) throw new Error('Human review confirmation is required');
     return MutationService.execute('FINALIZE_HANDOFF', key, { handoffId, nurseId }, nurseId, () => {
       const handoff = db.prepare('SELECT * FROM handoffs WHERE id = ? AND incoming_nurse_id = ?').get(handoffId, nurseId) as
@@ -33,6 +35,14 @@ export class HandoffService {
   }
 
   static createDraft(args: HandoffDraftInput) {
+    if(staffAuthRequired()){
+      const actor=requireStaff(['STAFF_NURSE','CHARGE_NURSE']);
+      if(actor.id!==args.outgoing_nurse_id)throw new Error('Outgoing nurse must match authenticated staff');
+      if(args.incoming_nurse_id===actor.id)throw new Error('Incoming nurse must be a different person');
+      const receiver=db.prepare(`SELECT n.id FROM nurses n JOIN staff_accounts a ON a.staff_id=n.id JOIN staff_shift_memberships m ON m.staff_id=n.id JOIN shifts s ON s.id=m.shift_id
+        WHERE n.id=? AND n.role IN ('STAFF_NURSE','CHARGE_NURSE') AND a.active=1 AND m.shift_id=? AND s.unit_id=? AND n.department=?`).get(args.incoming_nurse_id,args.shift_id,actor.unit,actor.unit);
+      if(!receiver)throw new Error('Select an active incoming nurse scheduled in your unit and handover shift');
+    }
     return MutationService.execute('CREATE_HANDOFF_DRAFT', args.idempotency_key,
       { ...args, idempotency_key: undefined }, args.incoming_nurse_id, () => {
         for (const id of [args.outgoing_nurse_id, args.incoming_nurse_id]) {
@@ -48,6 +58,7 @@ export class HandoffService {
           }
         }
         const ids = tasks.map(t => t.id);
+        if(staffAuthRequired())for(const task of tasks){if(!db.prepare('SELECT id FROM patient_care_team WHERE patient_id=? AND staff_id=? AND shift_id=? AND active=1').get(task.patient_id,args.incoming_nurse_id,args.shift_id))throw new Error('Incoming nurse is not on every patient care team included in this draft');}
         const conflicts = db.prepare("SELECT task_id FROM conflicts WHERE status = 'UNRESOLVED'").all() as Array<{ task_id: string }>;
         const unresolved = conflicts.filter(c => ids.includes(c.task_id)).length;
         const id = `handoff_${randomUUID()}`;
@@ -73,9 +84,12 @@ export class HandoffService {
           }
         }
 
+        const operationalNotes=staffAuthRequired()?db.prepare('SELECT o.*,n.full_name AS author_name FROM operational_notes o JOIN nurses n ON n.id=o.author_id WHERE o.shift_id=? ORDER BY o.created_at').all(args.shift_id).filter((n:any)=>tasks.some(t=>t.patient_id===n.patient_id)):[];
+        if(operationalNotes.length)summary+='\n\n## Recorded operational sandbox notes\n'+operationalNotes.map((n:any)=>`Source ${n.id}; patient ${n.patient_id}; author ${n.author_name}; recorded ${n.created_at}: ${n.text}`).join('\n');
         const epicRecords = EpicWorkflowService.recordsForPatients(tasks.map(t => t.patient_id));
         summary += EpicWorkflowService.narrative(epicRecords);
         const snapshotData = {
+          ...(staffAuthRequired()?{operationalNotes}:{}),
           epicRecords,
           tasks,
           carriedForwardIds: args.carried_forward_task_ids,
@@ -98,6 +112,7 @@ export class HandoffService {
   static acknowledge(args: { task_id: string; nurse_id: string; action: string; resolution_note?: string | undefined;
     idempotency_key: string; handoff_id?: string | undefined; human_confirmed: boolean }) {
     if (!args.human_confirmed) throw new Error('Explicit human confirmation is required');
+    if(staffAuthRequired()&&requireStaff(['STAFF_NURSE','CHARGE_NURSE']).id!==args.nurse_id)throw new Error('Acknowledging nurse must match authenticated staff');
     return MutationService.execute('ACKNOWLEDGE_TASK', args.idempotency_key, args, args.nurse_id, () => {
       const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(args.task_id) as { status: string } | undefined;
       if (!task) throw new Error('Task not found');
@@ -115,6 +130,14 @@ export class HandoffService {
         db.prepare("UPDATE task_assignments SET transfer_status = 'TRANSFERRED' WHERE task_id = ? AND nurse_id = ? AND shift_id = ? AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')").run(args.task_id, handoff.outgoing_nurse_id, handoff.shift_id);
         db.prepare(`INSERT INTO task_assignments (id, task_id, nurse_id, shift_id, assigned_by)
           VALUES (?, ?, ?, ?, ?)`).run(randomUUID(), args.task_id, args.nurse_id, handoff.shift_id, args.nurse_id);
+        if(staffAuthRequired()){
+          const patient=(db.prepare('SELECT patient_id FROM tasks WHERE id=?').get(args.task_id) as any).patient_id;
+          if(!db.prepare(`SELECT a.id FROM task_assignments a JOIN tasks t ON t.id=a.task_id WHERE t.patient_id=? AND a.shift_id=? AND a.nurse_id=? AND a.transfer_status IN ('ACTIVE','CARRIED_FORWARD')`).get(patient,handoff.shift_id,handoff.outgoing_nurse_id)){
+            db.prepare("UPDATE patient_care_team SET active=0 WHERE patient_id=? AND staff_id=? AND shift_id=? AND team_role='PRIMARY_NURSE'").run(patient,handoff.outgoing_nurse_id,handoff.shift_id);
+            db.prepare("UPDATE patient_care_team SET team_role='PRIMARY_NURSE' WHERE patient_id=? AND staff_id=? AND shift_id=? AND active=1").run(patient,args.nurse_id,handoff.shift_id);
+          }
+          db.prepare('INSERT INTO operational_task_versions (task_id,revision) VALUES (?,1) ON CONFLICT(task_id) DO UPDATE SET revision=revision+1').run(args.task_id);
+        }
         db.prepare("UPDATE handoffs SET status = 'UNDER_REVIEW' WHERE id = ?").run(args.handoff_id);
       } else if (args.action !== 'FLAG_FOR_SUPERVISOR') throw new Error('Unsupported acknowledgement');
       else if (!args.resolution_note?.trim()) throw new Error('Escalation requires a note');

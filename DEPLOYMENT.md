@@ -2,6 +2,8 @@
 
 Recommended hackathon topology: **one always-on EC2 Linux host, one application container, SQLite on local EBS-backed Docker storage, and Caddy HTTPS**. React, voice gateway, agent, Express MCP and durable workflow state share the host. Bedrock is optional; mock remains the free default. This is a synthetic-data demonstrator, not hospital production software.
 
+For the authenticated Epic/staff profile, follow [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md). The fixture import, shared demo gate and machine-token-only smoke flow below apply to the original fixture profile. Do not run the fixture import against a provisioned operational database. Set `STAFF_AUTH_REQUIRED=true`, preserve `SANDBOX_SESSION_SECRET`, select Gemini/Bedrock explicitly and deploy a backup of the provisioned database to the persistent SQLite path configured by Compose. Each user signs in with their individual sandbox account. MCP calls additionally require that staff session; the service bearer token alone does not grant staff access. This profile uses reviewed local sandbox document publication while Epic writes remain disabled.
+
 ## 1. Free local start
 
 Use Node.js 24 and npm. From the repository root:

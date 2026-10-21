@@ -1,1 +1,1 @@
-export { OneThreadWorkspace as App, OneThreadWorkspace as default } from './components/OneThreadWorkspace.js';
+export { WorkspaceEntry as App, WorkspaceEntry as default } from './components/OperationalWorkspace.js';

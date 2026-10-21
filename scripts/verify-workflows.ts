@@ -47,7 +47,7 @@ try {
   check('stateful MCP protocol negotiation', () => assert.equal(handshake.version, '2025-11-25'));
   const discovered = await bridge.listTools();
   check('runtime discovery exposes workflow and voice tools', () => {
-    assert.equal(discovered.length, 15);
+    assert.equal(discovered.length, 16);
     assert(discovered.some(t => t.name === 'voice_turn'));
     assert(discovered.some(t => t.name === 'get_voice_display'));
   });

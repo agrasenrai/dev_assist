@@ -7,31 +7,42 @@ import { ConflictService, type ConflictRecord } from './conflict.service.js';
 import { canonicalJson } from './canonical-json.js';
 import { getActiveProvider } from '../providers/index.js';
 import { EpicWorkflowService } from './epic-workflow.service.js';
+import { StaffAuthService } from './staff-auth.service.js';
+import { currentStaff, staffAuthRequired } from './staff-context.js';
+import { SQLiteCacheProvider } from '../providers/sqlite-cache-provider.js';
+import { OperationalSandboxService } from './operational-sandbox.service.js';
 
 type Nurse = { id: string; name: string; department: string };
 type Shift = { id: string; unit: string; type: string; start: string; end: string };
 type Task = { id: string; patientId: string; patientName: string; roomNumber: string; title: string; status: string; priority: string; source: string };
 type Handoff = { id: string; incomingId: string; outgoingId: string; incomingName: string; outgoingName: string;
   status: string; summary: string; snapshot: string; shiftId: string };
-type Pending = { kind: 'RESOLVE' | 'ACCEPT' | 'FINALIZE' | 'ESCALATE'; taskIds: string[];
-  handoffId: string | null; conflictId: string | null; finalStatus: 'COMPLETED' | 'IN_PROGRESS' | 'CANCELLED' | null;
+type Pending = { kind: 'RESOLVE' | 'ACCEPT' | 'FINALIZE' | 'ESCALATE' | 'STATUS'; taskIds: string[];
+  handoffId: string | null; conflictId: string | null; finalStatus: 'PENDING' | 'COMPLETED' | 'IN_PROGRESS' | 'CANCELLED' | null;
+  taskRevision?: number;
   note: string | null; prompt: string; version: string; expiresAt: number; ready: boolean };
 type Message = { role: 'nurse' | 'assistant'; text: string };
 type State = { revision: number; nurse: Nurse | null; shift: Shift | null; pending: Pending | null;
+  selectedPatientId?: string | null;
   selectedTaskId: string | null; selectedHandoffId: string | null; focus: 'tasks' | 'conflicts' | 'handoff';
   messages: Message[]; speech: string };
 export type VoiceInput = { session_id: string; utterance: string; expected_revision: number; idempotency_key: string };
 
-const greeting = 'Hello. Say, “Hi, I am Seema. What are my tasks?” to begin your demo session.';
+const greeting = 'What is your registered nurse name?';
 const initial = (): State => ({ revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
-  selectedHandoffId: null, focus: 'tasks', messages: [], speech: greeting });
+  selectedPatientId: null,
+  selectedHandoffId: null, focus: 'tasks', messages: [], speech: staffAuthRequired() && currentStaff()
+    ? `Signed in as ${currentStaff()!.name}. Ready for your question.` : 'Ready for your question.' });
 const normal = (text: string) => text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const hasPhrase = (text: string, value: string) => Boolean(normal(value)) && new RegExp(`(?:^| )${normal(value)}(?: |$)`).test(text);
 const runId = (id: string) => `voice:${id}`;
 
-/** Local demo identity selection, not nurse authentication. All turn writes commit atomically. */
+/** Uses authenticated staff identity when enabled; legacy demo selection remains explicit. */
 export class VoiceService {
   private static load(id: string): State {
-    const state = (CheckpointService.getLatestCheckpoint(runId(id))?.statePayload.voice as State | undefined) || initial();
+    if (staffAuthRequired()) StaffAuthService.bindVoiceSession(id);
+    let state = (CheckpointService.getLatestCheckpoint(runId(id))?.statePayload.voice as State | undefined) || initial();
+    if(staffAuthRequired()&&state.nurse&&state.nurse.id!==currentStaff()?.id)state={...initial(),revision:state.revision};
     // Clear expired confirmations on load so the display is never stale
     if (state.pending && state.pending.expiresAt < Date.now()) {
       state.pending = null;
@@ -68,7 +79,7 @@ export class VoiceService {
   }
 
   private static version(state: State) {
-    return createHash('sha256').update(canonicalJson(this.records(state))).digest('hex');
+    return createHash('sha256').update(canonicalJson({records:this.records(state),notes:staffAuthRequired()?db.prepare('SELECT id,text,recorded_status FROM operational_notes WHERE shift_id=? ORDER BY id').all(state.shift?.id||''):[]})).digest('hex');
   }
 
   private static display(state: State) {
@@ -78,7 +89,7 @@ export class VoiceService {
       pending: state.pending ? { prompt: state.pending.prompt, ready: state.pending.ready,
         expiresAt: state.pending.expiresAt } : null,
       messages: state.messages, ...records,
-      source: records.epicRecords.length ? 'Epic sandbox source records + local nursing coordination' : 'Local synthetic demo records', identityMode: 'DEMO_NAME_SELECTION',
+      source: records.epicRecords.length ? 'Epic sandbox source records + local nursing coordination' : 'Local synthetic demo records', identityMode: staffAuthRequired() ? 'AUTHENTICATED_OPERATIONAL_SANDBOX' : 'DEMO_NAME_SELECTION',
       updatedAt: new Date().toISOString() };
   }
 
@@ -108,18 +119,26 @@ export class VoiceService {
       const text = input.utterance.trim();
       const normalized = normal(text);
       let speech: string;
-      const introduction = text.match(/\b(?:i am|i['’]?m|this is|my name is|switch to)\s+(.+)/i);
+      const introduction = text.match(/\b(?:i am|i['’]?m|this is|my name is|switch to)\s+(.+)/i) ||
+        (!state.nurse && this.resolveNurse(normalized).length ? [text, text] : null);
+      const staff = currentStaff();
+      if (staffAuthRequired() && staff && introduction) {
+        const requested = normal(introduction[1]!.split(/[,.;!?]|\b(?:and|please|let me|show|tell|what|mere)\b/i)[0]!);
+        const allowed = [normal(staff.name),normal(staff.name.replace(/,\s*RN$/i,'')),normal(staff.name).split(' ')[0],normal(staff.username)];
+        if (!allowed.includes(requested)) throw new Error('Voice introduction cannot switch authenticated staff identity. Sign out and sign in as the other staff member');
+      }
       if (introduction) {
         // Never retain an old identity or confirmation after an unknown/ambiguous introduction.
         Object.assign(state, initial(), { revision: state.revision });
         const claimed = normal(introduction[1]!.split(/[,.;!?]|\b(?:and|please|let me|show|tell|what|mere)\b/i)[0]!);
-        const matches = this.resolveNurse(claimed);
+        const matches = staffAuthRequired() && staff ? [{id:staff.id,name:staff.name,department:staff.unit}] : this.resolveNurse(claimed);
         if (matches.length !== 1) {
           speech = matches.length ? 'More than one nurse matches. Please say “I am” followed by your full name or badge number.'
             : 'I could not match that name. Please say “I am” followed by your full registered name or badge number.';
         } else {
           state.nurse = matches[0]!;
-          state.shift = db.prepare(`SELECT id, unit_id AS unit, shift_type AS type, start_time AS start, end_time AS end
+          state.shift = staffAuthRequired() ? db.prepare(`SELECT s.id,s.unit_id AS unit,s.shift_type AS type,s.start_time AS start,s.end_time AS end FROM shifts s JOIN staff_shift_memberships m ON m.shift_id=s.id
+            WHERE m.staff_id=? AND s.status IN ('ACTIVE','HANDOFF_IN_PROGRESS') ORDER BY s.start_time DESC LIMIT 1`).get(staff!.id) as Shift || null : db.prepare(`SELECT id, unit_id AS unit, shift_type AS type, start_time AS start, end_time AS end
             FROM shifts WHERE unit_id = ? AND status IN ('ACTIVE', 'HANDOFF_IN_PROGRESS')
             ORDER BY start_time DESC LIMIT 1`).get(state.nurse.department) as Shift || null;
           speech = `Hello ${state.nurse.name}. ${state.shift ? this.summary(state) : 'No active demo shift is configured for your unit.'}`;
@@ -164,16 +183,59 @@ export class VoiceService {
 
   private static selectTask(state: State, text: string, tasks: Task[]): Task | null {
     const normalized = normal(text);
+    const exact = tasks.filter(t => hasPhrase(normalized,t.id) || hasPhrase(normalized,t.title));
+    if (exact.length) return exact.length === 1 ? exact[0]! : null;
     const matches = tasks.filter(t => {
       const room = normal(t.roomNumber).replace(/^room /, '');
-      return normalized.includes(normal(t.id)) || new RegExp(`\\b${room}\\b`).test(normalized) ||
-        t.patientName.split(/\s+/).some(n => n.length > 2 && new RegExp(`\\b${normal(n)}\\b`).test(normalized)) ||
-        normalized.includes(normal(t.title));
+      return hasPhrase(normalized,t.id) || new RegExp(`\\b${room}\\b`).test(normalized) ||
+        hasPhrase(normalized,t.patientName) ||
+        t.patientName.split(/\s+/).some(n => n.length > 2 && !['patient','demo','test'].includes(normal(n)) && normalized.endsWith(` ${normal(n)}`)) ||
+        hasPhrase(normalized,t.title);
     });
     if (matches.length === 1) return matches[0]!;
-    if (!matches.length && /\b(that|this|it|selected)\b/.test(normalized)) return tasks.find(t => t.id === state.selectedTaskId) || null;
-    if (!matches.length && tasks.length === 1 && !/\broom\s+\d+/.test(normalized)) return tasks[0]!;
+    if (!matches.length && !/\broom\b|\btask (?:id|named|called)\b/.test(normalized) && /\b(that|this|it|selected)\b/.test(normalized)) return tasks.find(t => t.id === state.selectedTaskId) || null;
+    if (!matches.length && tasks.length === 1 && !/\b(?:room|patient)\b|\btask (?!to\b|as\b|is\b|has\b|been\b|status\b|completed\b|pending\b|in progress\b|for\b|please\b)\S/.test(normalized)) return tasks[0]!;
     return null;
+  }
+
+  private static taskSpeech(task: Task) {
+    const row = db.prepare('SELECT description, scheduled_time, completed_time, updated_at FROM tasks WHERE id=?').get(task.id) as any;
+    return `${task.patientName}, ${task.roomNumber}: ${task.title}. Recorded local workflow status: ${task.status.replaceAll('_', ' ')}. ` +
+      `Priority: ${task.priority}. Scheduled: ${row.scheduled_time}. ` + (row.description ? `${row.description}. ` : '') +
+      (row.completed_time ? `Completion recorded: ${row.completed_time}. ` : '') + `Source: ${task.source}; updated ${row.updated_at}.`;
+  }
+
+  private static patientSpeech(state: State, text: string, tasks: Task[]) {
+    const patients: Array<{patientId:string;patientName:string;roomNumber:string}> = [...new Map(tasks.map(t => [t.patientId, t])).values()];
+    // Care-team patients remain queryable even before a coordination task exists.
+    if (staffAuthRequired()) {
+      const team = db.prepare(`SELECT DISTINCT p.id AS patientId,p.full_name AS patientName,p.room_number AS roomNumber
+        FROM patients p JOIN patient_care_team c ON c.patient_id=p.id JOIN shifts s ON s.id=c.shift_id
+        WHERE c.staff_id=? AND c.shift_id=? AND c.active=1 AND s.unit_id=?`).all(state.nurse!.id,state.shift!.id,state.nurse!.department) as typeof patients;
+      for (const patient of team) if (!patients.some(p => p.patientId === patient.patientId)) patients.push(patient);
+    }
+    const query = normal(text);
+    const matches = patients.filter(t => hasPhrase(query,t.patientId) || hasPhrase(query,t.patientName) ||
+      new RegExp(`\\broom ${normal(t.roomNumber).replace(/^room /, '')}\\b`).test(query) ||
+      t.patientName.split(/\s+/).some(n => n.length > 2 && !['patient','demo','test'].includes(normal(n)) && query.endsWith(` ${normal(n)}`)));
+    const previous = patients.find(p => p.patientId === state.selectedPatientId) || tasks.find(t => t.id === state.selectedTaskId);
+    const implicit = !/\broom\b/.test(query) && (!/\bpatient\b/.test(query) || /\bpatient$/.test(query));
+    const patient = matches.length === 1 ? matches[0] : !matches.length && implicit && /\b(this|that|their|my patient|the patient)\b/.test(query)
+      ? previous || (patients.length === 1 ? patients[0] : undefined) : undefined;
+    if (!patient) return 'Please specify the patient name or room from your current view. I could not identify one patient.';
+    if (staffAuthRequired()) OperationalSandboxService.assertPatient(patient.patientId,state.shift!.id);
+    state.selectedPatientId = patient.patientId;
+    state.selectedTaskId = tasks.find(t => t.patientId === patient.patientId)?.id || null;
+    const row = db.prepare('SELECT * FROM patients WHERE id=?').get(patient.patientId) as any;
+    const own = tasks.filter(t => t.patientId === patient.patientId);
+    const notes = staffAuthRequired() ? db.prepare('SELECT text,created_at FROM operational_notes WHERE patient_id=? AND shift_id=? ORDER BY created_at DESC LIMIT 3')
+      .all(patient.patientId, state.shift!.id) as Array<{text:string;created_at:string}> : [];
+    const epic = EpicWorkflowService.recordsForPatients([patient.patientId]);
+    return `${row.full_name}, ${row.room_number}. Recorded diagnosis: ${row.primary_diagnosis || 'unavailable'}. ` +
+      `Allergy information: ${row.allergies || 'not available; a negative allergy history is not verified'}. ` +
+      `Admission: ${row.admission_date}. ` + own.map(t => this.taskSpeech(t)).join(' ') +
+      notes.map(n => ` Recorded shift note at ${n.created_at}: ${n.text}.`).join('') +
+      (epic.length ? EpicWorkflowService.narrative(epic).replace(/#+/g, '').replace(/\n+/g, ' ') : ' No Epic snapshot is available for this patient; these are stored local records.');
   }
 
   private static stage(state: State, pending: Pending): string {
@@ -200,8 +262,19 @@ export class VoiceService {
         // One transaction for multi-task acceptance; failure cannot leave a partially accepted batch.
         return db.transaction(() => {
           const nurseId = state.nurse!.id;
+          if (pending.kind === 'STATUS') {
+            const taskId = pending.taskIds[0]!;
+            if (!this.records(state).tasks.some(t => t.id === taskId)) throw new Error('Only your assigned tasks can be updated');
+            if (staffAuthRequired()) {
+              OperationalSandboxService.updateTask({ taskId, status: pending.finalStatus!, expectedRevision: pending.taskRevision!,
+                note: pending.note!, humanConfirmed: true, idempotency_key: `${key}:status` });
+            } else {
+              new SQLiteCacheProvider().updateLocalTaskStatus(taskId, pending.finalStatus!, nurseId, `${key}:status`, pending.note!);
+            }
+            return `Local task status was saved as ${pending.finalStatus!.replaceAll('_', ' ')}. This does not record medication administration or change Epic orders.`;
+          }
           if (pending.kind === 'RESOLVE') {
-            if (!ConflictService.resolveConflict(pending.conflictId!, nurseId, pending.finalStatus!, pending.note!, `${key}:resolve`))
+            if (!ConflictService.resolveConflict(pending.conflictId!, nurseId, pending.finalStatus! as 'COMPLETED' | 'IN_PROGRESS' | 'CANCELLED', pending.note!, `${key}:resolve`))
               throw new Error('Discrepancy no longer exists');
             return 'Your review was saved and the local workflow status was updated. This does not record medication administration or publish to Epic.';
           }
@@ -219,7 +292,7 @@ export class VoiceService {
         return `The action was not completed: ${error instanceof Error ? error.message : String(error)}. Review the records and request it again.`;
       }
     }
-    if (/\b(diagnos\w*|prescrib\w*|recommend.*treatment|change.*dose|increase.*dose|administer)\b/.test(text)) {
+    if (/\b(diagnose|diagnosing|prescrib\w*|recommend.*treatment|change.*dose|increase.*dose|administer)\b/.test(text)) {
       state.pending = null;
       return 'I coordinate nursing workflows only. Diagnosis, treatment, medication administration and order changes require the clinical team.';
     }
@@ -231,8 +304,32 @@ export class VoiceService {
     if (/\b(dont|do not|not yet|never)\b/.test(text)) {
       return 'No action taken. Please state the request you want to perform, or say “cancel”.';
     }
-    if (/\broom\s+\d+/.test(text) && !selected) {
+    const patientQuery = /\b(patient|allergies|allergy|diagnosis|admission|clinical|medications|source records)\b/.test(text) &&
+      !/\b(task|tasks|resolve|verify|accept|escalate|mark|set|assign|handoff)\b/.test(text) &&
+      (!/\bupdate\b/.test(text) || /\b(latest|update on|update about)\b/.test(text));
+    if (patientQuery && !collecting) { state.focus = 'tasks'; return this.patientSpeech(state, raw, visibleTasks); }
+    const listQuery = /\b(tasks|pending|unfinished|remaining|next)\b/.test(text) && !/\b(this|that|it)\b/.test(text);
+    if (/\broom\s+\d+/.test(text) && !selected && !listQuery) {
       return 'That room did not identify exactly one task in your current view. Please specify the patient and full task title shown on screen.';
+    }
+
+    if (/\b(assign|reassign|transfer)\b/.test(text) && !/\bhandoff\b/.test(text)) {
+      return 'I cannot choose an assignee or directly reassign a task by voice. Use the existing reviewed assignment workflow, or prepare a handoff for a named nurse.';
+    }
+    if (/\b(update|mark|set|start|finish|complete|cancel|reopen)\b/.test(text) || collecting?.kind === 'STATUS') {
+      const task = selected || visibleTasks.find(t => t.id === collecting?.taskIds[0]);
+      if (!task) return 'Which task should I update? Please give the full task title and patient or room.';
+      if (!r.tasks.some(t => t.id === task.id)) return 'Accept custody through the reviewed handoff before updating this task.';
+      if (r.conflicts.some(c => c.taskId === task.id)) return 'This task has an unresolved discrepancy. Review and resolve the discrepancy first.';
+      const status = /\b(in progress|start)\b/.test(text) ? 'IN_PROGRESS' : /\b(completed|complete|done|finish|finished)\b/.test(text) ? 'COMPLETED'
+        : /\b(cancel|cancelled|canceled)\b/.test(text) ? 'CANCELLED' : /\b(pending|reopen)\b/.test(text) ? 'PENDING' : null;
+      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || collecting?.note || 'Explicit nurse-confirmed local workflow status update';
+      state.selectedTaskId = task.id;
+      const revision = (db.prepare('SELECT revision FROM operational_task_versions WHERE task_id=?').get(task.id) as any)?.revision || 0;
+      return this.stage(state, {kind:'STATUS', taskIds:[task.id],handoffId:null,conflictId:null,finalStatus:status,note,
+        taskRevision:revision,ready:Boolean(status),version:'',expiresAt:0,prompt:status
+          ? `Set ${task.title} for ${task.patientName} to ${status.replaceAll('_', ' ')} locally? Say “confirm” or “cancel”.`
+          : 'What local task status should I record: pending, in progress, completed, or cancelled?'});
     }
 
     if (/\b(resolve|verify)\b/.test(text) || (collecting?.kind === 'RESOLVE' && /\b(completed|in progress|cancelled|canceled|because|note)\b/.test(text))) {
@@ -306,11 +403,29 @@ export class VoiceService {
         ' Human review is required. You can say “resolve discrepancy in room” followed by the room number.'
         : 'No unresolved discrepancy was returned for the requested tasks.';
     }
-    if (selected && /\b(room|patient|show|explain|details|that|this|it)\b/.test(text)) {
+    const plural = listQuery;
+    if (selected && !plural && /\b(room|patient|show|explain|details|that|this|it|status|completed|done)\b/.test(text)) {
       state.focus = 'tasks'; state.selectedTaskId = selected.id;
-      return `${selected.patientName}, ${selected.roomNumber}: ${selected.title}. Recorded workflow status: ${selected.status.replaceAll('_', ' ')}. Priority: ${selected.priority}.`;
+      state.selectedPatientId = selected.patientId;
+      return this.taskSpeech(selected);
     }
-    if (/\b(task|tasks|pending|shift|resume|continue)\b/.test(text)) { state.focus = 'tasks'; return this.summary(state); }
+    if (/\b(task|tasks|pending|shift|resume|continue|next|remaining|unfinished|assigned)\b/.test(text)) {
+      state.focus = 'tasks';
+      if (!plural && /\b(this|that|task status|status of)\b/.test(text) && !selected) return 'Which task do you mean? Please give its full title and patient or room.';
+      let tasks = r.tasks;
+      const scoped = tasks.filter(t => hasPhrase(text,t.patientName) || hasPhrase(text,t.patientId) ||
+        new RegExp(`\\broom ${normal(t.roomNumber).replace(/^room /, '')}\\b`).test(text));
+      if (scoped.length) tasks = scoped;
+      else if (/\b(patient|room)\b/.test(text)) return 'I could not identify that patient or room among your assigned tasks. Please specify the full patient name or room.';
+      const status = /\bin progress\b/.test(text) ? 'IN_PROGRESS' : /\bcompleted|done\b/.test(text) ? 'COMPLETED'
+        : /\bcancelled|canceled\b/.test(text) ? 'CANCELLED' : /\bpending\b/.test(text) ? 'PENDING' : null;
+      if (status) tasks = tasks.filter(t => t.status === status);
+      else if (/\b(next|remaining|unfinished)\b/.test(text)) tasks = tasks.filter(t => !['COMPLETED','CANCELLED'].includes(t.status));
+      if (!tasks.length) return `No ${status ? status.toLowerCase().replaceAll('_', ' ') + ' ' : ''}assigned tasks were returned for your current shift.`;
+      if (tasks.length === 1) state.selectedTaskId = tasks[0]!.id;
+      return `${tasks.length} assigned task(s). ` + tasks.map(t => this.taskSpeech(t)).join(' ') +
+        (r.conflicts.length ? ' Unresolved discrepancies require human review.' : '');
+    }
     return 'You can ask for your tasks, explain a room’s task, review discrepancies, prepare a handoff for another nurse, or end your session. Please state one request at a time.';
   }
 }
