@@ -584,8 +584,9 @@ app.get("/health", async (_req, res) => {
 });
 
 /** Telemetry stream endpoint for React Dashboard live trace */
-app.get("/api/execution-trace", (_req, res) => {
-  const logs = AuditService.getRecentLogs(30).map(log => ({ id: log.id, actorType: log.actor_type,
+app.get("/api/execution-trace", (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const logs = AuditService.getRecentLogs(limit).map(log => ({ id: log.id, actorType: log.actor_type,
     actorId: log.actor_id, action: log.action, targetResource: log.target_resource,
     outcome: log.outcome, details: log.details ? JSON.parse(log.details) : null,
     latencyMs: log.latency_ms || 0, timestamp: log.timestamp }));
