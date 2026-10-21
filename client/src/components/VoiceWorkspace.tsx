@@ -89,13 +89,16 @@ export function VoiceWorkspace() {
     };
     void refresh();
     void refreshTrace();
-    const timer = setInterval(() => {
-      void refresh();
-      void refreshTrace();
+    const displayTimer = setInterval(() => {
+      if (!busyRef.current) void refresh();
     }, 2500);
+    const traceTimer = setInterval(() => {
+      void refreshTrace();
+    }, 5000);
     return () => {
       alive = false;
-      clearInterval(timer);
+      clearInterval(displayTimer);
+      clearInterval(traceTimer);
     };
   }, [apply, refreshTrace]);
 
