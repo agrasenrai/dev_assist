@@ -270,22 +270,34 @@ export class VoiceService {
         }
       } else if (!text && /\balexa\b/i.test(spokenText)) {
         speech = "Yes, I'm Alexa. I'm listening. Take your time.";
-      } else if (/^(?:hi+|hey+|hello+|good (?:morning|afternoon|evening))(?: there)?(?: how are you(?: doing)?)?(?: alexa)?$/.test(normalized)) {
+      } else if (/\b(?:diagnos\w*|prescrib\w*|recommend.*treatment|change.*dose|increase.*dose|decrease.*dose|administer.*medication)\b/i.test(normalized)) {
+        state.pending = null;
+        speech = "I coordinate nursing workflows only. Diagnosis, treatment and medication changes require the clinical team.";
+      } else if (/\b(?:politic\w*|election\w*|president\w*|prime minister|democrat\w*|republican\w*|parliament|congress|voting|biden|trump|modi|government policy)\b/i.test(normalized)) {
+        state.pending = null;
+        speech = "I'm focused purely on hospital nursing workflows and shift handoffs, so I don't engage in political or non-clinical topics. Is there a task or handoff you'd like to check?";
+      } else if (/\b(?:codebase|source code|git repo|repository|github|database schema|private key|api key|tokens?|internal tables?|under the hood|show (?:me )?the code)\b/i.test(normalized)) {
+        state.pending = null;
+        speech = "I'm designed to assist with nursing shift workflows, so I don't discuss internal code or technical credentials. Let's focus on your patients and tasks.";
+      } else if (/\b(?:what(?:'s|s| is)? (?:your|ur) name|who (?:are|r) you|what should i call you|tell me (?:your|ur) name|(?:your|ur) name please|what are you called|introduce yourself|who am i speaking with|who is this)\b/i.test(normalized)) {
+        state.pending = null;
+        speech = "I'm Alexa, your nursing workflow assistant for ShiftWeave. I help coordinate ICU shift handoffs, track pending tasks, and review documentation discrepancies.";
+      } else if (/\b(?:what is shiftweave|what does shiftweave do|tell me about shiftweave|about shiftweave|what is this project|what project is this|what is this app|what are you doing)\b/i.test(normalized)) {
+        state.pending = null;
+        speech = "ShiftWeave is an ambient clinical coordination system for ICU nursing teams. It synthesizes grounded SBAR shift handoffs, monitors pending bedside care, and flags EHR discrepancies so nothing falls through the cracks.";
+      } else if (/^(?:hi+|hey+|hello+|good (?:morning|afternoon|evening))(?: there)?(?: how are you(?: doing)?)?(?: alexa)?$/i.test(normalized) || /\b(?:good morning|good afternoon|good evening)\b/i.test(normalized)) {
         state.pending = null;
         speech = "Hey, I'm here. What's on your mind?";
-      } else if (/^(?:what(?:s| is) your name|who are you|what should i call you)$/.test(normalized)) {
+      } else if (/\b(?:how are you|how're you|how are you doing|how is it going|how's it going)\b/i.test(normalized)) {
         state.pending = null;
-        speech = "I'm Alexa, your nursing workflow assistant.";
-      } else if (/^(?:how are you|how are you doing|how is it going)$/.test(normalized)) {
-        state.pending = null;
-        speech = "I'm here and listening. How are you doing?";
-      } else if (/^(?:thanks|thank you|thanks alexa|thank you alexa)$/.test(normalized)) {
+        speech = "I'm doing well and ready to help! How is your shift going?";
+      } else if (/\b(?:thanks|thank you|thanks alexa|thank you alexa|appreciate it|thx)\b/i.test(normalized)) {
         state.pending = null;
         speech = "You're welcome. I'm here if you need anything else.";
-      } else if (/^(?:are you there|can you hear me|listen|are you listening)$/.test(normalized)) {
+      } else if (/\b(?:are you there|can you hear me|listen|are you listening)\b/i.test(normalized)) {
         state.pending = null;
         speech = "Yes, I'm listening. Take your time.";
-      } else if (/^(?:what can you do|how can you help(?: me)?|help|what do you do|can you help me)$/.test(normalized)) {
+      } else if (/\b(?:what can you do|how can you help(?: me)?|help|what do you do|can you help me|what are your (?:features|capabilities))\b/i.test(normalized)) {
         state.pending = null;
         speech = 'I can look up your existing patient and task records, track local workflow status, and help with reviewed handoffs. What would you like help with?';
       } else if (/^(?:alexa )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
@@ -293,7 +305,7 @@ export class VoiceService {
         speech = 'Take care. I’ve cleared this conversation from the screen.';
       } else if (this.conversationText(state,text)) {
         state.pending = null;
-        speech = "I'm listening. I'm using the local demo, so free conversation is limited. What would you like help with?";
+        speech = "I'm listening and glad to chat! As your ShiftWeave nursing companion, I'm ready whenever you want to check tasks, review handoffs, or look up patient updates. What would you like to do?";
       } else if (!state.nurse) {
         speech = greeting;
       } else if (!state.shift) {
