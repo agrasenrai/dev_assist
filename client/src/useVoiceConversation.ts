@@ -24,18 +24,11 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
     window.speechSynthesis?.cancel(); c.finishSpeech?.();
     setEnabled(false); setStatus('Paused');
   };
-  const speak = (text: string) => new Promise<void>(resolve => {
-    if (!window.speechSynthesis) { setError('Speech playback is unavailable. The response is displayed on screen.'); resolve(); return; }
+  const speakWithBrowser = (text: string, finish: () => void, generation: number) => {
+    if (!window.speechSynthesis) { setError('Speech playback is unavailable. The response is displayed on screen.'); finish(); return; }
     const c = control.current;
-    const generation = c.generation;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US'; utterance.rate = 1;
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true; window.clearTimeout(c.speechTimer); c.finishSpeech = null; resolve();
-    };
-    c.finishSpeech = finish;
     utterance.onend = finish;
     utterance.onerror = () => { if (!c.disposed && c.generation === generation) setError('Speech playback stopped. The response remains on screen.'); finish(); };
     c.speechTimer = window.setTimeout(() => {
@@ -44,6 +37,58 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
     }, 120000);
     try { window.speechSynthesis.speak(utterance); }
     catch { setError('Speech playback is unavailable. The response remains on screen.'); finish(); }
+  };
+  const speak = (text: string) => new Promise<void>(async (resolve) => {
+    const c = control.current;
+    const generation = c.generation;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true; window.clearTimeout(c.speechTimer); c.finishSpeech = null; resolve();
+    };
+    c.finishSpeech = finish;
+
+    // 1. Attempt high-fidelity ElevenLabs TTS via server
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(15000)
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('audio/')) {
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        c.finishSpeech = () => {
+          audio.pause();
+          URL.revokeObjectURL(audioUrl);
+          finish();
+        };
+        audio.onended = () => {
+          URL.revokeObjectURL(audioUrl);
+          finish();
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(audioUrl);
+          speakWithBrowser(text, finish, generation);
+        };
+        c.speechTimer = window.setTimeout(() => {
+          if (!c.disposed) setError('Speech playback timed out. The response remains on screen.');
+          audio.pause();
+          URL.revokeObjectURL(audioUrl);
+          finish();
+        }, 120000);
+        await audio.play();
+        return;
+      }
+    } catch {
+      // Gracefully fall back to browser synthesis
+    }
+
+    // 2. Local browser Web Speech API fallback
+    speakWithBrowser(text, finish, generation);
   });
   const submit = async (text: string) => {
     const c = control.current;

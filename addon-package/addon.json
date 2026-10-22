@@ -1,0 +1,50 @@
+{
+  "$schema": "https://developer.amazon.com/schemas/alexaplus/addon/manifest/v1.json",
+  "manifestVersion": "1.0",
+  "addonId": "amzn1.alexa.addon.shiftweave",
+  "storeListing": {
+    "locales": {
+      "en-US": {
+        "name": "ShiftWeave Nursing Handoff",
+        "shortDescription": "Ambient ICU nursing shift handoff, task tracking, and workflow recovery companion.",
+        "fullDescription": "ShiftWeave is a protocol-native ambient assistant for ICU and ward nurses.\n\nKey Capabilities:\n- Real-time discovery of assigned clinical and operational tasks\n- Grounded SBAR handoff synthesis between outgoing and incoming nurses\n- Cross-system discrepancy detection (EHR orders vs nursing bedside notes)\n- Zero-loss checkpointing & recovery from workflow interruptions\n- Zero autonomous diagnoses or order modifications (strict nursing boundary)",
+        "examplePhrases": [
+          "Alexa, ask ShiftWeave what tasks Seema left unresolved",
+          "Alexa, ask ShiftWeave for my shift handoff summary",
+          "Alexa, ask ShiftWeave to check ICU room 305"
+        ],
+        "keywords": [
+          "healthcare",
+          "nursing",
+          "handoff",
+          "hospital",
+          "ehr",
+          "icu",
+          "task management"
+        ]
+      }
+    }
+  },
+  "integrations": [
+    {
+      "type": "MCP",
+      "config": {
+        "protocolVersion": "2025-11-25",
+        "transport": "STREAMABLE_HTTP",
+        "endpoints": {
+          "default": {
+            "uri": "https://hourly-ceiling-tribute-tickets.trycloudflare.com/mcp",
+            "ssl": true
+          }
+        }
+      }
+    }
+  ],
+  "privacyAndCompliance": {
+    "privacyPolicyUrl": "https://shiftweave.health/privacy",
+    "termsOfUseUrl": "https://shiftweave.health/terms",
+    "containsAds": false,
+    "isChildDirected": false,
+    "usesPersonalInfo": true
+  }
+}
