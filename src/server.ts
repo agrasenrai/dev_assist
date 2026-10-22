@@ -19,7 +19,7 @@ import { EpicWriteBackService } from "./services/epic-writeback.service.js";
 import { EpicNoteService } from './services/epic-note.service.js';
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
 import { VoiceService } from "./services/voice.service.js";
-import { host, allowedOrigins } from './runtime-config.js';
+import { host, allowedOrigins, publicOrigin } from './runtime-config.js';
 import { MCPClientBridge } from './agent/mcp-client-bridge.js';
 import { runVoiceTurn } from './services/voice-agent.service.js';
 import { readEpicContext } from './services/epic-context.service.js';
@@ -487,7 +487,18 @@ app.use(express.json({ limit: '256kb' }));
 // Enable CORS for React Dashboard
 app.use((_req, res, next) => {
   const origin = _req.headers.origin;
-  if (origin && !allowedOrigins.has(origin)) {
+  const hostHeader = _req.get('host') || '';
+  const hostWithoutPort = hostHeader.split(':')[0] || '';
+  let isSameHost = false;
+  if (origin && hostHeader) {
+    try {
+      const originUrl = new URL(origin);
+      isSameHost = originUrl.host === hostHeader || originUrl.hostname === hostWithoutPort;
+    } catch {}
+  }
+  const allowAny = publicOrigin === '*' || allowedOrigins.has('*') || process.env.ALLOW_ANY_ORIGIN === 'true';
+
+  if (origin && !isSameHost && !allowAny && !allowedOrigins.has(origin)) {
     res.status(403).json({ error: 'Origin is not allowed' });
     return;
   }

@@ -3,16 +3,17 @@
 This document records the deployment completed on **22 October 2026** and the
 repeatable process for updating the online application.
 
-The deployment is verified for **synthetic/demo use over temporary HTTP**. It
-is not yet suitable for real credentials, PHI, or production clinical use
-because no domain name or trusted HTTPS certificate has been configured.
+**HTTPS is now live** via `32.189.84.182.nip.io` with a valid Let's Encrypt
+certificate issued automatically by Caddy. Microphone access (required for
+Alexa+ voice features) works in all modern browsers.
 
 ## 1. What was deployed
 
 ShiftWeave is running as a single ARM64 EC2 host:
 
 ```text
-Public URL:       http://32.189.84.182
+Public URL (HTTP redirect): http://32.189.84.182.nip.io  →  308 → HTTPS
+Public URL (HTTPS):         https://32.189.84.182.nip.io
 AWS account:      540087632943
 AWS region:       us-west-2
 Instance:         i-08e66aa7d1bdd0c6c

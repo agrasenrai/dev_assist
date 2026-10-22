@@ -1,0 +1,1 @@
+{"commands":["printf '{$DOMAIN} {\n  reverse_proxy app:3000 {\n    flush_interval -1\n  }\n  header {\n    X-Content-Type-Options nosniff\n    Referrer-Policy no-referrer\n  }\n}' > /mnt/shiftweave/deploy/Caddyfile && cat /mnt/shiftweave/deploy/Caddyfile"]}
