@@ -1,0 +1,2000 @@
+# ShiftWeave Full AWS Deployment Runbook
+
+This document describes how to deploy the complete ShiftWeave project to AWS:
+
+```text
+React dashboard
++ Express backend
++ MCP Streamable HTTP server
++ SQLite workflow database
++ Epic adapter
++ optional Bedrock/Gemini adapter
++ Caddy HTTPS proxy
++ durable checkpoints
++ handoffs, tasks, conflicts, audit logs, and recovery
+```
+
+The authoritative target architecture for this runbook is:
+
+```text
+Judges / MCP clients / browser (Alexa+-style simulator)
+                         |
+                         | HTTPS 443
+                         v
+                 Elastic IP + DNS A record
+                         |
+                         v
+        Account A: EC2 t4g.medium (us-west-2)
+        ├── Caddy
+        │   └── TLS, compression, reverse proxy,
+        │       no buffering for /mcp
+        ├── ShiftWeave application
+        │   ├── Express + React production build
+        │   ├── Public MCP server at /mcp
+        │   ├── Workflow services + SQLite WAL
+        │   ├── Alexa+-style simulator agent
+        │   │   ├── STS AssumeRole to Account B
+        │   │   └── MCPClientBridge to
+        │   │       http://127.0.0.1:<port>/mcp
+        │   └── No model calls inside MCP tool handlers
+        └── Encrypted EBS gp3
+            ├── SQLite database and WAL files
+            └── local backup staging
+
+        Account A supporting services
+        ├── ECR: immutable ARM64 image
+        ├── SSM Parameter Store: configuration and SecureString values
+        ├── SSM Session Manager: host access without public SSH
+        ├── CloudWatch: logs, metrics and alarms
+        ├── EBS snapshots: volume recovery
+        ├── S3: off-host SQLite backups
+        └── AWS Budgets: Account A spend guardrail
+
+        Account B supporting services
+        ├── Bedrock runtime
+        ├── tightly scoped cross-account inference role
+        └── AWS Budget: Bedrock spend guardrail
+```
+
+---
+
+## 1. Important security warning
+
+The local `.env` file contains sensitive configuration.
+
+Before deploying:
+
+1. Do not upload the file to GitHub.
+2. Do not copy it into the Docker image.
+3. Do not send it through chat or email.
+4. Rotate any credentials that were previously exposed.
+5. Generate separate production credentials.
+
+Rotate or replace:
+
+- AWS access keys
+- Epic credentials
+- Epic private-key passphrase
+- MCP authentication token
+- Demo password
+- Gemini API key
+- Any production API credentials
+
+Use SSM Parameter Store `SecureString` values for the deployment configuration described below. Use Secrets Manager instead when a value requires secret rotation workflows or when the private key must be managed as a dedicated secret. In either case, the running application must actually retrieve the values; storing them in AWS alone does not configure the container.
+
+---
+
+## 1A. Authoritative target architecture
+
+This runbook deploys the complete ShiftWeave application, not an MCP-only process:
+
+```text
+Public HTTPS request
+    -> Elastic IP / DNS
+    -> Caddy on Account A EC2
+    -> ShiftWeave Express process
+    -> React dashboard, REST APIs, or public /mcp
+    -> validated workflow services
+    -> SQLite on the attached EBS volume
+```
+
+The internal simulator path is deliberately separate from the public path:
+
+```text
+Alexa+-style simulator agent
+    -> MCPClientBridge
+    -> http://127.0.0.1:<port>/mcp
+    -> the same session-isolated MCP server implementation
+```
+
+The loopback address means the bridge does not traverse the public DNS name, Elastic IP, Caddy, or the internet. It is still an HTTP MCP request, but it is host-local. Do not expose the bridge listener on `0.0.0.0`; only the public Express `/mcp` listener is externally reachable through Caddy.
+
+The agent/model boundary is:
+
+```text
+Simulator agent
+    -> STS AssumeRole
+    -> Account B Bedrock runtime
+    -> model planning response
+    -> MCPClientBridge
+    -> deterministic MCP tool call
+    -> ShiftWeave workflow service
+```
+
+MCP tool handlers do not call Bedrock. They validate arguments, enforce workflow and clinical boundaries, perform the requested deterministic operation, persist idempotency/checkpoint/audit state, and return structured results. The model may plan a tool call, but it cannot authorize custody transfer, resolve a conflict, administer medication, change a clinical order, or publish a note without the existing deterministic guards and human review.
+
+### Account ownership
+
+| Resource | Account | Purpose |
+|---|---|---|
+| EC2, Elastic IP, EBS, ECR | Account A | Host and application runtime |
+| SSM Parameter Store | Account A | Runtime configuration and protected values |
+| SSM Session Manager | Account A | SSH-less host administration |
+| CloudWatch and EBS snapshots | Account A | Runtime observability and storage recovery |
+| S3 backup bucket | Account A | Off-host SQLite-consistent backups |
+| Account A budget | Account A | Host and infrastructure spend guardrail |
+| Cross-account Bedrock role | Account B | Narrow trust boundary for model invocation |
+| Bedrock runtime and model usage | Account B | Model calls and AI spend |
+| Account B budget | Account B | Bedrock spend guardrail |
+
+This is a single-instance, stateful architecture. It is not multi-AZ, horizontally scalable, or zero-downtime. SQLite remains attached to one EC2 instance, and active MCP sessions remain process-local. Durable workflow checkpoints survive restarts; an HTTP MCP session may need to be re-established after a restart.
+
+### Why the internal bridge is local
+
+The simulator agent and MCP server run in the same ShiftWeave deployment. Calling `127.0.0.1`:
+
+- avoids an unnecessary public network hop;
+- avoids DNS, TLS termination, and Internet Gateway traversal for internal traffic;
+- keeps the public MCP surface separate from the internal agent loop;
+- preserves the same MCP discovery and tool contracts;
+- does not imply that the model is embedded in the MCP server.
+
+The loopback path is not a substitute for authentication on the public endpoint. External clients still use HTTPS and the configured MCP bearer token.
+
+### Why this does not automatically reduce TTFT
+
+The current application buffers model responses and does not expose true token streaming to the browser. Its timing events represent complete model-planning, tool, and voice-turn durations, not browser-visible first-token latency.
+
+The architecture can reduce avoidable local overhead by keeping the MCP bridge on loopback and placing EC2 and Bedrock in the same region, but the dominant latency is normally the Bedrock request, model selection, model queueing, prompt/tool-schema size, and number of planning iterations. Do not claim a TTFT improvement from `t4g.medium` without a controlled benchmark.
+
+Measure these separately:
+
+```text
+model request start -> first model event received
+model request start -> complete model response
+MCP tool start       -> tool result
+voice turn start     -> final rendered response
+```
+
+Report warm/cold runs, successful/failed calls, sample counts, p50 and p95. If true TTFT is required, implement and validate provider streaming and cancellation-aware UI behavior separately; Streamable HTTP alone does not prove token streaming.
+
+---
+
+## 2. Deployment scope
+
+This deployment hosts the complete application, not only MCP.
+
+### Public endpoints
+
+After deployment, the application will be available at:
+
+```text
+https://mcp.example.com/
+```
+
+The MCP endpoint will be:
+
+```text
+https://mcp.example.com/mcp
+```
+
+Other endpoints include:
+
+```text
+https://mcp.example.com/readyz
+https://mcp.example.com/health
+https://mcp.example.com/api/tasks
+https://mcp.example.com/api/handoffs
+https://mcp.example.com/api/conflicts
+https://mcp.example.com/api/execution-trace
+```
+
+The local URL:
+
+```text
+http://localhost:3000/mcp
+```
+
+is only for local execution. External MCP clients must use the public HTTPS URL.
+
+---
+
+## 3. Important architectural limitations
+
+The current application uses:
+
+- SQLite
+- One local database file
+- SQLite WAL
+- One application writer
+- In-memory active MCP sessions
+- Durable workflow checkpoints
+
+Therefore, the first AWS deployment must use:
+
+```text
+One EC2 instance
+One ShiftWeave application replica
+One SQLite database
+One attached EBS data volume
+```
+
+Do not initially deploy:
+
+- Multiple application replicas
+- An Auto Scaling Group
+- Multiple EC2 instances using one SQLite database
+- SQLite on EFS
+- SQLite on S3
+- ECS/Fargate with ephemeral storage
+- A public port 3000
+
+The deployment is appropriate for a demo, pilot, or controlled small deployment. It is not yet a highly available multi-instance clinical platform.
+
+---
+
+## 4. Required AWS services
+
+| Purpose | AWS service |
+|---|---|
+| Application host | Amazon EC2 |
+| Persistent live database storage | Amazon EBS |
+| Container image registry | Amazon ECR |
+| DNS | Amazon Route 53 |
+| Runtime configuration and protected values | AWS Systems Manager Parameter Store |
+| High-sensitivity secret rotation, if required | AWS Secrets Manager |
+| Database backup copies | Amazon S3 |
+| Host administration | AWS Systems Manager Session Manager |
+| Optional AI provider | Amazon Bedrock |
+| Logs and alarms | Amazon CloudWatch |
+| Administrative audit | AWS CloudTrail |
+| Spend guardrails | AWS Budgets in Accounts A and B |
+| TLS | Caddy or ACM/ALB |
+
+The simplest current deployment uses Caddy for HTTPS and one EC2 instance.
+
+---
+
+## 5. Required local tools
+
+Install and verify:
+
+```text
+Node.js 24
+npm
+Docker Desktop
+AWS CLI
+Git
+```
+
+Check versions:
+
+```powershell
+node --version
+npm --version
+docker --version
+aws --version
+git --version
+```
+
+Use Node 24 for this project because the native SQLite dependency previously had a startup issue under the earlier Node version.
+
+---
+
+## 6. Choose deployment values
+
+Define these values before starting:
+
+```text
+AWS_REGION=us-west-2
+AWS_ACCOUNT_ID=your-account-id
+APP_NAME=shiftweave
+ECR_REPOSITORY=shiftweave
+DOMAIN=mcp.your-domain.com
+IMAGE_TAG=2026-10-22-001
+EC2_NAME=shiftweave-production
+BEDROCK_ACCOUNT_ID=account-b-id
+BEDROCK_ROLE_NAME=ShiftWeaveBedrockInvokeRole
+```
+
+Example:
+
+```text
+AWS_REGION=us-west-2
+ECR_REPOSITORY=shiftweave
+DOMAIN=mcp.example.com
+IMAGE_TAG=2026-10-22-001
+```
+
+Use a unique immutable image tag for every deployment.
+
+The target EC2 instance is `t4g.medium`, which is ARM64/Graviton. Account A and Account B are intentionally separate. Bedrock calls use the region configured for the target inference model; keep the EC2 and Bedrock runtime regions aligned unless an approved inference profile requires another routing pattern.
+
+Do not rely only on:
+
+```text
+latest
+```
+
+---
+
+## 7. Validate the project locally
+
+Open PowerShell in the repository root:
+
+```powershell
+cd C:\Users\sshat\Downloads\dev_assist
+```
+
+Install dependencies:
+
+```powershell
+npm ci
+```
+
+Build backend and frontend:
+
+```powershell
+npm run build
+```
+
+Run preflight:
+
+```powershell
+npm run preflight
+```
+
+Start the complete application:
+
+```powershell
+npm start
+```
+
+The application includes:
+
+- Express
+- React dashboard
+- MCP server
+- SQLite
+- Workflow services
+- Epic adapter
+- Optional model adapters
+
+In a second PowerShell window:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:3000/readyz
+Invoke-WebRequest http://127.0.0.1:3000/health
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+Verify:
+
+- Dashboard opens
+- Login works
+- Tasks display
+- Handoffs display
+- Conflicts display
+- Workflow traces display
+- SQLite remains open
+- MCP endpoint responds
+- A test workflow creates a durable checkpoint
+
+Do not continue if the application exits immediately or SQLite fails to open.
+
+---
+
+## 8. Confirm MCP requirements
+
+The project must continue to use:
+
+```text
+MCP protocol: 2025-11-25
+Transport: Streamable HTTP
+Endpoint: /mcp
+```
+
+The public endpoint will be:
+
+```text
+https://mcp.your-domain.com/mcp
+```
+
+An MCP client must:
+
+1. Connect over HTTPS.
+2. Send the MCP bearer token.
+3. Initialize using protocol `2025-11-25`.
+4. Retain the returned session identifier.
+5. Use Streamable HTTP.
+6. Create a new MCP session after server restart if the old HTTP session is no longer valid.
+7. Resume durable workflows using the saved workflow ID and request key.
+
+---
+
+## 9. Build the Docker image
+
+The existing `Dockerfile` builds:
+
+- Backend TypeScript
+- React frontend
+- Production Node dependencies
+- Non-root runtime image
+- Readiness health check
+
+Because the target instance is ARM64, build and publish an ARM64 image. A normal Docker build on an x86 Windows machine may produce `linux/amd64`, which cannot be assumed to run on `t4g.medium`.
+
+Create or select a Buildx builder:
+
+```powershell
+docker buildx create --name shiftweave-builder --use
+docker buildx inspect --bootstrap
+```
+
+Build and test the target image locally:
+
+```powershell
+docker buildx build `
+  --platform linux/arm64 `
+  -t shiftweave:initial `
+  --load `
+  .
+```
+
+Inspect the local image:
+
+```powershell
+docker image inspect shiftweave:initial `
+  --format "{{.Os}}/{{.Architecture}}"
+```
+
+The result must be:
+
+```text
+linux/arm64
+```
+
+The native `better-sqlite3` dependency is the critical compatibility check. The source code is portable, but the image must contain a Linux ARM64-compatible native module. Run the image and verify `/readyz`, SQLite initialization, and one database query before pushing it.
+
+If you also need an x86 image, publish a multi-architecture manifest:
+
+```powershell
+docker buildx build `
+  --platform linux/amd64,linux/arm64 `
+  -t ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/shiftweave:TAG `
+  --push `
+  .
+```
+
+The image contains the application code, but it must not contain:
+
+- Production `.env`
+- Epic private keys
+- AWS access keys
+- MCP tokens
+- Production database files
+
+---
+
+## 10. Create the ECR repository
+
+Authenticate to AWS first:
+
+```powershell
+aws configure
+```
+
+For production, prefer an IAM role or short-lived credentials rather than permanent access keys.
+
+Verify the current AWS account:
+
+```powershell
+aws sts get-caller-identity
+```
+
+Set the region:
+
+```powershell
+$env:AWS_REGION = "YOUR_REGION"
+```
+
+Create a private ECR repository:
+
+```powershell
+aws ecr create-repository `
+  --repository-name shiftweave `
+  --image-tag-mutability IMMUTABLE `
+  --image-scanning-configuration scanOnPush=true `
+  --region $env:AWS_REGION
+```
+
+Get the account ID:
+
+```powershell
+$ACCOUNT_ID = aws sts get-caller-identity `
+  --query Account `
+  --output text
+```
+
+Log Docker into ECR:
+
+```powershell
+aws ecr get-login-password --region $env:AWS_REGION |
+  docker login `
+    --username AWS `
+    --password-stdin `
+    "$ACCOUNT_ID.dkr.ecr.$env:AWS_REGION.amazonaws.com"
+```
+
+Set the image tag:
+
+```powershell
+$TAG = "2026-10-22-001"
+```
+
+Tag the image:
+
+```powershell
+docker tag shiftweave:initial `
+  "$ACCOUNT_ID.dkr.ecr.$env:AWS_REGION.amazonaws.com/shiftweave:$TAG"
+```
+
+Push it:
+
+```powershell
+docker push `
+  "$ACCOUNT_ID.dkr.ecr.$env:AWS_REGION.amazonaws.com/shiftweave:$TAG"
+```
+
+The final image reference will be:
+
+```text
+ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/shiftweave:2026-10-22-001
+```
+
+---
+
+## 11. Create the EC2 IAM role
+
+Create an EC2 instance role with only the permissions required by the application.
+
+The role may need:
+
+```text
+AmazonSSMManagedInstanceCore
+ECR image pull permissions
+Secrets Manager read permission for selected secrets
+S3 write permission for the backup bucket
+Bedrock invoke permission only if Bedrock is enabled
+CloudWatch log permissions if logs are shipped there
+```
+
+Do not attach:
+
+```text
+AdministratorAccess
+PowerUserAccess
+```
+
+to the EC2 instance role.
+
+Limit resource permissions to:
+
+- One ECR repository
+- One Secrets Manager secret or secret path
+- One S3 backup bucket
+- Only the selected Bedrock model or inference profile
+- One CloudWatch log group
+
+Also restrict `iam:PassRole` permissions for the human deployment identity. Do not use an unrestricted `iam:PassRole` on all roles.
+
+---
+
+## 11A. Configure cross-account Bedrock access
+
+The proposed architecture places the application in Account A and Bedrock in Account B:
+
+```text
+Account A EC2 instance role
+        |
+        | sts:AssumeRole
+        v
+Account B ShiftWeaveBedrockInvokeRole
+        |
+        v
+Amazon Bedrock runtime
+```
+
+This is optional. Keep `LLM_PROVIDER=mock` until the non-AI application path is healthy.
+
+### Account A: caller role
+
+The EC2 instance role in Account A needs:
+
+- `sts:AssumeRole` on exactly the Account B Bedrock role ARN;
+- ECR pull permissions for the ShiftWeave repository;
+- SSM Parameter Store read permissions for the approved parameter path;
+- S3 write/read permissions for the backup bucket;
+- Systems Manager and CloudWatch permissions required by the host.
+
+Do not grant `sts:AssumeRole` on `Resource: "*"`.
+
+### Account B: target role
+
+Create `ShiftWeaveBedrockInvokeRole` in Account B with a trust policy that names the exact Account A EC2 role ARN as the trusted principal. Add `aws:SourceAccount` and an external ID or equivalent confused-deputy control where appropriate for the selected trust design. Do not trust the entire Account A root unless that is an explicitly reviewed organization-wide design.
+
+The target role's permissions should allow only the Bedrock runtime actions needed by the adapter, such as the selected model invocation action, and only the approved model or inference-profile resources where the service supports resource scoping. Avoid `bedrock:*` and `AmazonBedrockFullAccess`.
+
+### Application behavior
+
+The simulator agent must obtain temporary credentials by calling STS `AssumeRole`. It must not use long-lived Account B access keys. Record the assumed role ARN and provider-labelled timing outcome in the application audit/trace without recording access tokens.
+
+Verify all of the following before enabling Bedrock:
+
+1. Account A can assume the exact Account B role.
+2. The temporary credentials are used by the Bedrock runtime client.
+3. Account B has model access enabled in the target Region.
+4. The model or inference profile is available to the role.
+5. The Bedrock request sets an explicit maximum output token count.
+6. Access-denied, throttling, timeout, and model errors remain visible.
+7. Bedrock calls are recorded in CloudTrail in Account B.
+8. Both accounts have working budget alarms.
+
+Keep the MCP tools model-independent: Bedrock planning produces a proposed tool call, while tool handlers execute deterministic, validated operations. Do not move model calls into tool handlers to simplify the cross-account wiring.
+
+---
+
+## 12. Create the EC2 instance
+
+Create one Linux EC2 instance.
+
+Recommended starting design:
+
+```text
+Operating system: Ubuntu LTS or Amazon Linux
+Architecture: ARM64 / AWS Graviton
+Instance type: t4g.medium
+Region: us-west-2
+Memory: approximately 4 GiB starting point
+Replicas: one
+Availability Zones: one
+IMDSv2: required
+Administration: Session Manager
+Public ports: 80 and 443 only
+```
+
+A `t4g.medium` starting size is only an initial deployment suggestion. Monitor actual CPU and memory usage before deciding whether to resize. Confirm the selected Region has capacity and that the account has quota for the instance family.
+
+Attach:
+
+- The EC2 IAM instance role
+- An encrypted root EBS volume
+- A separate encrypted data EBS volume
+
+Enable:
+
+```text
+DeleteOnTermination=false
+```
+
+for the data volume if you want to preserve it while replacing the EC2 host.
+
+Ensure:
+
+- The instance is in a subnet with internet access for the first deployment.
+- The route table can reach the internet.
+- The instance can reach ECR, S3, Parameter Store, CloudWatch, STS, and Epic.
+- Systems Manager agent can connect.
+
+---
+
+## 13. Configure the EC2 security group
+
+Allow inbound traffic:
+
+```text
+TCP 80  from 0.0.0.0/0
+TCP 443 from 0.0.0.0/0
+```
+
+Do not expose:
+
+```text
+TCP 3000
+```
+
+Do not expose SSH publicly unless temporarily required.
+
+If SSH is temporarily enabled:
+
+```text
+TCP 22 from your current public IP only
+```
+
+Remove the rule afterward.
+
+The application listens on port 3000 internally. Caddy exposes ports 80 and 443 publicly.
+
+---
+
+## 14. Connect to EC2 using Session Manager
+
+Use AWS Systems Manager Session Manager instead of opening SSH.
+
+Once connected, verify:
+
+```bash
+whoami
+uname -a
+```
+
+Install Docker using the official installation procedure for the selected Linux distribution.
+
+Verify:
+
+```bash
+docker --version
+docker compose version
+```
+
+Enable Docker:
+
+```bash
+sudo systemctl enable --now docker
+```
+
+Create the application directory:
+
+```bash
+sudo mkdir -p /opt/shiftweave
+sudo chown "$USER":"$USER" /opt/shiftweave
+cd /opt/shiftweave
+```
+
+---
+
+## 15. Prepare the EBS data volume
+
+Identify the attached data volume:
+
+```bash
+lsblk
+```
+
+Format it only if it is a new, empty volume. Do not format a volume that contains existing data.
+
+Mount it at:
+
+```text
+/mnt/shiftweave
+```
+
+Create directories:
+
+```bash
+sudo mkdir -p /mnt/shiftweave/storage
+sudo mkdir -p /mnt/shiftweave/backups
+sudo mkdir -p /mnt/shiftweave/keys
+sudo chown -R "$USER":"$USER" /mnt/shiftweave
+```
+
+The live database will be:
+
+```text
+/mnt/shiftweave/storage/shiftweave.db
+```
+
+SQLite may also create:
+
+```text
+/mnt/shiftweave/storage/shiftweave.db-wal
+/mnt/shiftweave/storage/shiftweave.db-shm
+```
+
+Do not manually delete these while the application is running.
+
+Configure the mount in `/etc/fstab` using the volume UUID so it automatically mounts after reboot.
+
+Verify:
+
+```bash
+mount | grep shiftweave
+df -h /mnt/shiftweave
+```
+
+---
+
+## 16. Do not use EFS or S3 for the live SQLite database
+
+Use:
+
+```text
+SQLite -> local Linux filesystem -> EBS
+```
+
+Do not use:
+
+```text
+SQLite -> EFS
+SQLite -> NFS
+SQLite -> S3
+SQLite -> multiple EC2 hosts
+```
+
+The application uses SQLite WAL and local locking. EBS is attached to one EC2 instance and is suitable for this one-writer deployment.
+
+S3 is only for backup copies.
+
+---
+
+## 17. Create the production Compose file
+
+Copy the project deployment files to:
+
+```text
+/opt/shiftweave
+```
+
+The production Compose configuration should use the ECR image and EBS bind mounts.
+
+Example:
+
+```yaml
+services:
+  app:
+    image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/shiftweave:2026-10-22-001
+    env_file:
+      - .env.deploy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      SQLITE_DB_PATH: /app/storage/shiftweave.db
+      PRIVATE_KEY_PATH: /run/epic/private_key.pem
+    volumes:
+      - /mnt/shiftweave/storage:/app/storage
+      - /mnt/shiftweave/backups:/app/backups
+      - /mnt/shiftweave/keys:/run/epic:ro
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  https:
+    image: caddy:2
+    env_file:
+      - .env.deploy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
+```
+
+Replace:
+
+```text
+ACCOUNT_ID
+REGION
+2026-10-22-001
+```
+
+with real values.
+
+The application has one replica. Do not add:
+
+```yaml
+deploy:
+  replicas: 2
+```
+
+---
+
+## 18. Configure Caddy
+
+Update the domain in `deploy/Caddyfile`:
+
+```text
+mcp.your-domain.com {
+  reverse_proxy app:3000 {
+    flush_interval -1
+  }
+
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+  }
+}
+```
+
+Caddy forwards all public traffic:
+
+```text
+https://mcp.your-domain.com/*
+        |
+        v
+http://app:3000/*
+```
+
+This includes:
+
+```text
+/
+/mcp
+/api/*
+/health
+/readyz
+```
+
+---
+
+## 19. Configure DNS
+
+Create a DNS A record:
+
+```text
+mcp.your-domain.com -> EC2 public IP or Elastic IP
+```
+
+If using Route 53, create the record in the hosted zone.
+
+Make sure the DNS name resolves:
+
+```powershell
+Resolve-DnsName mcp.your-domain.com
+```
+
+Wait until it points to the EC2 public address.
+
+Caddy can only obtain a public certificate when:
+
+- DNS points to the server
+- Port 80 is reachable
+- Port 443 is reachable
+- The domain is correct in the Caddyfile
+
+---
+
+## 20. Configure production environment variables
+
+Create this file only on EC2:
+
+```text
+/opt/shiftweave/.env.deploy
+```
+
+Set permissions:
+
+```bash
+chmod 600 /opt/shiftweave/.env.deploy
+```
+
+Example starting configuration:
+
+```env
+NODE_ENV=production
+HOST=0.0.0.0
+PORT=3000
+
+DOMAIN=mcp.your-domain.com
+PUBLIC_ORIGIN=https://mcp.your-domain.com
+
+DEMO_USER=replace-with-demo-user
+DEMO_PASSWORD=replace-with-long-random-password
+MCP_AUTH_TOKEN=replace-with-long-random-token
+
+SQLITE_DB_PATH=/app/storage/shiftweave.db
+
+LLM_PROVIDER=mock
+AWS_REGION=replace-with-region
+
+EPIC_READS_ENABLED=false
+EPIC_WRITES_ENABLED=false
+
+EPIC_CLIENT_ID=
+EPIC_KID=
+EPIC_TOKEN_URL=
+EPIC_FHIR_BASE_URL=
+EPIC_TEST_PATIENT_IDS=
+PRIVATE_KEY_PATH=/run/epic/private_key.pem
+```
+
+The demo password must meet the application's configured minimum length. The MCP token must also be sufficiently long.
+
+Generate secure random values instead of inventing short values.
+
+Do not put secrets in:
+
+- React/Vite variables
+- The Dockerfile
+- Git
+- ECR image layers
+- Browser local storage
+- CloudWatch logs
+
+---
+
+## 21. Configure SSM Parameter Store
+
+The target architecture uses Systems Manager Parameter Store for runtime configuration and protected values in Account A.
+
+Use a consistent path:
+
+```text
+/shiftweave/production/*
+```
+
+Use `SecureString` with a customer-managed KMS key for:
+
+```text
+/shiftweave/production/DEMO_PASSWORD
+/shiftweave/production/MCP_AUTH_TOKEN
+/shiftweave/production/EPIC_CLIENT_ID
+/shiftweave/production/EPIC_KID
+/shiftweave/production/EPIC_TOKEN_URL
+/shiftweave/production/EPIC_FHIR_BASE_URL
+/shiftweave/production/EPIC_TEST_PATIENT_IDS
+/shiftweave/production/BEDROCK_ROLE_ARN
+/shiftweave/production/BEDROCK_MODEL_ID
+```
+
+Non-secret values may use `String`, but keep the same path and access policy:
+
+```text
+/shiftweave/production/NODE_ENV
+/shiftweave/production/HOST
+/shiftweave/production/PORT
+/shiftweave/production/PUBLIC_ORIGIN
+/shiftweave/production/LLM_PROVIDER
+/shiftweave/production/EPIC_READS_ENABLED
+/shiftweave/production/EPIC_WRITES_ENABLED
+```
+
+The EC2 role must be allowed to call `ssm:GetParametersByPath` only for `/shiftweave/production`, plus `kms:Decrypt` only on the KMS key used by those parameters. Do not grant broad `ssm:*` or `kms:Decrypt` on all keys.
+
+Parameter Store does not automatically inject values into Docker. Choose and document one verified mechanism:
+
+1. A deployment script reads the parameters and writes a mode-600 `.env.deploy` file before `docker compose up`; or
+2. The application startup code loads the parameter path before runtime configuration is evaluated.
+
+Do not combine both mechanisms without defining precedence. Do not leave stale secrets in shell history or temporary files.
+
+Use Secrets Manager instead of Parameter Store when the private key or another value needs managed rotation, binary secret handling, or a dedicated secret lifecycle. If Secrets Manager is selected, the same rule applies: the running application or deployment process must actually retrieve the secret.
+
+---
+
+## 22. Configure the Epic private key
+
+Place only the production Epic key at:
+
+```text
+/mnt/shiftweave/keys/private_key.pem
+```
+
+Set permissions:
+
+```bash
+chmod 600 /mnt/shiftweave/keys/private_key.pem
+```
+
+The Compose file mounts it read-only:
+
+```yaml
+- /mnt/shiftweave/keys:/run/epic:ro
+```
+
+The application reads:
+
+```text
+/run/epic/private_key.pem
+```
+
+Use a separate production key pair. Do not reuse the sandbox key.
+
+---
+
+## 23. Configure Bedrock optionally
+
+Start with mock mode:
+
+```env
+LLM_PROVIDER=mock
+```
+
+This keeps the deployment free from model calls and simplifies initial verification.
+
+When ready to test Bedrock:
+
+```env
+LLM_PROVIDER=bedrock
+AWS_REGION=us-west-2
+BEDROCK_MODEL_ID=approved-model-id
+BEDROCK_ROLE_ARN=arn:aws:iam::ACCOUNT_B_ID:role/ShiftWeaveBedrockInvokeRole
+```
+
+The simulator agent assumes `BEDROCK_ROLE_ARN` from the Account A EC2 role and uses the temporary credentials for the Account B Bedrock runtime client. Verify the role ARN, external ID/trust conditions, target Region, and model access before enabling the provider.
+
+Do not put these in the server environment if an instance role is available:
+
+```env
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+Bedrock remains optional. The application should still run in mock mode.
+
+For interactive use, prefer the Bedrock Converse streaming API through the SDK when the application is ready to expose partial output. The current runbook does not claim true TTFT because the current application buffers model responses. Always set an explicit maximum output token count and use the repository's provider error handling; do not add hidden fallback text when a Bedrock call fails.
+
+The MCP server remains model-independent:
+
+```text
+Bedrock planner -> proposed tool call -> MCPClientBridge -> MCP server
+MCP tool handler -> validation + deterministic workflow operation
+```
+
+Never place Bedrock calls inside MCP tool handlers.
+
+---
+
+## 24. Pull the image on EC2
+
+Log in to ECR:
+
+```bash
+aws ecr get-login-password --region REGION |
+  docker login \
+    --username AWS \
+    --password-stdin \
+    ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com
+```
+
+Pull the exact immutable image:
+
+```bash
+docker compose pull
+```
+
+Verify the image:
+
+```bash
+docker images
+```
+
+---
+
+## 25. Validate the Compose configuration
+
+Run:
+
+```bash
+docker compose config --quiet
+```
+
+If the command reports an error, fix the Compose or environment configuration before continuing.
+
+Run the application preflight:
+
+```bash
+docker compose run --rm app node build/scripts/preflight.js
+```
+
+Do not import demo fixtures into a production clinical database.
+
+For synthetic/demo data only, use:
+
+```bash
+docker compose run --rm app node build/src/db/ingest.js
+```
+
+---
+
+## 26. Start the complete application
+
+Start both containers:
+
+```bash
+docker compose up -d
+```
+
+Check status:
+
+```bash
+docker compose ps
+```
+
+Expected topology:
+
+```text
+https container: running
+app container: running and healthy
+```
+
+View logs:
+
+```bash
+docker compose logs --tail=100 app
+docker compose logs --tail=100 https
+```
+
+The `app` container runs:
+
+- Express
+- React static files
+- MCP
+- APIs
+- SQLite
+- workflow services
+- provider adapters
+
+The `https` container runs Caddy.
+
+---
+
+## 27. Test local container health
+
+From EC2:
+
+```bash
+curl -f http://127.0.0.1:3000/readyz
+```
+
+Check health:
+
+```bash
+curl -f http://127.0.0.1:3000/health
+```
+
+The application port is internal to EC2 and Docker. Do not expose it publicly.
+
+---
+
+## 28. Test public HTTPS
+
+From your local computer:
+
+```powershell
+Invoke-WebRequest https://mcp.your-domain.com/readyz
+Invoke-WebRequest https://mcp.your-domain.com/health
+```
+
+Open the dashboard:
+
+```text
+https://mcp.your-domain.com
+```
+
+Verify:
+
+- HTTPS certificate is trusted
+- Dashboard loads
+- Login works
+- Static files load
+- API requests succeed
+- Port 3000 is not externally accessible
+- No browser mixed-content warnings appear
+
+---
+
+## 29. Test the MCP endpoint
+
+Use an MCP-compatible client configured with:
+
+```text
+MCP URL:
+https://mcp.your-domain.com/mcp
+```
+
+Configure the bearer token from the server-side environment.
+
+Verify:
+
+1. Connection succeeds.
+2. MCP initialize succeeds.
+3. Protocol version is `2025-11-25`.
+4. Streamable HTTP transport is used.
+5. Tools are discovered.
+6. A read-only tool works.
+7. The returned session header is retained.
+8. A second call using the same session works.
+9. The client can reconnect after a session failure.
+
+Expected endpoint:
+
+```text
+https://mcp.your-domain.com/mcp
+```
+
+Not:
+
+```text
+http://localhost:3000/mcp
+```
+
+---
+
+## 30. Test the full ShiftWeave workflow
+
+Test the complete application, not only MCP.
+
+Verify:
+
+- Dashboard login
+- Nurse selection
+- Assigned task display
+- Task detail display
+- Task change history
+- Handoff context
+- Handoff draft creation
+- Conflict display
+- Explicit custody acceptance
+- Handoff acknowledgement
+- Workflow checkpoint creation
+- Audit event creation
+- Interruption and recovery
+- Idempotent retry
+- Execution trace display
+
+Use synthetic data first.
+
+Make sure failed provider calls are shown as failures. The system must not present unavailable Epic or model data as verified success.
+
+---
+
+## 31. Test SQLite persistence
+
+Check the mounted storage:
+
+```bash
+ls -lah /mnt/shiftweave/storage
+```
+
+Expected files may include:
+
+```text
+shiftweave.db
+shiftweave.db-wal
+shiftweave.db-shm
+```
+
+Restart only the application:
+
+```bash
+docker compose restart app
+```
+
+Wait for health:
+
+```bash
+docker compose ps
+```
+
+Verify that the following remain available:
+
+- Tasks
+- Handoffs
+- Conflicts
+- Workflow runs
+- Checkpoints
+- Operation receipts
+- Audit logs
+- Epic snapshots, if enabled
+
+Do not run:
+
+```bash
+docker compose down -v
+```
+
+That can remove Docker-managed persistent volumes.
+
+---
+
+## 32. Configure SQLite backups
+
+Before updates or schema changes, create a SQLite-consistent backup:
+
+```bash
+docker compose exec app \
+  node build/scripts/backup.js \
+  /app/backups/before-update.db
+```
+
+List backups:
+
+```bash
+ls -lah /mnt/shiftweave/backups
+```
+
+Copy backups to a private S3 bucket.
+
+The backup bucket should use:
+
+- Block Public Access
+- Server-side encryption
+- Versioning
+- Restricted IAM policy
+- Lifecycle retention
+- Optional object lock if required by compliance
+
+Do not copy only the main database file while the application is actively using WAL.
+
+Use the application backup process instead.
+
+---
+
+## 33. Configure EBS snapshots
+
+Create regular snapshots of the data EBS volume.
+
+Use a retention policy that matches your recovery requirements.
+
+EBS snapshots protect against:
+
+- EC2 host failure
+- Volume corruption
+- Accidental deletion
+- Recovery to a replacement instance
+
+EBS snapshots do not replace application-consistent SQLite backups. Use both:
+
+```text
+SQLite backup -> S3
+EBS snapshot -> volume recovery
+```
+
+EBS is Availability-Zone scoped. Restoring to another Availability Zone requires restoring or copying from the snapshot.
+
+---
+
+## 34. Configure monitoring
+
+Monitor:
+
+- EC2 status checks
+- CPU utilization
+- Memory usage
+- Root disk usage
+- Data disk usage
+- EBS volume health
+- Container restarts
+- `/readyz` failures
+- Caddy certificate renewal
+- Application error logs
+- Epic authentication errors
+- Epic partial-read errors
+- MCP initialization failures
+- Backup failures
+- Uncertain external write outcomes
+
+Create alarms for:
+
+- Low free disk space
+- Repeated container restarts
+- EC2 status-check failure
+- Repeated readiness failures
+- High CPU or memory
+- Backup failure
+- Repeated Epic failures
+
+Send logs to encrypted CloudWatch Logs with an appropriate retention period.
+
+Never log:
+
+- Private keys
+- OAuth access tokens
+- MCP tokens
+- AWS secrets
+- Full PHI payloads
+- Passwords
+
+---
+
+## 35. Configure CloudTrail
+
+Enable CloudTrail for administrative audit events.
+
+Monitor sensitive actions such as:
+
+- EC2 instance creation and termination
+- Security group changes
+- EBS volume deletion
+- EBS snapshot deletion
+- IAM role changes
+- Secrets Manager access
+- ECR image changes
+- S3 backup deletion
+- Systems Manager command execution
+
+Use encrypted destinations and restrict log access.
+
+---
+
+## 35A. Configure CloudWatch, alarms, and budgets in both accounts
+
+### Account A observability
+
+Create alarms for:
+
+- EC2 instance status-check failure;
+- low free space on the EBS filesystem containing SQLite;
+- sustained CPU or memory pressure;
+- repeated container restarts;
+- `/readyz` failures;
+- failed backup jobs;
+- Caddy or certificate errors;
+- repeated MCP initialization failures.
+
+Use encrypted CloudWatch Logs with a defined retention period. Restrict log readers. Application logs must not contain access tokens, private keys, MCP bearer tokens, passwords, or unredacted PHI.
+
+### Account B observability
+
+Enable CloudTrail visibility for STS role assumption and Bedrock runtime calls in Account B. Monitor:
+
+- failed `AssumeRole` calls;
+- unexpected principals;
+- unexpected regions;
+- unexpected model or inference-profile identifiers;
+- throttling;
+- access denied;
+- abnormal invocation volume.
+
+Record provider-labelled timing and outcome metadata, but never record temporary credentials or raw secret material.
+
+### Budgets
+
+Create a budget in Account A covering:
+
+```text
+EC2
+EBS
+ECR
+S3
+CloudWatch
+Elastic IP
+data transfer
+```
+
+Create a separate budget in Account B covering:
+
+```text
+Bedrock model usage
+CloudWatch and CloudTrail
+cross-account related usage
+```
+
+Configure warning thresholds and notification recipients before enabling Bedrock. A budget is an alerting guardrail, not a hard invocation limit; enforce hard model boundaries with IAM policy, model allowlists, application rate limits, and explicit provider configuration.
+
+---
+
+## 35B. Validate the ARM64 image before deployment
+
+The target `t4g.medium` is ARM64. Validate the exact image that will run in Account A:
+
+```powershell
+docker buildx imagetools inspect `
+  ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/shiftweave:TAG
+```
+
+The image manifest must include:
+
+```text
+linux/arm64
+```
+
+On an ARM64 test runtime, verify:
+
+```bash
+uname -m
+docker run --rm IMAGE node --version
+docker run --rm IMAGE node -e "const Database=require('better-sqlite3'); const db=new Database(':memory:'); console.log(db.prepare('SELECT 1 AS ok').get()); db.close()"
+```
+
+Expected architecture:
+
+```text
+aarch64
+linux/arm64
+{ ok: 1 }
+```
+
+If you cannot test ARM64 before deployment, use a multi-architecture image and treat the first EC2 launch as a compatibility validation gate. Do not silently fall back to an x86 image on `t4g.medium`.
+
+The Windows development device can remain x86-64. Buildx cross-builds the ARM64 Linux image, but successful source compilation on Windows does not prove that the Linux ARM64 native `better-sqlite3` module works. The image, not the source checkout, is the deployment artifact that must be validated.
+
+---
+
+## 36. Enable production Epic reads carefully
+
+Initially use:
+
+```env
+EPIC_READS_ENABLED=false
+EPIC_WRITES_ENABLED=false
+```
+
+After the infrastructure is verified:
+
+1. Register a separate production Epic application.
+2. Generate a separate production RSA key pair.
+3. Register the production public JWKS.
+4. Configure the production client ID.
+5. Configure the production key ID.
+6. Configure the production token URL.
+7. Configure the production FHIR base URL.
+8. Confirm Epic permissions.
+9. Obtain one approved production patient ID.
+10. Configure only approved patient IDs.
+11. Enable reads:
+
+```env
+EPIC_READS_ENABLED=true
+EPIC_WRITES_ENABLED=false
+```
+
+12. Test read-only access.
+13. Confirm Patient and Encounter mapping.
+14. Confirm Conditions and Allergies.
+15. Confirm MedicationRequest and MedicationAdministration behavior.
+16. Confirm DocumentReference and Binary behavior.
+17. Confirm partial failures are visible.
+18. Confirm source identifiers and timestamps are retained.
+19. Confirm missing data is not represented as a verified negative.
+
+The system does not provide unrestricted hospital-wide Epic enumeration.
+
+---
+
+## 37. Keep Epic write-back disabled
+
+Keep:
+
+```env
+EPIC_WRITES_ENABLED=false
+```
+
+until all of the following are formally approved and verified:
+
+- Epic write permission
+- Resource type and profile
+- Clinical note payload
+- Encounter linkage
+- Practitioner linkage
+- Patient identity
+- Review workflow
+- Human confirmation
+- Remote response reconciliation
+- Ambiguous timeout behavior
+- Duplicate prevention
+- Audit requirements
+
+A generated handoff draft is not the same as a successful Epic write.
+
+---
+
+## 38. Update process
+
+For every application release:
+
+1. Run local tests.
+2. Run the build.
+3. Build a new Docker image.
+4. Push a new immutable ECR tag.
+5. Create a SQLite backup.
+6. Upload the backup to S3.
+7. Pull the new image on EC2.
+8. Run preflight.
+9. Restart the application container.
+10. Leave the EBS storage path unchanged.
+11. Verify health.
+12. Verify MCP.
+13. Test one complete workflow.
+14. Monitor logs.
+
+Example:
+
+```bash
+docker compose exec app \
+  node build/scripts/backup.js \
+  /app/backups/before-update.db
+
+docker compose pull
+
+docker compose run --rm app \
+  node build/scripts/preflight.js
+
+docker compose up -d
+
+docker compose ps
+
+docker compose logs --tail=100 app
+```
+
+Do not delete the data volume during updates.
+
+---
+
+## 39. Rollback process
+
+If the new image fails:
+
+1. Stop the application container.
+2. Change the Compose image back to the previous immutable tag.
+3. Pull the previous image.
+4. Start the previous container.
+5. Verify health.
+6. Verify MCP.
+7. Verify database compatibility.
+8. Review logs.
+9. Do not automatically restore an old database unless necessary.
+
+Example:
+
+```bash
+docker compose down
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+The Compose file must point to the previous known-good image before starting.
+
+Do not use:
+
+```bash
+docker compose down -v
+```
+
+---
+
+## 40. EC2 recovery process
+
+If the EC2 host fails:
+
+1. Launch a replacement EC2 instance.
+2. Attach or restore the encrypted EBS data volume.
+3. Install Docker.
+4. Configure the EC2 IAM role.
+5. Recreate `/opt/shiftweave`.
+6. Restore the Compose files.
+7. Restore `.env.deploy` securely.
+8. Restore the Epic private key.
+9. Authenticate to ECR.
+10. Start the containers.
+11. Point DNS to the replacement host.
+12. Verify `/readyz`.
+13. Verify `/health`.
+14. Verify the dashboard.
+15. Verify MCP.
+16. Verify workflow checkpoints.
+17. Verify backups.
+
+The SQLite database contains the durable workflow state.
+
+Active MCP HTTP sessions may not survive the host replacement. Clients should create a fresh MCP session and resume from durable workflow state.
+
+---
+
+## 41. What this deployment does not provide
+
+This first architecture does not provide:
+
+- Multi-AZ application failover
+- Multiple active application replicas
+- Automatic horizontal scaling
+- Distributed MCP session storage
+- Managed relational database
+- Hospital identity integration
+- Unrestricted Epic access
+- Automatic Epic write-back
+- Guaranteed zero downtime
+- Automatic clinical compliance certification
+- True token-level TTFT measurement or browser token streaming
+- Automatic Bedrock cost blocking when a budget threshold is reached
+
+Those require additional architecture and authorization work.
+
+---
+
+## 42. Final deployment checklist
+
+### Local preparation
+
+- [ ] Node 24 installed
+- [ ] Dependencies installed
+- [ ] Build passes
+- [ ] SQLite opens
+- [ ] Local application starts
+- [ ] Dashboard works
+- [ ] MCP works
+- [ ] Workflow test passes
+- [ ] Credentials rotated
+
+### Container
+
+- [ ] Docker image builds
+- [ ] Image contains no secrets
+- [ ] Image pushed to ECR
+- [ ] ECR tag is immutable
+- [ ] ECR scanning enabled
+
+### EC2
+
+- [ ] Linux EC2 instance created
+- [ ] `t4g.medium` ARM64 instance selected
+- [ ] EC2 Region is `us-west-2`
+- [ ] IAM instance role attached
+- [ ] Account A caller role can assume only the Account B Bedrock role
+- [ ] SSM access works
+- [ ] IMDSv2 required
+- [ ] Encrypted EBS attached
+- [ ] EBS mounted
+- [ ] Data directory created
+- [ ] Docker installed
+- [ ] Docker Compose installed
+
+### Network
+
+- [ ] DNS record created
+- [ ] Port 80 allowed
+- [ ] Port 443 allowed
+- [ ] Port 3000 private
+- [ ] SSH closed or restricted
+- [ ] HTTPS certificate issued
+- [ ] Domain resolves correctly
+
+### Application
+
+- [ ] `.env.deploy` protected
+- [ ] SSM Parameter Store path created
+- [ ] Parameter Store values use the intended `String`/`SecureString` type
+- [ ] Running deployment actually retrieves Parameter Store values
+- [ ] MCP token configured
+- [ ] Demo password configured
+- [ ] `PUBLIC_ORIGIN` configured
+- [ ] SQLite points to `/app/storage/shiftweave.db`
+- [ ] One app replica running
+- [ ] Caddy proxy running
+- [ ] `/readyz` succeeds
+- [ ] `/health` succeeds
+- [ ] Dashboard works
+- [ ] MCP initializes
+
+### Data
+
+- [ ] SQLite is on EBS
+- [ ] SQLite is not on EFS
+- [ ] SQLite is not on S3
+- [ ] S3 backup bucket created
+- [ ] SQLite backup tested
+- [ ] EBS snapshots configured
+- [ ] Restore procedure documented
+- [ ] No use of `docker compose down -v`
+
+### Epic
+
+- [ ] Production Epic app registered
+- [ ] Production key pair created
+- [ ] JWKS registered
+- [ ] Production FHIR URL verified
+- [ ] Approved patient ID available
+- [ ] Epic reads initially disabled
+- [ ] Epic writes disabled
+- [ ] Read-only verification completed
+- [ ] PHI logging reviewed
+
+### Optional Bedrock
+
+- [ ] Bedrock model selected
+- [ ] Account B target role created
+- [ ] Account B trust policy names the exact Account A role
+- [ ] Account A can assume the Account B role
+- [ ] Account B role is scoped to the approved model or inference profile
+- [ ] Bedrock access is enabled in the target Region
+- [ ] Explicit maximum output tokens configured
+- [ ] Account B CloudTrail visibility enabled
+- [ ] Account B budget configured
+- [ ] `LLM_PROVIDER=bedrock` configured
+- [ ] Real Bedrock request tested
+- [ ] Model calls occur in the simulator/agent layer, not MCP tool handlers
+- [ ] Provider failures remain visible
+- [ ] No static AWS keys stored in `.env`
+
+### Architecture and latency
+
+- [ ] ECR manifest includes `linux/arm64`
+- [ ] `better-sqlite3` works in the ARM64 image
+- [ ] Image runs on `t4g.medium`
+- [ ] Internal MCP bridge uses `127.0.0.1`
+- [ ] Public clients use HTTPS `/mcp`
+- [ ] EC2 and Bedrock regions are intentionally selected
+- [ ] Warm/cold latency samples are captured
+- [ ] p50/p95 results are recorded
+- [ ] Results are not called TTFT unless true streaming is implemented
+
+---
+
+## 43. Recommended execution order
+
+Follow this exact order:
+
+```text
+1. Rotate exposed credentials
+2. Validate the project locally
+3. Verify Node 24 and SQLite
+4. Create and bootstrap the ARM64 Buildx builder
+5. Build and test the ARM64 Docker image
+6. Create ECR
+7. Push the immutable ARM64 image
+8. Create the EC2 IAM role in Account A
+9. Create the cross-account Bedrock role in Account B
+10. Configure both account budgets
+11. Create the ARM64 `t4g.medium` instance in Account A
+12. Attach encrypted EBS
+13. Mount the EBS filesystem
+14. Install Docker and Compose
+15. Configure the EC2 security group
+16. Configure SSM Parameter Store
+17. Configure DNS and the Elastic IP
+18. Configure Caddy
+19. Configure the internal loopback MCP bridge
+20. Pull and verify the ECR image
+21. Run preflight
+22. Start the full Compose deployment
+23. Verify HTTPS
+24. Verify the dashboard
+25. Verify `/readyz`
+26. Verify `/health`
+27. Verify public MCP `/mcp`
+28. Verify internal `127.0.0.1` MCP bridge
+29. Test a complete synthetic workflow
+30. Configure S3 backups
+31. Configure EBS snapshots
+32. Configure CloudWatch monitoring and CloudTrail
+33. Verify Account B role assumption and Bedrock access
+34. Capture latency evidence without calling it TTFT prematurely
+35. Enable Epic reads only after infrastructure verification
+36. Keep Epic writes disabled
+37. Document the final deployment values securely
+```
+
+The result is a full ShiftWeave deployment:
+
+```text
+https://mcp.your-domain.com
+```
+
+for the dashboard and:
+
+```text
+https://mcp.your-domain.com/mcp
+```
+
+for MCP clients.
