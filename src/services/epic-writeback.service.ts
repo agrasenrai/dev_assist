@@ -154,6 +154,9 @@ export class EpicWriteBackService {
    * durable external sync state machine, and remote reconciliation before retries.
    */
   static async publishReviewedNote(input: PublishNoteInput): Promise<PublishNoteResult> {
+    if (process.env.NODE_ENV === 'production' && (input.executionMode === 'mock' || input.executionMode === 'simulate_uncertain')) {
+      throw new Error('Simulated EHR publication is disabled in production');
+    }
     // 1. Explicit Human Review Gate
     if (!input.humanConfirmed) {
       throw new Error('Explicit human review and confirmation is required before publishing external clinical notes');
@@ -291,7 +294,7 @@ export class EpicWriteBackService {
     }
 
     // 9. Mock Mode (Free local execution)
-    if (input.executionMode === 'mock' || (!process.env.EPIC_CLIENT_ID && input.executionMode !== 'live')) {
+    if (input.executionMode === 'mock') {
       const mockDocId = `doc_mock_${crypto.randomBytes(6).toString('hex')}`;
       mockRemoteEhrStore.set(mockDocId, {
         id: mockDocId,

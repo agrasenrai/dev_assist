@@ -2,12 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import type { Request, Response } from "express";
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import path from "path";
 import fs from "fs";
 import { z } from "zod";
 import dotenv from "dotenv";
 import { db } from "./db/connection.js";
+import { resolveNurseShift } from './services/shift-context.js';
 import { initializeDatabase } from "./db/schema.js";
 import { getActiveProvider, setActiveProvider, listAvailableProviders } from "./providers/index.js";
 import { AuditService } from "./services/audit.service.js";
@@ -62,14 +63,14 @@ export function createShiftWeaveServer(): McpServer {
     "get_assigned_tasks",
     "Retrieve clinical and operational tasks assigned to the nurse for a given shift.",
     {
-      nurse_id: z.string().describe("Unique ID of the authenticated nurse (e.g., 'nurse_seema_01')"),
-      shift_id: z.string().optional().describe("Shift identifier (e.g., 'shift_20261019_night')"),
+      nurse_id: z.string().describe("Existing nurse identifier from the selected user context"),
+      shift_id: z.string().optional().describe("Existing shift identifier; omission requires exactly one active shift in the nurse unit"),
       status_filter: z.array(z.enum(['PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'FLAGGED_CONFLICT'])).optional()
     },
     async (args) => {
       const startTime = Date.now();
       const provider = getActiveProvider();
-      const shiftId = args.shift_id || "shift_20261019_night";
+      const shiftId = resolveNurseShift(args.nurse_id, args.shift_id);
 
       let tasks = await provider.getTasksForNurse(args.nurse_id, shiftId);
       if (args.status_filter && args.status_filter.length > 0) {
@@ -198,9 +199,9 @@ export function createShiftWeaveServer(): McpServer {
     "get_handoff_context",
     "Retrieve comprehensive operational context required to construct a shift handoff report.",
     {
-      outgoing_nurse_id: z.string().describe("Outgoing nurse identifier (e.g., 'nurse_seema_01')"),
-      incoming_nurse_id: z.string().describe("Incoming nurse identifier (e.g., 'nurse_reema_02')"),
-      shift_id: z.string().describe("Shift identifier (e.g., 'shift_20261019_night')")
+      outgoing_nurse_id: z.string().describe("Existing outgoing nurse identifier"),
+      incoming_nurse_id: z.string().describe("Existing incoming nurse identifier"),
+      shift_id: z.string().describe("Existing shift identifier")
     },
     async (args) => {
       const startTime = Date.now();
@@ -508,6 +509,18 @@ app.get('/readyz', (_req, res) => {
 });
 // Demo basic auth removed
 app.use(staffMiddleware);
+// Enforce the existing service credential for every MCP method, including session deletion.
+app.use('/mcp', (req, res, next) => {
+  const token = process.env.MCP_AUTH_TOKEN;
+  if (!token) return next();
+  const expected = Buffer.from(`Bearer ${token}`);
+  const supplied = Buffer.from(req.headers.authorization || '');
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+    res.status(401).json({ error: 'MCP service credential required' });
+    return;
+  }
+  next();
+});
 app.get('/api/staff/config',(_req,res)=>res.json({required:staffAuthRequired(),environment:'SHIFTWEAVE_OPERATIONAL_SANDBOX'}));
 const loginAttempts=new Map<string,{count:number;until:number}>();
 app.post('/api/staff/login',(req,res)=>{
@@ -933,23 +946,13 @@ app.post("/api/conflicts/:id/resolve", (req, res) => {
 
 /** Chat endpoint for the Medi conversational simulation */
 app.post("/api/chat", async (req, res) => {
-  const defaultNurse = (db.prepare("SELECT id FROM nurses WHERE role = 'STAFF_NURSE' ORDER BY id ASC LIMIT 1").get() as any)?.id || 'nurse_reema_02';
-  const input = z.object({ utterance: z.string().trim().min(1).max(8000), nurseId: z.string().default(defaultNurse),
+  const input = z.object({ utterance: z.string().trim().min(1).max(8000), nurseId: z.string().min(1),
     shiftId: z.string().optional(), outgoingNurseId: z.string().optional(), incomingNurseId: z.string().optional(),
     idempotency_key: z.string().min(1), workflowRunId: z.string().min(1).max(200).optional() }).parse(req.body);
-  let shiftId = input.shiftId;
-  if (!shiftId) {
-    const nurse = db.prepare('SELECT department FROM nurses WHERE id = ?').get(input.nurseId) as { department: string } | undefined;
-    if (nurse) {
-      const activeShift = db.prepare(`SELECT id FROM shifts WHERE unit_id = ? AND status IN ('ACTIVE', 'HANDOFF_IN_PROGRESS')
-        ORDER BY start_time DESC LIMIT 1`).get(nurse.department) as { id: string } | undefined;
-      if (activeShift) shiftId = activeShift.id;
-    }
-  }
   const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), process.env.LLM_PROVIDER || 'mock', input.workflowRunId);
   try {
     await orchestrator.initialize();
-    const result = await orchestrator.processUtterance(input.nurseId, input.utterance, { ...input, shiftId, requestKey: input.idempotency_key });
+    const result = await orchestrator.processUtterance(input.nurseId, input.utterance, { ...input, requestKey: input.idempotency_key });
     res.json(result);
   } catch (error) {
     res.status(409).json({ error: error instanceof Error ? error.message : String(error), workflowRunId: orchestrator.getWorkflowRunId() });
@@ -989,7 +992,8 @@ app.post('/api/chaos/simulate', async (req, res) => {
   const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), 'mock', runId);
   try {
     await orchestrator.initialize();
-    const activeNurse = (db.prepare("SELECT id FROM nurses WHERE role = 'STAFF_NURSE' ORDER BY id ASC LIMIT 1").get() as any)?.id || 'nurse_reema_02';
+    const activeNurse = (db.prepare("SELECT id FROM nurses WHERE role = 'STAFF_NURSE' ORDER BY id ASC LIMIT 1").get() as any)?.id;
+    if (!activeNurse) throw new Error('No configured nurse is available for this simulation');
     const result = await orchestrator.processUtterance(activeNurse, input.action === 'crash'
       ? 'Prepare my shift handoff' : 'Resume my handoff', input.action === 'crash' ? { simulateInterruptionAtStep: 3 } : {});
     res.json({ status: 'RECOVERED', workflowRunId: runId, checkpointId: result.checkpointId,
@@ -1034,7 +1038,8 @@ const PORT = Number(process.env.PORT || 3000 );
 export const appServer = app.listen(PORT, host, () => {
   console.log(`\n======================================================`);
   console.log(`🏥 ShiftWeave MCP Server (Spec 2025-11-25) Running`);
-  console.log(`📡 Transport: Streamable HTTP at http://localhost:${PORT}/mcp`);
+  const address = appServer.address();
+  console.log(`📡 Transport: Streamable HTTP at http://${host.includes(':') ? `[${host}]` : host}:${address && typeof address !== 'string' ? address.port : PORT}/mcp`);
   console.log(`🩺 Active Provider: ${getActiveProvider().providerName}`);
   console.log(`======================================================\n`);
 });

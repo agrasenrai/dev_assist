@@ -45,45 +45,20 @@ async function runWriteBackVerification() {
   db.prepare("UPDATE conflicts SET status = 'UNRESOLVED' WHERE task_id = ?").run(taskId);
 
   // -------------------------------------------------------------------------
-  // Test 1: Live Epic Sandbox Scope & Permission Evaluation
-  // -------------------------------------------------------------------------
-  console.log('Test 1: Evaluating live Epic Sandbox scope & DocumentReference.Create permissions...');
-  if (process.env.EPIC_CLIENT_ID) {
-    try {
-      const token = await EpicOAuthService.getAccessToken();
-      const cached = EpicOAuthService.getCachedToken();
-      console.log('  Live token obtained. Active scopes:');
-      console.log(`    ${cached?.scope}`);
-
-      // Probe DocumentReference.Create on live Epic sandbox
-      const config = EpicOAuthService.getConfig();
-      const testPayload = EpicWriteBackService.buildDocumentReferencePayload({
-        patientId: 'erXuFYUfucBZaryVksYEcMg3', // Camila Lopez
-        nurseName: 'Seema Patel, RN',
-        summaryMarkdown: 'ShiftWeave Live Permission Evaluation Probe Note',
-      });
-
-      const writeRes = await EpicOAuthService.authorizedFetchResponse(`${config.fhirBaseUrl}/DocumentReference`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/fhir+json',
-        },
-        body: JSON.stringify(testPayload),
-        signal: AbortSignal.timeout(10000),
-      });
-
-      console.log(`  Live DocumentReference.Create HTTP status: ${writeRes.status} ${writeRes.statusText}`);
-      assert.equal(writeRes.status, 403, 'Expected HTTP 403 Forbidden on public sandbox Backend Systems client');
-      console.log('  Confirmed: Public Epic sandbox grants read-only scopes (system/*.r, .s); write access (system/*.c) is restricted.');
-      console.log('  ✅ Test 1 PASSED: Live Epic sandbox permission evaluation verified with explicit error surfacing.');
-    } catch (err) {
-      console.log('  Live sandbox check caught expected scope restriction:', (err as Error).message);
-      console.log('  ✅ Test 1 PASSED: Live Epic sandbox permission boundary confirmed.');
-    }
-  } else {
-    console.log('  EPIC_CLIENT_ID not set; skipping live sandbox network call.');
-    console.log('  ✅ Test 1 PASSED: Live check skipped (mock provider default).');
+  // Test 1: Production rejects simulated publication before reading or writing records.
+  console.log('Test 1: Production simulation boundary (no external network calls)...');
+  const previousEnvironment = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    await assert.rejects(EpicWriteBackService.publishReviewedNote({
+      handoffId: 'not-a-handoff', nurseId: incomingNurseId, idempotencyKey: randomUUID(),
+      humanConfirmed: true, executionMode: 'mock'
+    }), /disabled in production/);
+  } finally {
+    if (previousEnvironment === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnvironment;
   }
+  console.log('PASS production simulation boundary; live Epic permissions were not tested.');
 
   // -------------------------------------------------------------------------
   // Test 2: US Core FHIR R4 Clinical Note Payload Construction & Validation

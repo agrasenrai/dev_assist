@@ -12,6 +12,7 @@
     "demo": "tsx scripts/demo-presentation.ts",
     "import:data": "tsx src/db/ingest.ts",
     "test:mcp": "tsx scripts/run-tests.ts mcp",
+    "test:mcp-configured": "tsx scripts/verify-configured-mcp.ts",
     "test:agent": "tsx scripts/run-tests.ts agent",
     "test:chaos": "tsx scripts/run-tests.ts chaos",
     "test": "tsx scripts/run-tests.ts all",

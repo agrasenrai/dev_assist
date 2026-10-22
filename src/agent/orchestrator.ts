@@ -6,6 +6,7 @@ import { db } from "../db/connection.js";
 import { randomUUID } from "crypto";
 import { canonicalJson } from '../services/canonical-json.js';
 import { sourceVersion } from '../services/source-version.js';
+import { resolveNurseShift } from '../services/shift-context.js';
 
 export interface OrchestrationResult {
   speech: string;
@@ -123,9 +124,10 @@ export class ShiftWeaveOrchestrator {
         }
       } else {
         if (run && run.status !== 'COMPLETED') throw new Error('Unfinished workflow exists. Resume it before starting another turn.');
-        executionContext = { workflowRunId: runId, nurseId, shiftId: context.shiftId || 'shift_20261019_night',
-          outgoingNurseId: context.outgoingNurseId || 'nurse_seema_01',
-          incomingNurseId: context.incomingNurseId || nurseId };
+        const previousContext = state.context as { shiftId?: string; outgoingNurseId?: string; incomingNurseId?: string } | undefined;
+        executionContext = { workflowRunId: runId, nurseId, shiftId: resolveNurseShift(nurseId, context.shiftId || previousContext?.shiftId),
+          outgoingNurseId: context.outgoingNurseId || previousContext?.outgoingNurseId || nurseId,
+          incomingNurseId: context.incomingNurseId || previousContext?.incomingNurseId || nurseId };
         if (!run) db.prepare("INSERT INTO workflow_runs (id, workflow_type, initiated_by, status) VALUES (?, 'GENERATE_HANDOFF', ?, 'IN_PROGRESS')").run(runId, nurseId);
         this.conversationHistory.push({ role: 'user', content: utterance });
         persist('TURN_STARTED');

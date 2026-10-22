@@ -7,7 +7,10 @@
 import { MCPClientBridge } from '../src/agent/mcp-client-bridge.js';
 
 async function main() {
-  const endpoint = process.argv[2] || process.env.PUBLIC_MCP_URL || 'https://hourly-ceiling-tribute-tickets.trycloudflare.com/mcp';
+  const endpoint = process.argv[2] || process.env.PUBLIC_MCP_URL || process.env.MCP_SERVER_URL;
+  if (!endpoint || !process.env.MCP_TEST_NURSE_ID || !process.env.MCP_TEST_INCOMING_NURSE_ID || !process.env.MCP_TEST_SHIFT_ID) {
+    throw new Error('Configure MCP_SERVER_URL, MCP_TEST_NURSE_ID, MCP_TEST_INCOMING_NURSE_ID and MCP_TEST_SHIFT_ID with existing records');
+  }
   console.log(`\n======================================================`);
   console.log(`📡 Alexa+ MCP Server Connection & Protocol Verification`);
   console.log(`   Target Endpoint: ${endpoint}`);
@@ -42,8 +45,8 @@ async function main() {
     console.log(`\n[3/4] Simulating Medi Voice Query: "Medi, what tasks did Seema leave?"`);
     const taskStart = Date.now();
     const taskResult = await bridge.callTool('get_assigned_tasks', {
-      nurse_id: 'nurse_seema_01',
-      shift_id: 'shift_20261019_night'
+      nurse_id: process.env.MCP_TEST_NURSE_ID,
+      shift_id: process.env.MCP_TEST_SHIFT_ID
     });
     const taskLatency = Date.now() - taskStart;
 
@@ -55,17 +58,14 @@ async function main() {
     console.log(`  ✓ Tool Execution Successful (${taskLatency}ms) [Latency < 500ms SLA: ${taskLatency < 500 ? 'PASS' : 'WARN'}]`);
     console.log(`    - Returned Tasks: ${taskData.tasks_count}`);
     console.log(`    - Provider:       ${taskData.provider}`);
-    if (taskData.tasks?.length > 0) {
-      console.log(`    - Sample Task:    "${taskData.tasks[0].title}" (${taskData.tasks[0].status}) in ${taskData.tasks[0].roomNumber}`);
-    }
 
     // 4. Alexa+ Simulation Turn 2: Retrieve Handoff Context
     console.log(`\n[4/4] Simulating Medi Voice Query: "Medi, summarize the handoff for ICU Bed 305"`);
     const handoffStart = Date.now();
     const handoffResult = await bridge.callTool('get_handoff_context', {
-      outgoing_nurse_id: 'nurse_seema_01',
-      incoming_nurse_id: 'nurse_reema_02',
-      shift_id: 'shift_20261019_night'
+      outgoing_nurse_id: process.env.MCP_TEST_NURSE_ID,
+      incoming_nurse_id: process.env.MCP_TEST_INCOMING_NURSE_ID,
+      shift_id: process.env.MCP_TEST_SHIFT_ID
     });
     const handoffLatency = Date.now() - handoffStart;
 
@@ -75,7 +75,6 @@ async function main() {
 
     const handoffData = JSON.parse(handoffResult.content[0]?.text || '{}');
     console.log(`  ✓ Handoff Synthesis Successful (${handoffLatency}ms)`);
-    console.log(`    - Outgoing Nurse: ${handoffData.outgoingNurse?.name || 'Seema'}`);
     console.log(`    - Patient Roster: ${handoffData.patients?.length || 0} patients`);
     console.log(`    - Active Alerts:  ${handoffData.discrepancies?.length || 0} discrepancy items flagged for nurse review`);
 
@@ -85,7 +84,7 @@ async function main() {
     console.log(`======================================================\n`);
   } catch (error) {
     console.error(`\n❌ Error during Alexa+ MCP verification:`, error);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     await bridge.close();
   }
