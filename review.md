@@ -123,3 +123,6 @@ Once those phases pass, record a short continuous journey:
 Actual Alexa hardware integration, successful Epic publication, new authentication, dashboards, and additional integrations are **not prerequisites for finishing this scoped browser voice workflow**. Keep Epic writes disabled while authorization remains unresolved.
 
 The immediate next phase should be **the physical voice baseline**, followed by **unifying natural-language workflow routing**. Those address the two largest remaining differences between the current implementation and the experience you originally requested.
+
+
+push
