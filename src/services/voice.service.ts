@@ -188,7 +188,7 @@ export class VoiceService {
   }
 
   static commandText(utterance: string) {
-    return utterance.trim().replace(/^(?:(?:hey|hi+|hello)[\s,.:!?-]+)?alexa\b[\s,.:!?-]*/i, '').trim();
+    return utterance.trim().replace(/^(?:(?:hey|hi+|hello)[\s,.:!?-]+)?medi\b[\s,.:!?-]*/i, '').trim();
   }
 
   private static introduction(text: string, state: State): string[] | RegExpMatchArray | null {
@@ -268,8 +268,8 @@ export class VoiceService {
             ? /\b(tasks?|shift|pending|unfinished|assigned)\b/i.test(text) ? this.summary(state) : 'What can I help you with?'
             : 'I don’t have an active shift for your unit right now.');
         }
-      } else if (!text && /\balexa\b/i.test(spokenText)) {
-        speech = "Yes, I'm Alexa. I'm listening. Take your time.";
+      } else if (!text && /\bmedi\b/i.test(spokenText)) {
+        speech = "Yes, I'm Medi. I'm listening. Take your time.";
       } else if (/\b(?:diagnos\w*|prescrib\w*|recommend.*treatment|change.*dose|increase.*dose|decrease.*dose|administer.*medication)\b/i.test(normalized)) {
         state.pending = null;
         speech = "I coordinate nursing workflows only. Diagnosis, treatment and medication changes require the clinical team.";
@@ -281,26 +281,26 @@ export class VoiceService {
         speech = "I'm designed to assist with nursing shift workflows, so I don't discuss internal code or technical credentials. Let's focus on your patients and tasks.";
       } else if (/\b(?:what(?:'s|s| is)? (?:your|ur) name|who (?:are|r) you|what should i call you|tell me (?:your|ur) name|(?:your|ur) name please|what are you called|introduce yourself|who am i speaking with|who is this)\b/i.test(normalized)) {
         state.pending = null;
-        speech = "I'm Alexa, your nursing workflow assistant for ShiftWeave. I help coordinate ICU shift handoffs, track pending tasks, and review documentation discrepancies.";
+        speech = "I'm Medi, your nursing workflow assistant for ShiftWeave. I help coordinate ICU shift handoffs, track pending tasks, and review documentation discrepancies.";
       } else if (/\b(?:what is shiftweave|what does shiftweave do|tell me about shiftweave|about shiftweave|what is this project|what project is this|what is this app|what are you doing)\b/i.test(normalized)) {
         state.pending = null;
         speech = "ShiftWeave is an ambient clinical coordination system for ICU nursing teams. It synthesizes grounded SBAR shift handoffs, monitors pending bedside care, and flags EHR discrepancies so nothing falls through the cracks.";
-      } else if (/^(?:hi+|hey+|hello+|good (?:morning|afternoon|evening))(?: there)?(?: how are you(?: doing)?)?(?: alexa)?$/i.test(normalized) || /\b(?:good morning|good afternoon|good evening)\b/i.test(normalized)) {
+      } else if (/^(?:hi+|hey+|hello+|good (?:morning|afternoon|evening))(?: there)?(?: how are you(?: doing)?)?(?: medi)?$/i.test(normalized) || /\b(?:good morning|good afternoon|good evening)\b/i.test(normalized)) {
         state.pending = null;
         speech = "Hey, I'm here. What's on your mind?";
       } else if (/\b(?:how are you|how're you|how are you doing|how is it going|how's it going)\b/i.test(normalized)) {
         state.pending = null;
         speech = "I'm doing well and ready to help! How is your shift going?";
-      } else if (/\b(?:thanks|thank you|thanks alexa|thank you alexa|appreciate it|thx)\b/i.test(normalized)) {
+      } else if (/\b(?:thanks|thank you|thanks medi|thank you medi|appreciate it|thx)\b/i.test(normalized)) {
         state.pending = null;
         speech = "You're welcome. I'm here if you need anything else.";
       } else if (/\b(?:are you there|can you hear me|listen|are you listening)\b/i.test(normalized)) {
         state.pending = null;
         speech = "Yes, I'm listening. Take your time.";
-      } else if (/\b(?:what can you do|how can you help(?: me)?|help|what do you do|can you help me|what are your (?:features|capabilities))\b/i.test(normalized)) {
+      } else if (/\b(?:what can (?:i|we) (?:access|do)|what (?:can|do) you do|how can you help(?: me)?|what is your (?:task|purpose|role|job|function)|what are your tasks|why are you here|what are you here for|what are your (?:features|capabilities)|what can i access|help me understand|tell me what you do|explain your (?:task|purpose|role)|what do you do here|can you help me|help)\b/i.test(normalized)) {
         state.pending = null;
         speech = 'I can look up your existing patient and task records, track local workflow status, and help with reviewed handoffs. What would you like help with?';
-      } else if (/^(?:alexa )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
+      } else if (/^(?:medi )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
         Object.assign(state, initial(), { revision: state.revision });
         speech = 'Take care. I’ve cleared this conversation from the screen.';
       } else if (this.conversationText(state,text)) {
@@ -432,11 +432,11 @@ export class VoiceService {
   private static interpret(state: State, raw: string, key: string, semantic = false): string {
     // Structured notes are data; words such as "start" or "finish" inside them cannot change the intent.
     const text = normal(semantic ? raw.split(/\bbecause\b/i)[0]! : raw);
-    if (/^(?:alexa )?(?:cancel|never mind|no|no cancel|stop)$/.test(text)) {
+    if (/^(?:medi )?(?:cancel|never mind|no|no cancel|stop)$/.test(text)) {
       state.pending = null;
       return 'Okay, I’ve cancelled that. No records were changed.';
     }
-    if (/^(?:alexa )?(?:yes|confirm|yes confirm|confirm it|yes please)$/.test(text)) {
+    if (/^(?:medi )?(?:yes|confirm|yes confirm|confirm it|yes please)$/.test(text)) {
       const pending = state.pending;
       state.pending = null;
       if (!pending?.ready) return 'There’s nothing ready to confirm yet. What would you like to do?';

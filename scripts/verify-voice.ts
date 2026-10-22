@@ -35,16 +35,16 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   };
   let result = await say('Show my tasks');
   check('voice requires introduction before revealing records', () => { assert.equal(result.nurse, null); assert.equal(result.tasks.length, 0); });
-  result = await say('Alexa');
-  check('calling Alexa gets a listening response without demanding a nurse name',()=>{
-    assert.match(result.speech,/Alexa.*listening/);assert.equal(result.nurse,null);assert.equal(result.tasks.length,0);
+  result = await say('Medi');
+  check('calling Medi gets a listening response without demanding a nurse name',()=>{
+    assert.match(result.speech,/Medi.*listening/);assert.equal(result.nurse,null);assert.equal(result.tasks.length,0);
   });
   result = await say('Hii');
   check('casual greeting is answered naturally before identity selection',()=>{
     assert.match(result.speech,/Hey.*here/);assert.doesNotMatch(result.speech,/nurse name/);
   });
-  result = await say('Alexa, what is your name?');
-  check('assistant identifies itself as Alexa',()=>assert.match(result.speech,/Alexa.*nursing workflow assistant/));
+  result = await say('Medi, what is your name?');
+  check('assistant identifies itself as Medi',()=>assert.match(result.speech,/Medi.*nursing workflow assistant/));
   result = await say('Hi, I am Nora');
   check('ambiguous nurse names require clarification without selecting a profile', () => { assert.equal(result.nurse, null); assert.match(result.speech, /More than one/); });
   const intro = { session_id: session, utterance: 'Hi, I am Nora Test. Let me know my tasks', expected_revision: revision, idempotency_key: randomUUID() };
@@ -56,8 +56,8 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
   });
   const retry = await post(intro);
   check('lost voice response retry returns exact saved response', () => assert.deepEqual(retry.data, original.data));
-  result = await say('Alexa, what tasks are assigned to me?');
-  check('Alexa-prefixed nurse query uses selected context and stored records',()=>{
+  result = await say('Medi, what tasks are assigned to me?');
+  check('Medi-prefixed nurse query uses selected context and stored records',()=>{
     assert.match(result.speech,/Review documented shift checklist/);assert.equal(result.nurse.id,'voice_nora');
   });
   check('task summaries speak the answer without reciting database metadata',()=>{
@@ -176,8 +176,8 @@ export async function verifyVoice(base: string, check: (name: string, action: ()
     assert.equal(result.pending.ready, true);
     assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get('voice_task') as any).status, 'IN_PROGRESS');
   });
-  result = await say('Alexa');
-  check('calling Alexa preserves an already reviewed pending confirmation',()=>{
+  result = await say('Medi');
+  check('calling Medi preserves an already reviewed pending confirmation',()=>{
     assert.equal(result.pending.ready,true);assert.equal(result.nurse.id,'voice_nora');
   });
   const update = { session_id:session,utterance:'Confirm',expected_revision:revision,idempotency_key:randomUUID() };

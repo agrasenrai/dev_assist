@@ -30,9 +30,9 @@ export const AlexaVoiceSim: React.FC<Props> = ({
   }, []);
 
   const samplePrompts = [
-    "Alexa, what is pending from Seema in ICU-B, and are there any conflicts?",
-    "Alexa, resume my handoff preparation.",
-    "Alexa, summarize my handoff draft."
+    "Medi, what is pending from Seema in ICU-B, and are there any conflicts?",
+    "Medi, resume my handoff preparation.",
+    "Medi, summarize my handoff draft."
   ];
 
   const handleSend = async (text: string) => {
@@ -113,7 +113,7 @@ export const AlexaVoiceSim: React.FC<Props> = ({
             <Mic size={14} color="#ffffff" />
           </div>
           <h3 style={{ fontSize: '0.92rem', fontWeight: 700, color: '#f8fafc' }}>
-            Alexa+ Conversational Interface
+            Medi Conversational Interface
           </h3>
           <span className="badge badge-routine" style={{ fontSize: '0.65rem' }}>Voice Sim</span>
         </div>
@@ -198,7 +198,7 @@ export const AlexaVoiceSim: React.FC<Props> = ({
             }}>
               <div style={{ fontSize: '0.7rem', color: '#64748b', marginBottom: '3px', display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ fontWeight: 700, color: m.role === 'nurse' ? '#93c5fd' : '#38bdf8' }}>
-                  {m.role === 'nurse' ? 'Reema Roy, RN' : 'Alexa+ Nursing Assistant'}
+                  {m.role === 'nurse' ? 'Reema Roy, RN' : 'Medi Nursing Assistant'}
                 </span>
                 <span>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
@@ -236,7 +236,7 @@ export const AlexaVoiceSim: React.FC<Props> = ({
         {loading && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#06b6d4', fontSize: '0.8rem', fontStyle: 'italic' }}>
             <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#06b6d4', display: 'inline-block' }} className="animate-pulse" />
-            Alexa+ reasoning over MCP tools in Streamable HTTP...
+            Medi reasoning over MCP tools in Streamable HTTP...
           </div>
         )}
       </div>
@@ -256,7 +256,7 @@ export const AlexaVoiceSim: React.FC<Props> = ({
           fontSize: '0.75rem'
         }}>
           <Radio size={14} color="#ef4444" className="animate-pulse" />
-          <span><strong>Listening via Microphone...</strong> Speak your clinical instruction now (e.g. &ldquo;Alexa, summarize my handoff draft&rdquo;)</span>
+          <span><strong>Listening via Microphone...</strong> Speak your clinical instruction now (e.g. &ldquo;Medi, summarize my handoff draft&rdquo;)</span>
         </div>
       )}
 
@@ -264,7 +264,7 @@ export const AlexaVoiceSim: React.FC<Props> = ({
       <div style={{ display: 'flex', gap: '8px' }}>
         <input
           type="text"
-          placeholder={isListening ? "Listening to your voice..." : "Ask Alexa (or click the Mic to speak)..."}
+          placeholder={isListening ? "Listening to your voice..." : "Ask Medi (or click the Mic to speak)..."}
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend(inputText)}
@@ -286,7 +286,7 @@ export const AlexaVoiceSim: React.FC<Props> = ({
             type="button"
             onClick={toggleListening}
             disabled={loading}
-            title={isListening ? "Click to stop listening" : "Click to speak to Alexa via Microphone"}
+            title={isListening ? "Click to stop listening" : "Click to speak to Medi via Microphone"}
             className="btn"
             style={{
               padding: '8px 12px',

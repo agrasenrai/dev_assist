@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const sentencePauseMs = 2500;
+const sentencePauseMs = 1500;
 
 // Browser recognition is a demo adapter. The MCP voice_turn tool also accepts transcripts from a voice host.
 export function useVoiceConversation(onTranscript: (text: string) => Promise<string>) {

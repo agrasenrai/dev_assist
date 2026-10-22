@@ -39,7 +39,7 @@ async function main() {
     }
 
     // 3. Alexa+ Simulation Turn 1: Get Assigned Tasks
-    console.log(`\n[3/4] Simulating Alexa+ Voice Query: "Alexa, what tasks did Seema leave?"`);
+    console.log(`\n[3/4] Simulating Medi Voice Query: "Medi, what tasks did Seema leave?"`);
     const taskStart = Date.now();
     const taskResult = await bridge.callTool('get_assigned_tasks', {
       nurse_id: 'nurse_seema_01',
@@ -60,7 +60,7 @@ async function main() {
     }
 
     // 4. Alexa+ Simulation Turn 2: Retrieve Handoff Context
-    console.log(`\n[4/4] Simulating Alexa+ Voice Query: "Alexa, summarize the handoff for ICU Bed 305"`);
+    console.log(`\n[4/4] Simulating Medi Voice Query: "Medi, summarize the handoff for ICU Bed 305"`);
     const handoffStart = Date.now();
     const handoffResult = await bridge.callTool('get_handoff_context', {
       outgoing_nurse_id: 'nurse_seema_01',

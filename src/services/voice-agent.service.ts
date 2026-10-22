@@ -61,8 +61,10 @@ export function validateReply(speech: string, evidence: string[], source?: strin
   const unavailable = /^i (?:don't|do not) have (?:verified|current|available) (?:patient|task|handoff|clinical|medical) (?:information|records|data)[.!?]?$/i;
   for (const clause of generated.replace(/[’]/g,"'").split(/(?<=[.!?])\s+|[;\n]|\b(?:but|however|instead)\b/i).map(text=>text.trim()).filter(Boolean)) {
     // Exceptions match a complete refusal/clarification, never an arbitrary suffix.
-    const generalFriendly = /^(?:i(?:'m| am| was)|my name is|shiftweave is|you(?:'re| are)|i (?:do not|don't) (?:engage|discuss)|ready to help|let(?:'s| us) focus|how (?:can|is)|what (?:can|would)|hello|hey|good (?:morning|afternoon|evening)|take care|you're welcome|i'm doing well|we are focused)\b/i;
-    if (refusal.test(clause) || clarification.test(clause) || unavailable.test(clause) || generalFriendly.test(clause)) continue;
+    const generalFriendly = /^(?:i(?:'m| am| was| can| could| will| would| assist| help| coordinate| support| manage| track| look| check| provide| work| serve)|my\s+(?:\w+\s+)*(?:name|role|purpose|job|goal|task|focus|function|responsibility)\b|i'm designed to|i was built to|i am built to|i'm here to|i am here to|as (?:your|an) (?:assistant|companion|system)|to (?:get started|begin|proceed|access|check|see|view|review|pull|use)|once you|when you|whenever you(?:'re| are)?|if (?:you|you'd|you would|we|someone)|for (?:example|instance)|such as|things like|like\b|you(?:'re| are| can| could| may| might|'ll| will| have only to)|feel free|please (?:ask|tell|share|let|give)|ask me|you'll be able to|just (?:tell|share|let|give|ask|say|provide|speak|call)|simply (?:tell|share|let|give|ask|say|provide)|(?:tell|share|give|let)\s+(?:me|us)|let (?:me|us) know|or\s+(?:you|if|tell|share|let|simply|just)|so\s+(?:i|we|you)\s+can|shiftweave (?:is|helps|supports|coordinates|tracks|provides|was|aims)|the (?:system|platform|app|assistant) (?:is|helps|supports|tracks)|this (?:app|system|project|assistant|tool) (?:is|helps|supports)|how (?:can|is|are|would|do)|what (?:can|would|is|are|kind|do)|which (?:record|task|patient|feature)|is there (?:anything|a)|would you like|do you (?:want|need)|can i (?:help|assist)|shall i|should i|hello|hey+|hi+|good (?:morning|afternoon|evening|day)|welcome|ready to help|let(?:'s| us) (?:focus|get|know|see)|take care|you're welcome|i'm doing well|we are focused|of course|certainly|sure\b|sure thing|glad to help|happy to help|yes|no problem|no worries|anytime|here (?:is|are)|there(?:'s| is| are)|nothing (?:was|were|has|have)|no (?:changes?|records?|actions?)\b|that(?:'s| is| sounds) (?:fine|okay|alright|good|great|what|how))\b/i;
+    if (refusal.test(clause)) continue;
+
+    if (clarification.test(clause) || unavailable.test(clause) || generalFriendly.test(clause)) continue;
     if (/\b(?:recommend\w*|prescrib\w*|administer\w*|increas\w*|decreas\w*|adjust\w*|chang\w*|stop\w*|start\w*|tak(?:e|ing))\b[\s\S]*\b(?:dos(?:e|age)\w*|medicat\w*|treat\w*|prescription\w*|mg)\b/i.test(clause))
       throw new Error('Clinical advice is outside the voice workflow');
     if (!source && (
@@ -129,6 +131,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
         if(!current.pendingTool) {
           const {messages,...scope} = VoiceService.agentContext(input.session_id);
           const result = await provider.decideNextStep(current.messages,tools,{voiceWorkflow:true,voiceReplyOnly:Boolean(current.action),scope:{...scope,currentUtterance:input.utterance,identityResolved:current.identificationRevision!==undefined}});
+
           if(result.toolCall) {
             const call = result.toolCall;
             if(!tools.some(t=>t.name===call.toolName)) throw new Error('Model requested an unavailable operation');
@@ -209,6 +212,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             validateReply(composed.speech,composed.evidence,reply.kind==='RECORDS'?current.action?.display.speech:undefined);
             current.speech=composed.speech;current.status='SUCCESS';output={delivered:true};
           } catch(error) {
+
             const reason=error instanceof Error?error.message:'';
             if(!(error instanceof z.ZodError)&&!replyErrors.has(reason))throw error;
             if((current.replyRepairs||0)>=1)throw error;
@@ -227,6 +231,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
       if(!current.speech) throw new Error('Voice model step budget reached');
       if(current.version!==VoiceService.agentVersion(input.session_id)) throw new Error('Source records changed during the answer');
     } catch(error) {
+
       const changed=current.version!==VoiceService.agentVersion(input.session_id);
       const reason=error instanceof Error?error.message:'';
       current.failureCode=changed?'SOURCE_CHANGED':error instanceof z.ZodError?'INVALID_SCHEMA':replyErrors.has(reason)?reason:
@@ -269,7 +274,7 @@ export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
     const command = VoiceService.commandText(input.utterance);
     if((process.env.LLM_PROVIDER||'mock').toLowerCase()!=='mock') {
       // Confirmation/cancellation are human control messages, never model-generated decisions.
-      const control=(!command&&/\balexa\b/i.test(input.utterance)) || /^(?:yes|confirm|yes confirm|confirm it|yes please|cancel|no|stop|never mind|no cancel)[.! ]*$/i.test(command);
+      const control=(!command&&/\bmedi\b/i.test(input.utterance)) || /^(?:yes|confirm|yes confirm|confirm it|yes please|cancel|no|stop|never mind|no cancel)[.! ]*$/i.test(command);
       const result=control ? VoiceService.turn(input) : await runConversation(input,endpoint);
       succeeded=true;return result;
     }

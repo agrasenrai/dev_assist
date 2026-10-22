@@ -101,7 +101,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
   const inspect = (task: VoiceTask) => { submit(`Explain task ${task.id}`); };
   return <><main id="st" data-m={mode} data-np={!hasPanel ? '' : undefined} data-s={error ? 'int' : undefined} style={{ transform: `translate(${(size.w - 1920 * scale) / 2}px,${(size.h - 1080 * scale) / 2}px) scale(${scale})` }}>
     <header><div className="brand"><svg viewBox="0 0 40 34" fill="none" strokeWidth="3.5" strokeLinecap="round" aria-hidden="true"><path d="M3 9c10 0 10 16 17 16s9-16 17-16" stroke="#8EA0FF" /><path d="M3 25c10 0 10-16 17-16s9 16 17 16" stroke="#FFB86B" /></svg>ShiftWeave</div>
-      <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div><span className="pill">Alexa · Voice simulation</span></header>
+      <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div><span className="pill">Medi · Voice simulation</span></header>
     <div id="lm">{display?.nurse && <Thread display={display} onTask={inspect} onHandoff={() => setDrawer('handoffs')} />}</div>
     {hasPanel && <section id="pn" className="in" data-t={error || display?.conflicts.length ? 'ro' : handoff?.status === 'FINALIZED' ? 'ok' : 'dy'} aria-label="Current workflow context">
       <div className="t">{error ? 'Request unavailable' : title}</div>
@@ -132,12 +132,12 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
       <button className="btn g" disabled={busy} onClick={() => submit('End my session')}>End my session</button>
     </nav>
     <form id="dock" className="ty" onSubmit={e => { e.preventDefault(); if (input.trim()) { submit(input); setInput(''); } }}>
-      <input id="in" ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="Type a message" aria-label="Type to Alexa+" autoComplete="off" />
+      <input id="in" ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="Type a message (or say “Medi”)" aria-label="Type to Medi" autoComplete="off" />
       <button className="btn" id="sd" type="submit" disabled={busy || !input.trim()}>Send</button>
       <button type="button" className="btn ic" aria-label="MCP Telemetry" aria-expanded={trace} onClick={() => { setTrace(!trace); setTools(false); }}>≡</button>
       <button type="button" className="btn ic" aria-label="Workspace tools" aria-expanded={tools} onClick={() => { setTools(!tools); setTrace(false); }}>⋯</button>
     </form>
-    <footer>{display?.epicRecords?.length ? 'Epic sandbox records + local workflow state' : 'Local workflow data'} · Alexa+ voice simulation · {authenticatedStaff?'Signed-in sandbox staff':'Demo nurse identity'} · Human review required · {display ? `Saved turn ${display.revision}` : 'Connecting to saved session'}</footer>
+    <footer>{display?.epicRecords?.length ? 'Epic sandbox records + local workflow state' : 'Local workflow data'} · Medi voice simulation · {authenticatedStaff?'Signed-in sandbox staff':'Demo nurse identity'} · Human review required · {display ? `Saved turn ${display.revision}` : 'Connecting to saved session'}</footer>
     {drawer && <div className="detail-scrim" onClick={() => setDrawer(null)}><section className="detail-sheet" role="dialog" aria-modal="true" aria-label={`${drawer} details`} onClick={e => e.stopPropagation()} onKeyDown={e => {
       if (e.key !== 'Tab') return;
       const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]'));
