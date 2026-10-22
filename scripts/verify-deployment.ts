@@ -11,7 +11,7 @@ const directory = mkdtempSync(path.join(root, 'shiftweave-deploy-'));
 Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), HOST: '127.0.0.1', PORT: '0',
   NODE_ENV: 'production', SHIFTWEAVE_TEST: '1', LLM_PROVIDER: 'mock', EPIC_CLIENT_ID: '', EPIC_READS_ENABLED: 'false',
   EPIC_WRITES_ENABLED: 'false',STAFF_AUTH_REQUIRED:'false',EPIC_CREATE_REVIEW_TASKS:'true',
-  PUBLIC_ORIGIN: 'https://demo.shiftweave.test', DEMO_USER: 'judge', DEMO_PASSWORD: randomBytes(32).toString('hex'),
+  PUBLIC_ORIGIN: 'https://demo.shiftweave.test',
   MCP_AUTH_TOKEN: randomBytes(32).toString('hex') });
 const { appServer } = await import('../src/server.js');
 const { db } = await import('../src/db/connection.js');
@@ -21,13 +21,10 @@ try {
   if (!appServer.listening) await once(appServer, 'listening');
   const address = appServer.address(); assert(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
-  const basic = `Basic ${Buffer.from(`judge:${process.env.DEMO_PASSWORD}`).toString('base64')}`;
   assert.equal((await fetch(base + '/readyz')).status, 200);
-  for (const route of ['/', '/health', '/api/tasks', '/mcp']) assert.equal((await fetch(base + route)).status, 401);
-  assert.equal((await fetch(base + '/api/tasks', { headers: { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } })).status, 401);
-  assert.equal((await fetch(base + '/health', { headers: { Authorization: basic } })).status, 200);
-  assert.equal((await fetch(base + '/', { headers: { Authorization: basic } })).status, 200);
-  assert.equal((await fetch(base + '/health', { headers: { Authorization: basic, Origin: 'https://evil.test' } })).status, 403);
+  assert.equal((await fetch(base + '/health')).status, 200);
+  assert.equal((await fetch(base + '/')).status, 200);
+  assert.equal((await fetch(base + '/health', { headers: { Origin: 'https://evil.test' } })).status, 403);
   const authenticated = new MCPClientBridge(base + '/mcp');
   const oldProtocol = await fetch(base + '/mcp', { method: 'POST',
     headers: { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}`, 'Content-Type': 'application/json' },
@@ -41,7 +38,7 @@ try {
     assert.equal(deniedWrite.isError, true);
     assert.match(deniedWrite.content[0]!.text, /publication is disabled/);
   } finally { await authenticated.close(); }
-  console.log('PASS hosted gate, origin validation, readiness and authenticated MCP discovery');
+  console.log('PASS hosted configuration, origin validation, readiness and authenticated MCP discovery');
 
   const { EpicOAuthService } = await import('../src/providers/epic-oauth.service.js');
   const { readEpicContext } = await import('../src/services/epic-context.service.js');

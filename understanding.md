@@ -48,7 +48,7 @@ npm run dev
 ```
 src/
   server.ts                    # Express app, MCP server factory, all REST endpoints
-  runtime-config.ts            # host, allowedOrigins, demoAccess middleware
+  runtime-config.ts            # host, allowedOrigins, deployment token validation
   agent/
     orchestrator.ts            # ShiftWeaveOrchestrator — multi-turn LLM+MCP agentic loop
     llm-provider.ts            # MockAutonomousAgent, BedrockLLMProvider
@@ -473,7 +473,7 @@ Additional targeted scripts:
 - **Recommended:** EC2 with EBS-backed SQLite, Caddy HTTPS, optional Bedrock
 - **Caddy config:** `deploy/Caddyfile` — HTTPS reverse proxy with demo access gate
 - **Docker:** `Dockerfile` + `compose.yaml` present
-- **`runtime-config.ts`** controls: `host` (loopback by default), `allowedOrigins` (CORS), `demoAccess` middleware (token gate for deployed demo)
+- **`runtime-config.ts`** controls: `host` (loopback by default), `allowedOrigins` (CORS), deployment token validation
 - **Backups:** `npm run backup` → copies SQLite to `backups/` with timestamp prefix
 - **Preflight:** `npm run preflight` runs before `npm start` to verify environment
 - **Health endpoint:** `GET /readyz` for load balancer probe (SQLite `SELECT 1`)

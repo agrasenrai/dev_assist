@@ -11,7 +11,7 @@ assert(['bedrock','aws'].includes(process.env.LLM_PROVIDER || ''),'Select Bedroc
 const root = realpathSync(tmpdir());
 const directory = mkdtempSync(path.join(root,'shiftweave-voice-live-'));
 Object.assign(process.env,{SQLITE_DB_PATH:path.join(directory,'test.db'),PORT:'0',HOST:'127.0.0.1',
-  NODE_ENV:'test',SHIFTWEAVE_TEST:'1',STAFF_AUTH_REQUIRED:'false',DEMO_USER:'',DEMO_PASSWORD:'',
+  NODE_ENV:'test',SHIFTWEAVE_TEST:'1',STAFF_AUTH_REQUIRED:'false',
   MCP_AUTH_TOKEN:'',PUBLIC_ORIGIN:'',EPIC_READS_ENABLED:'false',EPIC_WRITES_ENABLED:'false'});
 const { appServer } = await import('../src/server.js');
 const { db } = await import('../src/db/connection.js');

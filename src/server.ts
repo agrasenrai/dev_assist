@@ -19,7 +19,7 @@ import { EpicWriteBackService } from "./services/epic-writeback.service.js";
 import { EpicNoteService } from './services/epic-note.service.js';
 import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
 import { VoiceService } from "./services/voice.service.js";
-import { host, allowedOrigins, demoAccess } from './runtime-config.js';
+import { host, allowedOrigins } from './runtime-config.js';
 import { MCPClientBridge } from './agent/mcp-client-bridge.js';
 import { runVoiceTurn } from './services/voice-agent.service.js';
 import { readEpicContext } from './services/epic-context.service.js';
@@ -505,7 +505,7 @@ app.get('/readyz', (_req, res) => {
   try { db.prepare('SELECT 1').get(); res.json({ ready: true }); }
   catch { res.status(503).json({ ready: false }); }
 });
-app.use(demoAccess);
+// Demo basic auth removed
 app.use(staffMiddleware);
 app.get('/api/staff/config',(_req,res)=>res.json({required:staffAuthRequired(),environment:'SHIFTWEAVE_OPERATIONAL_SANDBOX'}));
 const loginAttempts=new Map<string,{count:number;until:number}>();

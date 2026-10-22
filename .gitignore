@@ -1,5 +1,7 @@
 node_modules/
 .env
+.env.local
+.env.*.local
 .env.deploy
 build/
 client/dist/
@@ -16,4 +18,3 @@ keys/
 *.pem
 *.key
 jwks.json
-

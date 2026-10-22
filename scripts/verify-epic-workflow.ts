@@ -11,7 +11,7 @@ const root = fs.realpathSync(os.tmpdir());
 const directory = fs.mkdtempSync(path.join(root, 'shiftweave-epic-flow-'));
 Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), PORT: '0', HOST: '127.0.0.1',
   SHIFTWEAVE_TEST: '1', LLM_PROVIDER: 'mock', EPIC_READS_ENABLED: 'true', EPIC_WRITES_ENABLED: 'false',STAFF_AUTH_REQUIRED:'false',EPIC_CREATE_REVIEW_TASKS:'true',
-  EPIC_TEST_PATIENT_IDS: live ? 'erXuFYUfucBZaryVksYEcMg3' : 'fixture', DEMO_USER: '', DEMO_PASSWORD: '', MCP_AUTH_TOKEN: '', NODE_ENV: 'test' });
+  EPIC_TEST_PATIENT_IDS: live ? 'erXuFYUfucBZaryVksYEcMg3' : 'fixture', MCP_AUTH_TOKEN: '', NODE_ENV: 'test' });
 if (!live) {
   fs.writeFileSync(path.join(directory, 'dummy.pem'), 'fixture-only-not-a-key');
   Object.assign(process.env, { EPIC_CLIENT_ID: 'fixture', PRIVATE_KEY_PATH: path.join(directory, 'dummy.pem'), EPIC_FHIR_BASE_URL: 'https://epic.test/FHIR/R4' });

@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 // this verifies wiring and recovery, not microphone acoustics or a remote recognition service.
 const directory = mkdtempSync(path.join(tmpdir(), 'shiftweave-voice-browser-'));
 Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), PORT: '0', HOST: '127.0.0.1',
-  NODE_ENV: 'test', STAFF_AUTH_REQUIRED: 'false', LLM_PROVIDER: 'mock', DEMO_USER: '', DEMO_PASSWORD: '',
+  NODE_ENV: 'test', STAFF_AUTH_REQUIRED: 'false', LLM_PROVIDER: 'mock',
   MCP_AUTH_TOKEN: '', PUBLIC_ORIGIN: '', SHIFTWEAVE_TEST: '1' });
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');

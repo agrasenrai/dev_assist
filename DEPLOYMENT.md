@@ -2,7 +2,7 @@
 
 Recommended hackathon topology: **one always-on EC2 Linux host, one application container, SQLite on local EBS-backed Docker storage, and Caddy HTTPS**. React, voice gateway, agent, Express MCP and durable workflow state share the host. Bedrock is optional; mock remains the free default. This is a synthetic-data demonstrator, not hospital production software.
 
-For the authenticated Epic/staff profile, follow [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md). The fixture import, shared demo gate and machine-token-only smoke flow below apply to the original fixture profile. Do not run the fixture import against a provisioned operational database. Set `STAFF_AUTH_REQUIRED=true`, preserve `SANDBOX_SESSION_SECRET`, select Bedrock explicitly and deploy a backup of the provisioned database to the persistent SQLite path configured by Compose. Each user signs in with their individual sandbox account. MCP calls additionally require that staff session; the service bearer token alone does not grant staff access. This profile uses reviewed local sandbox document publication while Epic writes remain disabled.
+For the authenticated Epic/staff profile, follow [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md). The fixture import and machine-token-only smoke flow below apply to the original fixture profile. Do not run the fixture import against a provisioned operational database. Set `STAFF_AUTH_REQUIRED=true`, preserve `SANDBOX_SESSION_SECRET`, select Bedrock explicitly and deploy a backup of the provisioned database to the persistent SQLite path configured by Compose. Each user signs in with their individual sandbox account. MCP calls additionally require that staff session; the service bearer token alone does not grant staff access. This profile uses reviewed local sandbox document publication while Epic writes remain disabled.
 
 ## 1. Free local start
 
@@ -26,7 +26,7 @@ Point a DNS A record at the host's stable public address. Allow inbound TCP 80 a
 cp .env.deploy.example .env.deploy
 mkdir -p keys
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-# Generate two different secrets; fill .env.deploy with an editor.
+# Generate secret; fill .env.deploy with an editor.
 chmod 600 .env.deploy
 docker compose config --quiet
 docker compose build
@@ -37,9 +37,9 @@ docker compose ps
 docker compose exec app node build/scripts/smoke.js
 ```
 
-If Node is not installed on the host, generate each secret with `openssl rand -hex 32`. The database import is explicit so restarting a server never resets the demo. Compose's `workflow-data` volume holds the database and WAL on the host; it is persistent across container recreation, not across deletion of the host's disk. Never use `docker compose down -v` to update this deployment.
+If Node is not installed on the host, generate the secret with `openssl rand -hex 32`. The database import is explicit so restarting a server never resets the demo. Compose's `workflow-data` volume holds the database and WAL on the host; it is persistent across container recreation, not across deletion of the host's disk. Never use `docker compose down -v` to update this deployment.
 
-Open `https://YOUR_DOMAIN` and enter the configured demo username/password. Caddy obtains TLS certificates once DNS and ports are correct. This provides the secure browser context needed for microphone access. Browser speech support varies; the typed transcript interface remains available. This is an Alexa+ simulation, not an installed Alexa skill.
+Open `https://YOUR_DOMAIN`. Caddy obtains TLS certificates once DNS and ports are correct. This provides the secure browser context needed for microphone access. Browser speech support varies; the typed transcript interface remains available. This is an Alexa+ simulation, not an installed Alexa skill.
 
 ### Required placeholders
 
@@ -47,12 +47,10 @@ Open `https://YOUR_DOMAIN` and enter the configured demo username/password. Cadd
 | --- | --- |
 | `DOMAIN` | DNS hostname, without scheme |
 | `PUBLIC_ORIGIN` | Exact `https://hostname`, no trailing slash |
-| `DEMO_USER` | Shared judge/demo username |
-| `DEMO_PASSWORD` | Unique random secret, at least 24 characters |
-| `MCP_AUTH_TOKEN` | Different random secret, at least 32 characters |
+| `MCP_AUTH_TOKEN` | Random secret, at least 32 characters |
 | `LLM_PROVIDER` | `mock` or `bedrock` |
 
-Public binding fails at startup if these are missing or still contain shipped placeholders. The shared gate protects the synthetic demo; selecting a nurse by name is **not authenticated nurse identity**. Keep credentials server-side. Do not put cloud keys or the MCP token in React/Vite variables. `/readyz` is an intentionally minimal unauthenticated process/database probe. `/health` reports configuration, not verified cloud connectivity.
+Public binding fails at startup if these are missing or still contain shipped placeholders. Selecting a nurse by name is **not authenticated nurse identity**. Keep credentials server-side. Do not put cloud keys or the MCP token in React/Vite variables. `/readyz` is an intentionally minimal unauthenticated process/database probe. `/health` reports configuration, not verified cloud connectivity.
 
 External MCP clients connect to `https://YOUR_DOMAIN/mcp` using `Authorization: Bearer YOUR_MCP_AUTH_TOKEN`, initialize protocol `2025-11-25`, and retain the returned session header. The bundled bridge supplies this header from its server-side environment. This is a preconfigured demo bearer scheme, not MCP OAuth discovery; clients requiring OAuth authorization-server metadata need a separate identity integration. HTTP sessions are ephemeral; workflow checkpoints are durable. After a server restart, create a fresh MCP session and resume with the saved workflow ID and request key.
 
