@@ -16,7 +16,7 @@ if ([...(process.env.STAFF_AUTH_REQUIRED==='true' ? [process.env.SANDBOX_SESSION
   throw new Error('Replace hosted deployment placeholders before startup');
 }
 let parsedOrigin: URL | null = null;
-if (publicOrigin) {
+if (publicOrigin && publicOrigin !== '*') {
   try {
     parsedOrigin = new URL(publicOrigin);
   } catch {
@@ -27,6 +27,7 @@ if (publicOrigin) {
   }
 }
 export const allowedOrigins = new Set([
+  '*',
   'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173',
   ...(!exposed && /^\d+$/.test(process.env.PORT || '') && Number(process.env.PORT) > 0 && Number(process.env.PORT) <= 65535
     ? [`http://localhost:${Number(process.env.PORT)}`, `http://127.0.0.1:${Number(process.env.PORT)}`] : []),

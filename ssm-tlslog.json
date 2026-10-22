@@ -1,0 +1,1 @@
+{"commands":["docker logs shiftweave-https-1 2>&1 | grep -i -E \"tls|cert|acme|error|obtain\" | tail -20"]}

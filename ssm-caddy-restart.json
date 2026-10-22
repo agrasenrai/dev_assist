@@ -1,0 +1,1 @@
+{"commands":["cd /mnt/shiftweave && docker compose restart https && docker logs shiftweave-https-1 2>&1 | tail -15"]}

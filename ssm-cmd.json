@@ -1,0 +1,1 @@
+{"commands":["sed -i 's/^DOMAIN=.*/DOMAIN=ec2-32-189-84-182.us-west-2.compute.amazonaws.com/' /mnt/shiftweave/.env.deploy","grep DOMAIN /mnt/shiftweave/.env.deploy"]}

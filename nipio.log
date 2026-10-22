@@ -1,0 +1,5 @@
+﻿{
+    "Status": "Success",
+    "Output": "DOMAIN=32.189.84.182.nip.io\n Container shiftweave-app-1 Started \n Container shiftweave-app-1 Waiting \n Container shiftweave-app-1 Healthy \n Container shiftweave-https-1 Starting \n Container shiftweave-https-1 Started \nRESTARTED\n",
+    "Error": ""
+}
