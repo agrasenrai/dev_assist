@@ -1,0 +1,580 @@
+Yes. For future application updates, follow this verified workflow only. Change the image tag each time.
+
+Example:
+
+```text
+Previous live tag: 2026-10-22-002
+Next tag: 2026-10-22-004
+```
+
+Do not reuse an existing ECR tag.
+
+---
+
+# Step 1 — Validate locally
+
+From:
+
+```powershell
+C:\Users\sshat\Downloads\dev_assist
+```
+
+Run:
+
+```powershell
+npm run typecheck
+```
+
+Expected:
+
+```text
+tsc --noEmit
+```
+
+with no errors.
+
+Then run:
+
+```powershell
+npm run build
+```
+
+Expected:
+
+```text
+✓ built in ...
+```
+
+Do not continue if either command fails.
+
+---
+
+# Step 2 — Log in to ECR
+
+```powershell
+aws ecr get-login-password --region us-west-2 |
+  docker login `
+    --username AWS `
+    --password-stdin 540087632943.dkr.ecr.us-west-2.amazonaws.com
+```
+
+Expected:
+
+```text
+Login Succeeded
+```
+
+---
+
+# Step 3 — Build and push a new ARM64 image
+
+Change only `$imageTag` for each deployment:
+
+```powershell
+$imageTag = "2026-10-22-004"
+$imageUri = "540087632943.dkr.ecr.us-west-2.amazonaws.com/shiftweave:$imageTag"
+
+docker buildx build `
+  --platform linux/arm64 `
+  --tag $imageUri `
+  --push `
+  .
+```
+
+Expected final output should contain:
+
+```text
+FINISHED
+pushing manifest
+```
+
+The output will also provide an image digest, for example:
+
+```text
+sha256:...
+```
+
+---
+
+# Step 4 — Verify the ECR image exists
+
+Use the same tag:
+
+```powershell
+aws ecr describe-images `
+  --repository-name shiftweave `
+  --image-ids imageTag=$imageTag `
+  --region us-west-2 `
+  --query "imageDetails[0].{Tag:imageTags[0],Digest:imageDigest,PushedAt:imagePushedAt}" `
+  --output json
+```
+
+Expected:
+
+```json
+{
+    "Tag": "2026-10-22-004",
+    "Digest": "sha256:...",
+    "PushedAt": "..."
+}
+```
+
+Do not continue if the image is not found.
+
+---
+
+# Step 5 — Back up the live SQLite database
+
+Run:
+
+```powershell
+$commands = @(
+  'set -eu',
+  'STAMP=$(date -u +%Y%m%dT%H%M%SZ)',
+  'BACKUP="/app/backups/shiftweave-$STAMP.db"',
+  'docker exec shiftweave-app-1 node --input-type=commonjs -e "const Database=require(\"better-sqlite3\"); const db=new Database(\"/app/storage/shiftweave.db\",{readonly:true}); db.backup(process.argv[1]).then(()=>{db.close(); console.log(process.argv[1])}).catch(e=>{console.error(e.message); process.exit(1)})" "$BACKUP"',
+  'BACKUP_FILE=$(find /mnt/shiftweave/backups -maxdepth 1 -type f -name "shiftweave-*.db" -printf "%T@ %p\n" | sort -n | tail -1 | cut -d" " -f2-)',
+  'test -n "$BACKUP_FILE"',
+  'aws s3 cp "$BACKUP_FILE" "s3://shiftweave-backups-540087632943-us-west-2/shiftweave/$(basename "$BACKUP_FILE")" --sse AES256 --region us-west-2',
+  'aws s3api head-object --bucket shiftweave-backups-540087632943-us-west-2 --key "shiftweave/$(basename "$BACKUP_FILE")" --region us-west-2 --query "{Size:ContentLength,ETag:ETag,Encryption:ServerSideEncryption,VersionId:VersionId}" --output json'
+)
+
+@{commands=$commands} |
+  ConvertTo-Json -Compress |
+  Set-Content -Path .\ssm-backup-before-update.json -Encoding ascii
+
+$commandId = aws ssm send-command `
+  --instance-ids i-08e66aa7d1bdd0c6c `
+  --document-name AWS-RunShellScript `
+  --parameters file://ssm-backup-before-update.json `
+  --comment "Backup ShiftWeave SQLite before application update" `
+  --region us-west-2 `
+  --query "Command.CommandId" `
+  --output text
+
+Write-Host "CommandId: $commandId"
+
+aws ssm wait command-executed `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2
+
+aws ssm get-command-invocation `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2 `
+  --query "{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}" `
+  --output json
+
+Remove-Item .\ssm-backup-before-update.json -Force
+```
+
+Expected:
+
+```json
+{
+    "Status": "Success",
+    "ResponseCode": 0
+}
+```
+
+The output should include:
+
+```text
+Encryption: AES256
+VersionId: ...
+```
+
+Do not deploy if the backup fails.
+
+---
+
+# Step 6 — Pull the image on EC2
+
+Use the new tag:
+
+```powershell
+$commands = @(
+  'set -eu',
+  'aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 540087632943.dkr.ecr.us-west-2.amazonaws.com',
+  "docker pull 540087632943.dkr.ecr.us-west-2.amazonaws.com/shiftweave:$imageTag",
+  'grep -n "image:" /mnt/shiftweave/compose.yaml'
+)
+
+@{commands=$commands} |
+  ConvertTo-Json -Compress |
+  Set-Content -Path .\ssm-pull-update-image.json -Encoding ascii
+
+$commandId = aws ssm send-command `
+  --instance-ids i-08e66aa7d1bdd0c6c `
+  --document-name AWS-RunShellScript `
+  --parameters file://ssm-pull-update-image.json `
+  --comment "Pull ShiftWeave update image" `
+  --region us-west-2 `
+  --query "Command.CommandId" `
+  --output text
+
+Write-Host "CommandId: $commandId"
+
+aws ssm wait command-executed `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2
+
+aws ssm get-command-invocation `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2 `
+  --query "{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}" `
+  --output json
+
+Remove-Item .\ssm-pull-update-image.json -Force
+```
+
+Expected output includes:
+
+```text
+Status: Downloaded newer image
+```
+
+and the current Compose line, still showing the old tag.
+
+---
+
+# Step 7 — Update Compose and restart only the app
+
+Set the previous and new tags first:
+
+```powershell
+$previousTag = "2026-10-22-003"
+$newTag = "2026-10-22-004"
+```
+
+Use the actual live tag as `$previousTag`.
+
+Then run:
+
+```powershell
+$commands = @(
+  'set -eu',
+  "cp /mnt/shiftweave/compose.yaml /mnt/shiftweave/compose.yaml.before-$newTag",
+  "sed -i 's|540087632943.dkr.ecr.us-west-2.amazonaws.com/shiftweave:'$previousTag'|540087632943.dkr.ecr.us-west-2.amazonaws.com/shiftweave:'$newTag'|' /mnt/shiftweave/compose.yaml",
+  'grep -n "image:" /mnt/shiftweave/compose.yaml',
+  'cd /mnt/shiftweave',
+  'docker compose up -d app'
+)
+
+@{commands=$commands} |
+  ConvertTo-Json -Compress |
+  Set-Content -Path .\ssm-deploy-update.json -Encoding ascii
+
+$commandId = aws ssm send-command `
+  --instance-ids i-08e66aa7d1bdd0c6c `
+  --document-name AWS-RunShellScript `
+  --parameters file://ssm-deploy-update.json `
+  --comment "Deploy ShiftWeave image $newTag" `
+  --region us-west-2 `
+  --query "Command.CommandId" `
+  --output text
+
+Write-Host "CommandId: $commandId"
+
+aws ssm wait command-executed `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2
+
+aws ssm get-command-invocation `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2 `
+  --query "{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}" `
+  --output json
+
+Remove-Item .\ssm-deploy-update.json -Force
+```
+
+Expected:
+
+```text
+Status: Success
+ResponseCode: 0
+Container ... Recreated
+Container ... Started
+```
+
+Never run:
+
+```bash
+docker compose down -v
+```
+
+---
+
+# Step 8 — Verify the new container
+
+```powershell
+$commands = @(
+  'docker compose -f /mnt/shiftweave/compose.yaml ps',
+  'docker inspect shiftweave-app-1 --format "Health={{.State.Health.Status}}"',
+  'docker inspect shiftweave-app-1 --format "Image={{.Config.Image}}"'
+)
+
+@{commands=$commands} |
+  ConvertTo-Json -Compress |
+  Set-Content -Path .\ssm-verify-update.json -Encoding ascii
+
+$commandId = aws ssm send-command `
+  --instance-ids i-08e66aa7d1bdd0c6c `
+  --document-name AWS-RunShellScript `
+  --parameters file://ssm-verify-update.json `
+  --comment "Verify ShiftWeave application update" `
+  --region us-west-2 `
+  --query "Command.CommandId" `
+  --output text
+
+Write-Host "CommandId: $commandId"
+
+aws ssm wait command-executed `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2
+
+aws ssm get-command-invocation `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2 `
+  --query "{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}" `
+  --output json
+
+Remove-Item .\ssm-verify-update.json -Force
+```
+
+Expected:
+
+```text
+Up ... (healthy)
+Health=healthy
+Image=...:2026-10-22-004
+```
+
+---
+
+# Step 9 — Verify public readiness and health
+
+```powershell
+$ready = Invoke-WebRequest `
+  -UseBasicParsing `
+  -Uri "http://32.189.84.182/readyz"
+
+Write-Host "READY_STATUS=$($ready.StatusCode)"
+Write-Host "READY_BODY=$($ready.Content)"
+```
+
+Expected:
+
+```text
+READY_STATUS=200
+READY_BODY={"ready":true}
+```
+
+For the current protected deployment, verify health using the stored demo credentials:
+
+```powershell
+$region = "us-west-2"
+
+$demoUser = aws ssm get-parameter `
+  --name "/shiftweave/production/DEMO_USER" `
+  --with-decryption `
+  --region $region `
+  --query "Parameter.Value" `
+  --output text
+
+$demoPassword = aws ssm get-parameter `
+  --name "/shiftweave/production/DEMO_PASSWORD" `
+  --with-decryption `
+  --region $region `
+  --query "Parameter.Value" `
+  --output text
+
+$pair = "$demoUser`:$demoPassword"
+$basicAuth = [Convert]::ToBase64String(
+  [Text.Encoding]::ASCII.GetBytes($pair)
+)
+
+$health = Invoke-WebRequest `
+  -UseBasicParsing `
+  -Headers @{ Authorization = "Basic $basicAuth" } `
+  -Uri "http://32.189.84.182/health"
+
+Write-Host "HEALTH_STATUS=$($health.StatusCode)"
+Write-Host "HEALTH_BODY=$($health.Content)"
+```
+
+Expected:
+
+```text
+HEALTH_STATUS=200
+```
+
+If you later remove Basic Auth, use an unauthenticated `/health` request instead.
+
+---
+
+# Step 10 — Verify MCP
+
+Use the MCP token without printing it:
+
+```powershell
+$region = "us-west-2"
+
+$mcpToken = aws ssm get-parameter `
+  --name "/shiftweave/production/MCP_AUTH_TOKEN" `
+  --with-decryption `
+  --region $region `
+  --query "Parameter.Value" `
+  --output text
+
+$headers = @{
+  Authorization = "Bearer $mcpToken"
+  Accept = "application/json, text/event-stream"
+  "Content-Type" = "application/json"
+  "MCP-Protocol-Version" = "2025-11-25"
+}
+
+$body = @{
+  jsonrpc = "2.0"
+  id = 1
+  method = "initialize"
+  params = @{
+    protocolVersion = "2025-11-25"
+    capabilities = @{
+      tools = @{
+        listChanged = $false
+      }
+    }
+    clientInfo = @{
+      name = "shiftweave-deployment-check"
+      version = "1.0.0"
+    }
+  }
+} | ConvertTo-Json -Depth 10 -Compress
+
+$response = Invoke-WebRequest `
+  -UseBasicParsing `
+  -Method Post `
+  -Uri "http://32.189.84.182/mcp" `
+  -Headers $headers `
+  -Body $body
+
+Write-Host "MCP_STATUS=$($response.StatusCode)"
+Write-Host "MCP_SESSION_ID=$($response.Headers["mcp-session-id"])"
+Write-Host $response.Content
+```
+
+Expected:
+
+```text
+MCP_STATUS=200
+```
+
+and:
+
+```text
+protocolVersion: 2025-11-25
+```
+
+---
+
+# Configuration-only changes
+
+If only the runtime configuration changes, such as:
+
+```text
+LLM_PROVIDER
+BEDROCK_MODEL_ID
+EPIC_READS_ENABLED
+EPIC_TEST_PATIENT_IDS
+PUBLIC_DEMO_ACCESS
+```
+
+you normally do not need to build a new image.
+
+Update the EC2 runtime configuration, then restart only:
+
+```bash
+cd /mnt/shiftweave
+docker compose up -d app
+```
+
+Still verify health, readiness, and MCP.
+
+---
+
+# Rollback commands
+
+If the new image is unhealthy, restore the previous image tag:
+
+```powershell
+$rollbackTag = "2026-10-22-003"
+```
+
+Then run through SSM:
+
+```powershell
+$commands = @(
+  'set -eu',
+  "sed -i 's|540087632943.dkr.ecr.us-west-2.amazonaws.com/shiftweave:[^ ]*|540087632943.dkr.ecr.us-west-2.amazonaws.com/shiftweave:$rollbackTag|' /mnt/shiftweave/compose.yaml",
+  'cd /mnt/shiftweave',
+  'docker compose up -d app'
+)
+
+@{commands=$commands} |
+  ConvertTo-Json -Compress |
+  Set-Content -Path .\ssm-rollback.json -Encoding ascii
+
+$commandId = aws ssm send-command `
+  --instance-ids i-08e66aa7d1bdd0c6c `
+  --document-name AWS-RunShellScript `
+  --parameters file://ssm-rollback.json `
+  --comment "Rollback ShiftWeave application image" `
+  --region us-west-2 `
+  --query "Command.CommandId" `
+  --output text
+
+Write-Host "CommandId: $commandId"
+
+aws ssm wait command-executed `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2
+
+aws ssm get-command-invocation `
+  --command-id $commandId `
+  --instance-id i-08e66aa7d1bdd0c6c `
+  --region us-west-2 `
+  --query "{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}" `
+  --output json
+
+Remove-Item .\ssm-rollback.json -Force
+```
+
+The permanent workflow is:
+
+```text
+typecheck/build
+→ ECR login
+→ new ARM64 image tag
+→ push to ECR
+→ verify ECR tag
+→ SQLite backup
+→ pull image on EC2
+→ update Compose
+→ restart app only
+→ verify container
+→ verify readiness
+→ verify health
+→ verify MCP
+```
+
+Keep `DEMO_USER` and `DEMO_PASSWORD` until the public-access deployment is separately completed and verified.
