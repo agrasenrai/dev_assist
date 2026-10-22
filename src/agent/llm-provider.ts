@@ -90,6 +90,24 @@ export class MockAutonomousAgent implements ILLMProvider {
     if (/\b(diagnos\w*|prescrib\w*|recommend.*treatment|change.*dose|increase.*dose|administer.*medication)\b/i.test(text)) {
       return { finalSpeech: 'I coordinate nursing workflows only. Diagnosis, treatment and medication changes require the clinical team.' };
     }
+    if (/\b(?:politic\w*|election\w*|president\w*|prime minister|democrat\w*|republican\w*|congress|parliament|biden|trump|modi|government policy)\b/i.test(text)) {
+      return { finalSpeech: "I'm focused purely on hospital nursing workflows and shift handoffs, so I don't engage in political or non-clinical topics." };
+    }
+    if (/\b(?:codebase|source code|git repo|repository|github|database schema|private key|api key|tokens?)\b/i.test(text)) {
+      return { finalSpeech: "I'm designed to assist with nursing shift workflows, so I don't discuss internal code or technical credentials." };
+    }
+    if (/\b(?:what(?:'s|s| is)? (?:your|ur) name|who (?:are|r) you|what should i call you|tell me (?:your|ur) name)\b/i.test(text)) {
+      return { finalSpeech: "I'm Alexa, your nursing workflow assistant for ShiftWeave. I help coordinate ICU shift handoffs and bedside tasks." };
+    }
+    if (/\b(?:what is shiftweave|what does shiftweave do|tell me about shiftweave|about shiftweave|what is this project)\b/i.test(text)) {
+      return { finalSpeech: "ShiftWeave is an ambient clinical coordination system for ICU nursing teams, helping synthesize handoffs and catch documentation discrepancies." };
+    }
+    if (/\b(?:how are you|how're you|how is it going)\b/i.test(text)) {
+      return { finalSpeech: "I'm doing well and ready to assist! How is your shift going?" };
+    }
+    if (/\b(?:what can you do|how can you help|help me)\b/i.test(text)) {
+      return { finalSpeech: "I can look up your assigned patient tasks, prepare grounded shift handoffs, flag medication discrepancies between notes and EHR, and checkpoint your progress. What would you like help with?" };
+    }
     if (/\b(complete|resolve|accept|escalate)\b/.test(text) && !/\b(summary|status|handoff)\b/.test(text)) {
       return { finalSpeech: 'Please use the human verification or custody controls for this action. I have not changed any task status.' };
     }

@@ -61,7 +61,8 @@ export function validateReply(speech: string, evidence: string[], source?: strin
   const unavailable = /^i (?:don't|do not) have (?:verified|current|available) (?:patient|task|handoff|clinical|medical) (?:information|records|data)[.!?]?$/i;
   for (const clause of generated.replace(/[’]/g,"'").split(/(?<=[.!?])\s+|[;\n]|\b(?:but|however|instead)\b/i).map(text=>text.trim()).filter(Boolean)) {
     // Exceptions match a complete refusal/clarification, never an arbitrary suffix.
-    if (refusal.test(clause) || clarification.test(clause) || unavailable.test(clause)) continue;
+    const generalFriendly = /^(?:i(?:'m| am| was)|my name is|shiftweave is|you(?:'re| are)|i (?:do not|don't) (?:engage|discuss)|ready to help|let(?:'s| us) focus|how (?:can|is)|what (?:can|would)|hello|hey|good (?:morning|afternoon|evening)|take care|you're welcome|i'm doing well|we are focused)\b/i;
+    if (refusal.test(clause) || clarification.test(clause) || unavailable.test(clause) || generalFriendly.test(clause)) continue;
     if (/\b(?:recommend\w*|prescrib\w*|administer\w*|increas\w*|decreas\w*|adjust\w*|chang\w*|stop\w*|start\w*|tak(?:e|ing))\b[\s\S]*\b(?:dos(?:e|age)\w*|medicat\w*|treat\w*|prescription\w*|mg)\b/i.test(clause))
       throw new Error('Clinical advice is outside the voice workflow');
     if (!source && (
