@@ -4,6 +4,7 @@ import { BedrockLLMProvider, type AgentMessage } from '../src/agent/llm-provider
 import { db } from '../src/db/connection.js';
 import { CheckpointService } from '../src/services/checkpoint.service.js';
 import { VoiceService, type VoiceIntent } from '../src/services/voice.service.js';
+import { validateReply } from '../src/services/voice-agent.service.js';
 
 /** Adapter fixtures exercise real HTTP/MCP and durable services; live inference is checked separately. */
 export async function verifyVoiceConversation(base:string,check:(name:string,action:()=>unknown)=>void) {
@@ -11,6 +12,8 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
   process.env.LLM_PROVIDER='bedrock';
   const session=randomUUID();let revision=0,calls=0;let lastMessages:AgentMessage[]=[];
   let intent:VoiceIntent|undefined;
+  let continuationIntent:VoiceIntent|undefined;
+  let generatedReply:{speech:string;kind:string;viaTool:boolean;readFirst?:boolean}|undefined;
   let mode:'chat'|'intent'|'failure'|'tool'|'fabricate'|'source-change'|'false-confirm'='chat';
   const taskId='voice_task';
   BedrockLLMProvider.prototype.decideNextStep=async(messages,tools,context)=>{
@@ -22,16 +25,24 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     if(mode==='false-confirm')return{toolCall:{toolName:'interpret_voice_request',arguments:{intent:'CONFIRM'}}};
     const userIndex=messages.findLastIndex(m=>m.role==='user'),utterance=messages[userIndex]!.content;
     const steps=messages.slice(userIndex+1).filter(m=>m.role==='tool');
+    if(generatedReply) {
+      if(generatedReply.readFirst&&!steps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
+      return generatedReply.viaTool
+        ? {toolCall:{toolName:'reply_to_nurse',arguments:{kind:generatedReply.kind,speech:generatedReply.speech,evidence:[]}}}
+        : {finalSpeech:generatedReply.speech};
+    }
     if(mode==='chat')return{finalSpeech:utterance.includes("don't like")?"I understand. I'll give you some space."
       :utterance.includes('confused')?"That's okay. We can take it one step at a time."
       :"I'm sorry you're not feeling well. What would you like help with?"};
-    if(intent?.intent==='IDENTIFY')return{toolCall:{toolName:'interpret_voice_request',arguments:intent}};
-    if(!steps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
-    const result=steps.find(m=>m.toolName==='interpret_voice_request');
-    if(!result)return{toolCall:{toolName:'interpret_voice_request',arguments:intent!}};
+    const identifiedIndex=steps.findIndex(m=>m.toolName==='interpret_voice_request'&&JSON.parse(m.content).identificationComplete);
+    if(intent?.intent==='IDENTIFY'&&identifiedIndex<0)return{toolCall:{toolName:'interpret_voice_request',arguments:intent}};
+    const requestSteps=steps.slice(identifiedIndex+1);
+    if(!requestSteps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
+    const result=requestSteps.find(m=>m.toolName==='interpret_voice_request');
+    if(!result)return{toolCall:{toolName:'interpret_voice_request',arguments:identifiedIndex>=0?continuationIntent!:intent!}};
     const facts=JSON.parse(result.content).facts as Array<{id:string;text:string}>;
     if(mode==='source-change')db.prepare("UPDATE tasks SET priority=CASE WHEN priority='STAT' THEN 'URGENT' ELSE 'STAT' END WHERE id=?").run(taskId);
-    return{toolCall:{toolName:'reply_to_nurse',arguments:{kind:'RECORDS',speech:`Here’s what I found. ${facts.map(f=>`{{${f.id}}}`).join(' ')}${mode==='fabricate'?' The task is completed.':''}`,evidence:facts.map(f=>f.id)}}};
+    return{toolCall:{toolName:'reply_to_nurse',arguments:{kind:'RECORDS',speech:`Here’s what I found${identifiedIndex>=0?' for your shift':''}. ${facts.map(f=>`{{${f.id}}}`).join(' ')}${mode==='fabricate'?' The task is completed.':''}`,evidence:facts.map(f=>f.id)}}};
   };
   const post=async(input:unknown)=>{const response=await fetch(base+'/api/voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});return{status:response.status,data:await response.json()};};
   const say=async(utterance:string)=>{const response=await post({session_id:session,utterance,expected_revision:revision,idempotency_key:randomUUID()});assert.equal(response.status,200,JSON.stringify(response.data));revision=response.data.revision;return response.data;};
@@ -108,6 +119,87 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     check('semantic traces omit dialogue and raw provider errors',()=>{
       const logs=db.prepare("SELECT details FROM audit_log WHERE action IN ('VOICE:SEMANTIC_TOOL','LLM:VOICE_CONVERSATION') AND target_resource=?").all(`voice:${session}`);
       assert(logs.length>10);assert(!JSON.stringify(logs).includes('fixture-sensitive'));assert(!JSON.stringify(logs).includes('not feeling well'));
+    });
+    const rejectedReplies=[
+      'The patient has a latex allergy.',
+      'He has no allergies.',
+      'James is doing well.',
+      'james is doing well.',
+      'You have a documented sensitivity.',
+      'The task is completed.',
+      'I cannot access the chart. I recommend a medication treatment.',
+      'I cannot see it, but increase the medication dose.',
+      'I cannot recommend treatment. Increase the medication dose.',
+      'I do not know; start the medication treatment.'
+    ];
+    const beforeUnsafeEvents=(db.prepare('SELECT count(*) n FROM task_events').get()as any).n;
+    for(const viaTool of [false,true])for(const speech of rejectedReplies) {
+      generatedReply={speech,kind:'CONVERSATION',viaTool};
+      const rejected=await say('Please answer my question');
+      check(`unsafe or unsourced reply is blocked through ${viaTool?'reply tool':'direct speech'}: ${rejectedReplies.indexOf(speech)}`,()=>{
+        assert.equal(modelStatus(),'FAILED');assert.doesNotMatch(rejected.speech,/latex allergy|James is doing well|Increase the medication dose|recommend a medication treatment/i);
+        assert.notEqual(rejected.speech,speech);
+      });
+    }
+    generatedReply={speech:'The patient has a latex allergy.',kind:'REFUSAL',viaTool:true,readFirst:true};
+    await say('Please check again');
+    check('reply kind and context-only reads do not authorize unsourced patient claims',()=>assert.equal(modelStatus(),'FAILED'));
+    for(const speech of ["I'm sorry you're not feeling well. What would you like help with?",'Which patient do you mean?',
+      'I cannot recommend treatment. Please ask your clinical team.',"I don't have verified patient information."]) {
+      generatedReply={speech,kind:'CONVERSATION',viaTool:true};
+      const accepted=await say('Can you help me?');
+      check(`safe general reply remains available: ${speech}`,()=>{assert.equal(modelStatus(),'SUCCESS');assert.equal(accepted.speech,speech);});
+    }
+    check('response validation never modifies task records',()=>assert.equal((db.prepare('SELECT count(*) n FROM task_events').get()as any).n,beforeUnsafeEvents));
+    check('backend facts require exact matching evidence and allow sourced clinical context',()=>{
+      const fact='The patient has a latex allergy.';
+      assert.doesNotThrow(()=>validateReply(`Here is what I found. ${fact}`,[fact],fact));
+      assert.throws(()=>validateReply(fact,[fact],'No verified allergy records are available.'),/matching source evidence/);
+      assert.throws(()=>validateReply(`${fact} I cannot see the chart. Increase the medication dose.`,[fact],fact),/Clinical advice/);
+      assert.throws(()=>validateReply('Do not increase the medication dose.',[]),/Clinical advice/);
+    });
+    generatedReply=undefined;mode='intent';
+    const compoundInput={session_id:randomUUID(),utterance:'Hii I am Maya and Nora left off so I want to know about my tasks',expected_revision:0,idempotency_key:randomUUID()};
+    intent={intent:'IDENTIFY',nurse_name:'Maya',continue_request:true};continuationIntent={intent:'TASKS',status:'ALL'};
+    const compound=await post(compoundInput);
+    check('introduction plus task question completes both parts in one voice turn',()=>{
+      assert.equal(compound.status,200);assert.equal(compound.data.nurse.id,'voice_maya');
+      assert.match(compound.data.speech,/Review documented shift checklist/);assert.doesNotMatch(compound.data.speech,/What can I help/);
+      assert.equal(compound.data.messages.filter((m:any)=>m.role==='nurse'&&m.text===compoundInput.utterance).length,1);
+      assert.equal(compound.data.pending,null);
+    });
+    const compoundCalls=calls;assert.deepEqual(await post(compoundInput),compound);
+    check('combined introduction retry reuses both saved operations',()=>assert.equal(calls,compoundCalls));
+    check('mentioning a departing nurse does not change task custody',()=>assert.equal((db.prepare('SELECT count(*) n FROM task_events').get()as any).n,beforeUnsafeEvents));
+    const patientId=(db.prepare('SELECT patient_id FROM tasks WHERE id=?').get(taskId)as {patient_id:string}).patient_id;
+    continuationIntent={intent:'PATIENT',patient_id:patientId};
+    const combinedPatientInput={...compoundInput,session_id:randomUUID(),utterance:'Hi I am Maya, tell me the latest information about my patient',idempotency_key:randomUUID()};
+    const combinedPatient=await post(combinedPatientInput);
+    check('introduction plus patient question also continues into a sourced answer',()=>{
+      assert.equal(combinedPatient.status,200);assert.equal(combinedPatient.data.nurse.id,'voice_maya');
+      assert.equal((CheckpointService.getLatestCheckpoint(`voice:${combinedPatientInput.session_id}`)?.statePayload.voice as any)?.selectedPatientId,patientId);
+      assert.match(combinedPatient.data.speech,/Demo Patient/);assert.doesNotMatch(combinedPatient.data.speech,/What can I help|couldn’t verify|Bedrock right now/);
+    });
+    continuationIntent={intent:'STATUS',task_id:taskId,status:'PENDING'};
+    const combinedUpdate=await post({...compoundInput,session_id:randomUUID(),utterance:'Hi I am Maya, set my checklist to pending',idempotency_key:randomUUID()});
+    check('introduction plus update still stages human confirmation without a write',()=>{
+      assert.equal(combinedUpdate.status,200);assert.equal(combinedUpdate.data.pending.ready,true);
+      assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)as any).status,'COMPLETED');
+      assert.equal((db.prepare('SELECT count(*) n FROM task_events').get()as any).n,beforeUnsafeEvents);
+    });
+    intent={intent:'IDENTIFY',nurse_name:'Unknown Nurse',continue_request:true};
+    const unknown=await post({...compoundInput,session_id:randomUUID(),utterance:'Hi I am Unknown Nurse and show my tasks',idempotency_key:randomUUID()});
+    check('failed combined identification reveals no records or follow-up results',()=>{
+      assert.equal(unknown.status,200);assert.equal(unknown.data.nurse,null);assert.deepEqual(unknown.data.tasks,[]);assert.match(unknown.data.speech,/couldn’t find that name/);
+    });
+    intent={intent:'IDENTIFY',nurse_name:'Maya',continue_request:true};continuationIntent={intent:'TASK',task_id:taskId};
+    const combinedRecovery={...compoundInput,session_id:randomUUID(),utterance:'I am Maya, did that checklist get done?',idempotency_key:randomUUID()};
+    VoiceService.saveAssistantTurn=(...args:Parameters<typeof save>)=>{if(args[0].idempotency_key===combinedRecovery.idempotency_key)throw new Error('simulated lost combined response');return save.apply(VoiceService,args);};
+    try{assert.equal((await post(combinedRecovery)).status,409);}finally{VoiceService.saveAssistantTurn=save;}
+    const combinedCalls=calls, recovered=await post(combinedRecovery);
+    check('combined introduction recovers its final answer without repeating identification or reads',()=>{
+      assert.equal(recovered.status,200);assert.equal(calls,combinedCalls);assert.match(recovered.data.speech,/completed/);
+      assert.equal(recovered.data.messages.filter((m:any)=>m.role==='nurse').length,1);
     });
   }finally{BedrockLLMProvider.prototype.decideNextStep=original;if(originalProvider===undefined)delete process.env.LLM_PROVIDER;else process.env.LLM_PROVIDER=originalProvider;}
 }
