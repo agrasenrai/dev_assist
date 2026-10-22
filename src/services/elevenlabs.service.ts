@@ -4,8 +4,8 @@ dotenv.config();
 
 export interface TTSOptions {
   text: string;
-  voiceId?: string;
-  modelId?: string;
+  voiceId?: string | undefined;
+  modelId?: string | undefined;
 }
 
 export class ElevenLabsService {

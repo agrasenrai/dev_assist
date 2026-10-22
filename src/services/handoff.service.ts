@@ -45,6 +45,9 @@ export class HandoffService {
     }
     return MutationService.execute('CREATE_HANDOFF_DRAFT', args.idempotency_key,
       { ...args, idempotency_key: undefined }, args.incoming_nurse_id, () => {
+
+
+
         for (const id of [args.outgoing_nurse_id, args.incoming_nurse_id]) {
           if (!db.prepare('SELECT id FROM nurses WHERE id = ?').get(id)) throw new Error('Unknown nurse');
         }

@@ -933,7 +933,8 @@ app.post("/api/conflicts/:id/resolve", (req, res) => {
 
 /** Chat endpoint for the Medi conversational simulation */
 app.post("/api/chat", async (req, res) => {
-  const input = z.object({ utterance: z.string().trim().min(1).max(8000), nurseId: z.string().default('nurse_reema_02'),
+  const defaultNurse = (db.prepare("SELECT id FROM nurses WHERE role = 'STAFF_NURSE' ORDER BY id ASC LIMIT 1").get() as any)?.id || 'nurse_reema_02';
+  const input = z.object({ utterance: z.string().trim().min(1).max(8000), nurseId: z.string().default(defaultNurse),
     shiftId: z.string().optional(), outgoingNurseId: z.string().optional(), incomingNurseId: z.string().optional(),
     idempotency_key: z.string().min(1), workflowRunId: z.string().min(1).max(200).optional() }).parse(req.body);
   let shiftId = input.shiftId;
@@ -988,7 +989,8 @@ app.post('/api/chaos/simulate', async (req, res) => {
   const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), 'mock', runId);
   try {
     await orchestrator.initialize();
-    const result = await orchestrator.processUtterance('nurse_reema_02', input.action === 'crash'
+    const activeNurse = (db.prepare("SELECT id FROM nurses WHERE role = 'STAFF_NURSE' ORDER BY id ASC LIMIT 1").get() as any)?.id || 'nurse_reema_02';
+    const result = await orchestrator.processUtterance(activeNurse, input.action === 'crash'
       ? 'Prepare my shift handoff' : 'Resume my handoff', input.action === 'crash' ? { simulateInterruptionAtStep: 3 } : {});
     res.json({ status: 'RECOVERED', workflowRunId: runId, checkpointId: result.checkpointId,
       message: `Recovered saved workflow. Restored tool results: ${result.avoidedDuplicateStepsCount || 0}.`, result });
