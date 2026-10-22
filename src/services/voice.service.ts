@@ -39,7 +39,8 @@ export const voiceIntentSchema = z.object({
   status: z.enum(['PENDING','IN_PROGRESS','COMPLETED','CANCELLED','UNFINISHED','ALL']).optional(),
   note: z.string().trim().min(1).max(1000).optional(),
   detail: z.enum(['SUMMARY','DETAILS','ALLERGIES','DIAGNOSIS','ADMISSION']).optional(),
-  all_tasks: z.boolean().optional()
+  all_tasks: z.boolean().optional(),
+  continue_request: z.boolean().optional().describe('IDENTIFY only: true when the SAME utterance also contains a workflow/patient request to handle after identification.')
 }).strict();
 export type VoiceIntent = z.infer<typeof voiceIntentSchema>;
 
@@ -217,14 +218,14 @@ export class VoiceService {
   }
 
   static saveAssistantTurn(input: VoiceInput, speech: string, conversationModel?: {provider: string; status: 'SUCCESS' | 'FAILED'},
-    completion?: {fromRevision:number; replaceLast:boolean; preservePending:boolean}) {
+    completion?: {fromRevision:number; replaceLast:boolean; preservePending:boolean; replaceTurns?:number}) {
     return MutationService.execute('VOICE_TURN', `voice-turn:${input.idempotency_key}`, input, 'voice-demo', () => {
       const state = this.load(input.session_id);
       if (state.revision !== (completion?.fromRevision ?? input.expected_revision)) throw new Error('Voice session changed. Refresh before speaking again.');
       if (!completion?.preservePending) state.pending = null;
       state.revision++;
       state.speech = speech;
-      state.messages = [...(completion?.replaceLast ? state.messages.slice(0,-2) : state.messages), { role: 'nurse' as const, text: input.utterance },
+      state.messages = [...(completion?.replaceLast ? state.messages.slice(0,-2*(completion.replaceTurns??1)) : state.messages), { role: 'nurse' as const, text: input.utterance },
         { role: 'assistant' as const, text: speech }].slice(-30);
       CheckpointService.saveCheckpoint(runId(input.session_id), state.revision, 'VOICE_AGENT_RESULT',
         { voice: state, ...(conversationModel ? {conversationModel} : {}) }, `voice-state:${input.idempotency_key}`);

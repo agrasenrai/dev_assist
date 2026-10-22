@@ -22,7 +22,8 @@ try {
   const address=appServer.address();assert(address && typeof address!=='string');
   bridge=new MCPClientBridge(`http://127.0.0.1:${address.port}/mcp`);await bridge.initialize();
   const session=randomUUID();let revision=0;
-  const patientOnly=process.argv.includes('--patient-only');
+  const combinedIntro=process.argv.includes('--combined-intro');
+  const patientOnly=process.argv.includes('--patient-only')||combinedIntro;
   for(const utterance of patientOnly?[]:['can you do that one thing for me I am just not feeling well',"okay I don't like to talk to you"]){
     const input={session_id:session,utterance,expected_revision:revision,idempotency_key:randomUUID()};
     const start=Date.now();
@@ -37,7 +38,7 @@ try {
     console.log(JSON.stringify({check:'LIVE_VOICE_CONVERSATION',provider:JSON.parse(execution!.details).provider,
       turn:revision,status:'PASSED',elapsedMs:Date.now()-start,retry:'SAVED_RESPONSE',speech:display.speech}));
   }
-  if(process.argv.includes('--workflow')) {
+  if(process.argv.includes('--workflow')||combinedIntro) {
     const {importIncomingData}=await import('../src/db/ingest.js');importIncomingData();
     const task=db.prepare(`SELECT t.id,t.title,p.full_name FROM tasks t JOIN patients p ON p.id=t.patient_id
       WHERE NOT EXISTS(SELECT 1 FROM conflicts c WHERE c.task_id=t.id AND c.status='UNRESOLVED') LIMIT 1`).get() as any;
@@ -57,6 +58,15 @@ try {
       console.log(JSON.stringify({check:'LIVE_SEMANTIC_WORKFLOW',utterance,speech:display.speech,status:'PASSED',intent:semantic?.action?.intent,
         toolSequence:semantic?.messages.filter((m:any)=>m.toolCall).map((m:any)=>m.toolCall.toolName)}));return display;
     };
+    if(combinedIntro) {
+      const utterance='Hii I am Seema and Reema left off so I want to know about my tasks';
+      const events=(db.prepare('SELECT count(*) n FROM task_events').get()as any).n;
+      const combined=await say(utterance);
+      assert.equal(combined.nurse.id,'nurse_seema_01');
+      assert(combined.tasks.some((t:any)=>combined.speech.includes(t.title)),'Combined introduction must answer with an actual assigned task');
+      assert.equal(combined.messages.filter((m:any)=>m.role==='nurse'&&m.text===utterance).length,1);
+      assert.equal((db.prepare('SELECT count(*) n FROM task_events').get()as any).n,events,'Mentioning Reema must not change task custody');
+    } else {
     assert.equal((await say('Seema here, ready to get started')).nurse.id,'nurse_seema_01');
     if(!patientOnly){const focus=await say('What should I focus on today?');assert.match(focus.speech,/pending|review|unfinished/i);}
     const patient=await say(`Catch me up on ${task.full_name}`);assert(patient.speech.includes(task.full_name));
@@ -70,6 +80,7 @@ try {
     assert.equal((await say('Don’t change anything, just tell me how that one stands')).pending,null);
     assert.equal((db.prepare('SELECT count(*) n FROM task_events').get()as any).n,before);
     assert.equal((await say('I am confused')).nurse.id,'nurse_seema_01');
+    }
     }
   }
 } catch(error) {

@@ -14,7 +14,7 @@ import { z } from 'zod';
 const busy = new Set<string>();
 
 const intentTool: MCPToolDefinition = {name:'interpret_voice_request',description:
-  'Execute a structured reading request or stage a supported human action through the existing voice workflow. Never confirms actions. Read the current context before choosing record IDs. One operation per utterance.',
+  'Execute a structured reading request or stage a supported human action through the existing voice workflow. Never confirms actions. Read the current context before choosing record IDs. One workflow operation per utterance; IDENTIFY with continue_request may precede it.',
   inputSchema: z.toJSONSchema(voiceIntentSchema) as MCPToolDefinition['inputSchema']};
 const replySchema = z.object({kind:z.enum(['CONVERSATION','CLARIFICATION','RECORDS','UNSUPPORTED','REFUSAL']),speech:z.string().trim().min(1).max(5000),evidence:z.array(z.string().regex(/^fact:\d+$/)).max(100)}).strict();
 const replyTool: MCPToolDefinition = {name:'reply_to_nurse',description:
@@ -22,7 +22,7 @@ const replyTool: MCPToolDefinition = {name:'reply_to_nurse',description:
   inputSchema:z.toJSONSchema(replySchema) as MCPToolDefinition['inputSchema']};
 type Display = ReturnType<typeof VoiceService.read>;
 type SemanticState = {requestHash:string;messages:AgentMessage[];pendingTool?:{name:string;args:Record<string,unknown>;id:string;command?:string};
-  action?:{display:Display;intent:string};version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number};
+  action?:{display:Display;intent:string};identificationRevision?:number;version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number};
 const replyErrors=new Set(['Model cannot claim a workflow action','Clinical advice is outside the voice workflow','Record answer lacks matching source evidence',
   'Record claims must be contained in source evidence','Record answer introduced an unsupported number','Record answer introduced an unsupported status',
   'Record answer omitted source uncertainty','Record claims require a current backend result','Read operation required before a record answer']);
@@ -47,15 +47,33 @@ function recordContext(display: Display) {
     epicRecords:display.epicRecords.map(r=>({patientId:r.patientId,epicPatientId:r.epicPatientId,name:r.name,retrievedAt:r.retrievedAt,status:r.status,error:r.error}))};
 }
 
-function validateReply(speech: string, evidence: string[], source?: string) {
+export function validateReply(speech: string, evidence: string[], source?: string) {
   if (/\b(?:i(?:['’]ve| have)?|we(?:['’]ve| have)?)\s+(?:(?:have|just|successfully)\s+)*(?:updated|marked|saved|assigned|reassigned|transferred|completed|finalized|sent|notified|published|changed)\b/i.test(speech))
     throw new Error('Model cannot claim a workflow action');
-  if (/\b(?:recommend|prescribe|administer|increase|decrease)\b.{0,60}\b(?:dose|medication|treatment|mg)\b/i.test(speech) && !/\b(?:cannot|can’t|can't|don’t|don't|not)\b/i.test(speech))
-    throw new Error('Clinical advice is outside the voice workflow');
+  // Only exact, verified source spans may contain record facts. Check generated text
+  // separately: a disclaimer elsewhere in the answer must never exempt an assertion.
+  if (source && (!evidence.length || evidence.some(quote=>!source.includes(quote)||!speech.includes(quote))))
+    throw new Error('Record answer lacks matching source evidence');
+  const generated = source ? evidence.reduce((text,quote)=>text.split(quote).join(''),speech) : speech;
+  const clinicalTopics = '(?:diagnos(?:is|es)|treatments?|treatment recommendations|medications?|medication changes|doses?|prescriptions?|medical advice|clinical advice)';
+  const refusal = new RegExp(`^(?:i|we) (?:cannot|can't|do not|don't|will not|won't|am unable to|are unable to) (?:diagnose|prescribe|recommend|provide|give|administer|change|modify|adjust)(?: (?:a |any |the |your )?${clinicalTopics}(?: (?:or|and) (?:a |any |the |your )?${clinicalTopics})*)?[.!?]?$`,'i');
+  const clarification = /^(?:(?:which|what) (?:patient|task|handoff)(?: do you mean| are you referring to| would you like to discuss)|what (?:is your (?:registered )?nurse name|would you like (?:me )?to check)|please (?:give|tell) me (?:your (?:registered )?nurse name|the patient and task title))[.!?]?$/i;
+  const unavailable = /^i (?:don't|do not) have (?:verified|current|available) (?:patient|task|handoff|clinical|medical) (?:information|records|data)[.!?]?$/i;
+  for (const clause of generated.replace(/[’]/g,"'").split(/(?<=[.!?])\s+|[;\n]|\b(?:but|however|instead)\b/i).map(text=>text.trim()).filter(Boolean)) {
+    // Exceptions match a complete refusal/clarification, never an arbitrary suffix.
+    if (refusal.test(clause) || clarification.test(clause) || unavailable.test(clause)) continue;
+    if (/\b(?:recommend\w*|prescrib\w*|administer\w*|increas\w*|decreas\w*|adjust\w*|chang\w*|stop\w*|start\w*|tak(?:e|ing))\b[\s\S]*\b(?:dos(?:e|age)\w*|medicat\w*|treat\w*|prescription\w*|mg)\b/i.test(clause))
+      throw new Error('Clinical advice is outside the voice workflow');
+    if (!source && (
+      /\b(?:patients?|tasks?|handoffs?|charts?|records?|allerg\w*|diagnos\w*|conditions?|medicat\w*|treat\w*|dosage\w*|doses?|prescriptions?|vitals?|temperature|blood pressure|oxygen|stable|unstable|admi(?:ssion|tted)|discharg\w*|rooms?|beds?|completed|pending|in progress|cancelled|canceled|assigned|he|she|his|her|their|they)\b/i.test(clause)
+      || /\d/.test(clause)
+      || /\b(?:you|i|we|it|this|that)\s+(?:has|have|had)\b/i.test(clause)
+      || /\b(?!(?:i|we|you|it|that|this|there|here|what|who|which|how|the|a|an)\b)[\p{L}'-]+(?:\s+[\p{L}'-]+){0,3}\s+(?:is|was|has|had|seems|appears|looks|needs|takes|received)\b/iu.test(clause)
+    )) throw new Error('Record claims require a current backend result');
+  }
   if (source) {
-    if (!evidence.length || evidence.some(quote=>!source.includes(quote)||!speech.includes(quote))) throw new Error('Record answer lacks matching source evidence');
     const connective=evidence.reduce((text,quote)=>text.split(quote).join(''),speech);
-    const neutral=new Set("a about also an and another are as at be bit brief briefly can catch check detail details else for found from got happy have he help her here here's heres hers hi him his how i i've ive i'm im if important in information is it it's its just know latest left let let's lets like look looking me more my no note noted noting nothing now of okay on or our over question questions quick read reading change changes regarding related relevant right said says see share snapshot so some something stand stands sure take that that's thats the their theirs them then there's theres these they things this those to up update us useful want was we we've weve well what what's whats when where which with worth would yes you your you're youre yours".split(' '));
+    const neutral=new Set("a about also an and another are as at be bit brief briefly can catch check detail details else for found from got happy have he help her here here's heres hers hi him his how i i've ive i'm im if important in information is it it's its just know latest left let let's lets like look looking me more my no note noted noting nothing now of okay on or our over question questions quick read reading change changes regarding related relevant right said says see share shift snapshot so some something stand stands sure take that that's thats the their theirs them then there's theres these they things this those to up update us useful want was we we've weve well what what's whats when where which with worth would yes you your you're youre yours".split(' '));
     if((connective.toLowerCase().replace(/’/g,"'").match(/[a-z']+/g)||[]).some(word=>!neutral.has(word))||/\d/.test(connective))
       throw new Error('Record claims must be contained in source evidence');
     const numbers = speech.match(/\b\d+(?:\.\d+)?\b/g) || [], sourceNumbers=new Set(source.match(/\b\d+(?:\.\d+)?\b/g)||[]);
@@ -86,8 +104,12 @@ async function runConversation(input: VoiceInput, endpoint: string) {
     {role:'user',content:input.utterance}],version:VoiceService.agentVersion(input.session_id),read:false};
   const current = state;
   const persist = (name:string) => CheckpointService.saveCheckpoint(key,++step,name,{semantic:current},`${key}:step:${step}`);
-  const finish = () => VoiceService.saveAssistantTurn(input,current.speech!,{provider:provider.providerId,status:current.status!},
-    current.action ? {fromRevision:current.action.display.revision,replaceLast:true,preservePending:true} : undefined);
+  const finish = () => {
+    const fromRevision=current.action?.display.revision??current.identificationRevision;
+    return VoiceService.saveAssistantTurn(input,current.speech!,{provider:provider.providerId,status:current.status!},
+      fromRevision!==undefined ? {fromRevision,replaceLast:true,preservePending:true,
+        replaceTurns:Number(Boolean(current.action))+Number(current.identificationRevision!==undefined)} : undefined);
+  };
   const started = Date.now();
   try {
     if(current.speech) return finish(); // Reconcile a committed model result before making another paid call.
@@ -105,13 +127,14 @@ async function runConversation(input: VoiceInput, endpoint: string) {
         if(Date.now()-started>65000) throw new Error('Voice model time budget reached');
         if(!current.pendingTool) {
           const {messages,...scope} = VoiceService.agentContext(input.session_id);
-          const result = await provider.decideNextStep(current.messages,tools,{voiceWorkflow:true,voiceReplyOnly:Boolean(current.action),scope:{...scope,currentUtterance:input.utterance}});
+          const result = await provider.decideNextStep(current.messages,tools,{voiceWorkflow:true,voiceReplyOnly:Boolean(current.action),scope:{...scope,currentUtterance:input.utterance,identityResolved:current.identificationRevision!==undefined}});
           if(result.toolCall) {
             const call = result.toolCall;
             if(!tools.some(t=>t.name===call.toolName)) throw new Error('Model requested an unavailable operation');
             if(current.action && call.toolName!=='reply_to_nurse') throw new Error('Only one workflow operation is permitted per utterance');
             let command: string | undefined;
             if(call.toolName==='interpret_voice_request') {
+              if(current.identificationRevision!==undefined && call.arguments.intent==='IDENTIFY') throw new Error('Nurse identification is already complete for this request');
               try {command=VoiceService.commandForIntent(input,call.arguments);}
               catch(error) {
                 if(error instanceof z.ZodError) throw error;
@@ -149,7 +172,9 @@ async function runConversation(input: VoiceInput, endpoint: string) {
         } else if(pending.name==='interpret_voice_request') {
           const intent=voiceIntentSchema.parse(pending.args);
           // This private child receipt makes a crash between service commit and model checkpoint safe to retry.
-          const child={...input,idempotency_key:`${input.idempotency_key}:semantic-operation`};
+          const identifyingRequest=intent.intent==='IDENTIFY'&&intent.continue_request===true;
+          const child={...input,expected_revision:current.identificationRevision??input.expected_revision,
+            idempotency_key:`${input.idempotency_key}:${identifyingRequest?'semantic-identification':'semantic-operation'}`};
           let display: Display;
           const before=VoiceService.read(input.session_id);
           if(['SYNC_EPIC','READ_EPIC'].includes(intent.intent)&&before.nurse&&before.shift) {
@@ -162,11 +187,17 @@ async function runConversation(input: VoiceInput, endpoint: string) {
               :`Epic returned records for ${data.context.patient.fullName}, retrieved ${data.context.retrievedAt}. ${data.context.encounters.length} encounters and ${data.context.medicationOrders.length} medication orders. Orders do not establish administration.`;
             display=VoiceService.saveAssistantTurn(child,speech);
           } else display=VoiceService.turn(child,pending.command!);
-          current.action={display,intent:intent.intent};current.version=VoiceService.agentVersion(input.session_id);
+          current.version=VoiceService.agentVersion(input.session_id);
           output={authoritativeAnswer:display.speech,facts:sourceFacts(display.speech),...recordContext(display)};
-          if(!['TASKS','TASK','PATIENT','HANDOFF','CONFLICTS'].includes(intent.intent)||display.pending||!display.nurse) {
-            // Human proposals, identity gates and confirmed outcomes stay exactly as validated by the backend.
-            current.speech=display.speech;current.status='SUCCESS';
+          if(identifyingRequest && display.nurse && display.shift) {
+            current.identificationRevision=display.revision;current.read=false;
+            output={identificationComplete:true,requestPending:true,instruction:'Read the newly identified nurse context and fulfill the remaining request in scope.currentUtterance. Do not identify again or stop at a greeting.',...recordContext(display)};
+          } else {
+            current.action={display,intent:intent.intent};
+            if(!['TASKS','TASK','PATIENT','HANDOFF','CONFLICTS'].includes(intent.intent)||display.pending||!display.nurse) {
+              // Human proposals, identity gates and confirmed outcomes stay exactly as validated by the backend.
+              current.speech=display.speech;current.status='SUCCESS';
+            }
           }
         } else {
           try {
@@ -202,6 +233,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
       current.speech=changed ? 'The records changed while I was answering. Please ask again so I can check the latest information.'
         : current.action ? `${current.action.display.speech} I couldn’t generate a verified conversational reply; that is the backend’s recorded result.`
         : error instanceof z.ZodError ? 'I couldn’t validate that request. Could you clarify what you want to do? No records were changed.'
+        : replyErrors.has(reason) ? 'I couldn’t verify that answer safely. Please ask me to check the relevant records, or clarify what you need. No records were changed.'
         : "I couldn't complete that request with Bedrock right now. Please try again. No records were changed.";
       current.status='FAILED';
     }
