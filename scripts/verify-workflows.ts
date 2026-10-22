@@ -13,6 +13,9 @@ import { HandoffService } from '../src/services/handoff.service.js';
 import { ConflictService } from '../src/services/conflict.service.js';
 import { RecoveryService } from '../src/services/recovery.service.js';
 import { SQLiteCacheProvider } from '../src/providers/sqlite-cache-provider.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 if (process.env.SHIFTWEAVE_TEST !== '1') throw new Error('Use npm test; tests must run against a temporary database');
 const mode = process.argv[2] || 'all';
@@ -58,6 +61,42 @@ try {
   };
   const tasks = await rpc('get_assigned_tasks', { nurse_id: 'nurse_seema_01', shift_id: 'shift_20261019_night' });
   check('assigned task count is real', () => assert.equal(tasks.tasks_count, 2));
+  const sdk = new Client({ name: 'independent-verification', version: '1.0.0' });
+  try {
+    // SDK declarations disagree on optional sessionId with exactOptionalPropertyTypes.
+    await sdk.connect(new StreamableHTTPClientTransport(new URL(endpoint)) as Transport);
+    const tools = await sdk.listTools();
+    check('official SDK initializes and discovers the same tools', () => assert.deepEqual(tools.tools.map(t => t.name).sort(), discovered.map(t => t.name).sort()));
+    const result = await sdk.callTool({ name: 'get_assigned_tasks', arguments: { nurse_id: 'nurse_seema_01' } });
+    check('official SDK executes a database-backed tool with a resolved shift', () => {
+      assert(!result.isError);
+      assert.deepEqual(JSON.parse((result.content as { text: string }[])[0]!.text), tasks);
+    });
+    const missing = await sdk.callTool({ name: 'get_assigned_tasks', arguments: { nurse_id: 'absent-nurse' } });
+    check('unknown nurse returns an error instead of fabricated empty success', () => assert.equal(missing.isError, true));
+    db.prepare("UPDATE shifts SET status = 'CLOSED'").run();
+    const noShift = await sdk.callTool({ name: 'get_assigned_tasks', arguments: { nurse_id: 'nurse_seema_01' } });
+    check('missing active shift never defaults to the fixture shift', () => assert.equal(noShift.isError, true));
+    db.prepare("UPDATE shifts SET status = 'ACTIVE'").run();
+    const originalQuery = SQLiteCacheProvider.prototype.getTasksForNurse;
+    try {
+      SQLiteCacheProvider.prototype.getTasksForNurse = async () => { throw new Error('Simulated database query failure'); };
+      const failed = await sdk.callTool({ name: 'get_assigned_tasks', arguments: { nurse_id: 'nurse_seema_01' } });
+      check('database failures propagate as tool errors without mock results', () => assert.equal(failed.isError, true));
+    } finally { SQLiteCacheProvider.prototype.getTasksForNurse = originalQuery; }
+    for (const status of ['PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'FLAGGED_CONFLICT']) {
+      const filtered = await rpc('get_assigned_tasks', { nurse_id: 'nurse_seema_01', status_filter: [status] });
+      check(`stored task status filter ${status}`, () => assert.deepEqual(filtered.tasks, tasks.tasks.filter((t: {status:string}) => t.status === status)));
+    }
+    const checkpointInput = { workflow_run_id: `sdk-${randomUUID()}`, step_index: 1, step_name: 'SDK_VERIFIED', state_payload: { source: 'integration-test' }, idempotency_key: randomUUID() };
+    const saved = await rpc('save_workflow_checkpoint', checkpointInput);
+    check('MCP checkpoint retry reuses the committed result', () => assert(saved));
+    assert.deepEqual(await rpc('save_workflow_checkpoint', checkpointInput), saved);
+    const restored = await rpc('get_workflow_checkpoint', { workflow_run_id: checkpointInput.workflow_run_id });
+    check('MCP checkpoint read returns persisted state', () => assert.deepEqual(restored.checkpoint.statePayload, checkpointInput.state_payload));
+    const changes = await rpc('get_task_changes', { since_timestamp: '2000-01-01T00:00:00Z', unit_id: 'missing-unit' });
+    check('MCP event queries respect the requested unit', () => assert.equal(changes.events_count, 0));
+  } finally { await sdk.close(); }
   for (const route of ['/api/tasks', '/api/handoffs', '/api/conflicts', '/api/execution-trace']) {
     const response = await fetch(base + route);
     check(`dashboard route ${route}`, () => assert.equal(response.status, 200));
@@ -79,7 +118,7 @@ try {
     };
     const invalid = await post('/api/chat', { utterance: '' });
     check('invalid chat input is a 400 response', () => assert.equal(invalid.status, 400));
-    const chatInput = { utterance: 'Prepare a handoff draft', workflowRunId: randomUUID(), idempotency_key: randomUUID() };
+    const chatInput = { nurseId: 'nurse_reema_02', outgoingNurseId: 'nurse_seema_01', utterance: 'Prepare a handoff draft', workflowRunId: randomUUID(), idempotency_key: randomUUID() };
     const chat = await post('/api/chat', chatInput);
     check('HTTP chat uses the actual ephemeral MCP port', () => assert.equal(chat.status, 200, JSON.stringify(chat.data)));
     const handoffCount = () => (db.prepare('SELECT count(*) AS n FROM handoffs').get() as { n: number }).n;
@@ -102,7 +141,7 @@ try {
     const runId = randomUUID();
     const agent = new ShiftWeaveOrchestrator(endpoint, 'mock', runId);
     await agent.initialize();
-    const first = await agent.processUtterance('nurse_reema_02', 'Prepare my handoff draft');
+    const first = await agent.processUtterance('nurse_reema_02', 'Prepare my handoff draft', { outgoingNurseId: 'nurse_seema_01' });
     await agent.close();
     check('draft narrative uses current task metrics', () => assert.match(first.speech, /2 assigned tasks/));
     const draftCount = (db.prepare('SELECT count(*) AS n FROM handoffs').get() as { n: number }).n;
@@ -110,12 +149,12 @@ try {
     const done = await fresh.processUtterance('nurse_reema_02', 'Resume handoff');
     check('completed workflow resume does not create another draft', () => assert.deepEqual(done.toolsExecuted.map(t => t.name), ['resume_workflow']));
     check('history is restored in a fresh orchestrator', () => assert(fresh.getConversationHistory().length > 2));
-    const followup = await fresh.processUtterance('nurse_reema_02', 'What are Elena allergies?');
+    const followup = await fresh.processUtterance('nurse_reema_02', 'What are Elena allergies?', { outgoingNurseId: 'nurse_seema_01' });
     check('patient response is grounded in retrieved details', () => assert.match(followup.speech, /Latex, Sulfa/));
     await fresh.close();
     const interruptedId = randomUUID();
     const interrupt = new ShiftWeaveOrchestrator(endpoint, 'mock', interruptedId); await interrupt.initialize();
-    await assert.rejects(interrupt.processUtterance('nurse_reema_02', 'Prepare handoff', { simulateInterruptionAtStep: 3 }), /CHAOS SIMULATION/);
+    await assert.rejects(interrupt.processUtterance('nurse_reema_02', 'Prepare handoff', { outgoingNurseId: 'nurse_seema_01', simulateInterruptionAtStep: 3 }), /CHAOS SIMULATION/);
     await interrupt.close();
     const checkpoint = CheckpointService.getLatestCheckpoint(interruptedId)!;
     check('interruption saves an actual checkpoint', () => assert(checkpoint.statePayload.messages));
@@ -125,7 +164,7 @@ try {
     check('completion is recorded', () => assert.equal((db.prepare('SELECT status FROM workflow_runs WHERE id = ?').get(interruptedId) as any).status, 'COMPLETED'));
     const changedRun = randomUUID();
     const beforeChange = new ShiftWeaveOrchestrator(endpoint, 'mock', changedRun); await beforeChange.initialize();
-    await assert.rejects(beforeChange.processUtterance('nurse_reema_02', 'Prepare handoff', { simulateInterruptionAtStep: 3 }), /CHAOS/);
+    await assert.rejects(beforeChange.processUtterance('nurse_reema_02', 'Prepare handoff', { outgoingNurseId: 'nurse_seema_01', simulateInterruptionAtStep: 3 }), /CHAOS/);
     await beforeChange.close();
     db.prepare("UPDATE tasks SET title = 'Updated recorded task' WHERE id = 'task_vital_101_01'").run();
     const afterChange = new ShiftWeaveOrchestrator(endpoint, 'mock', changedRun); await afterChange.initialize();

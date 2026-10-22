@@ -5,14 +5,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import 'dotenv/config';
+import Database from 'better-sqlite3';
 
 const root = realpathSync(tmpdir());
 const directory = mkdtempSync(path.join(root, 'shiftweave-deploy-'));
 Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), HOST: '127.0.0.1', PORT: '0',
-  NODE_ENV: 'production', SHIFTWEAVE_TEST: '1', LLM_PROVIDER: 'mock', EPIC_CLIENT_ID: '', EPIC_READS_ENABLED: 'false',
+  NODE_ENV: 'production', SHIFTWEAVE_TEST: '1', LLM_PROVIDER: 'bedrock', EPIC_CLIENT_ID: '', EPIC_READS_ENABLED: 'false',
   EPIC_WRITES_ENABLED: 'false',STAFF_AUTH_REQUIRED:'false',EPIC_CREATE_REVIEW_TASKS:'true',
   PUBLIC_ORIGIN: 'https://demo.shiftweave.test',
   MCP_AUTH_TOKEN: randomBytes(32).toString('hex') });
+// Provision the isolated database explicitly; production must not invent a missing database.
+new Database(process.env.SQLITE_DB_PATH!).close();
 const { appServer } = await import('../src/server.js');
 const { db } = await import('../src/db/connection.js');
 const { MCPClientBridge } = await import('../src/agent/mcp-client-bridge.js');
@@ -26,6 +29,10 @@ try {
   assert.equal((await fetch(base + '/')).status, 200);
   assert.equal((await fetch(base + '/health', { headers: { Origin: 'https://evil.test' } })).status, 403);
   const authenticated = new MCPClientBridge(base + '/mcp');
+  for (const method of ['POST', 'GET', 'DELETE']) {
+    assert.equal((await fetch(base + '/mcp', { method })).status, 401);
+    assert.equal((await fetch(base + '/mcp', { method, headers: { Authorization: 'Bearer incorrect' } })).status, 401);
+  }
   const oldProtocol = await fetch(base + '/mcp', { method: 'POST',
     headers: { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } }) });
@@ -37,6 +44,10 @@ try {
       handoff_id: 'not-a-handoff', nurse_id: 'demo', idempotency_key: randomUUID(), human_confirmed: true, execution_mode: 'live' });
     assert.equal(deniedWrite.isError, true);
     assert.match(deniedWrite.content[0]!.text, /publication is disabled/);
+    const simulatedWrite = await authenticated.callTool('publish_reviewed_handoff_note', {
+      handoff_id: 'not-a-handoff', nurse_id: 'demo', idempotency_key: randomUUID(), human_confirmed: true, execution_mode: 'mock' });
+    assert.equal(simulatedWrite.isError, true);
+    assert.match(simulatedWrite.content[0]!.text, /disabled in production/);
   } finally { await authenticated.close(); }
   console.log('PASS hosted configuration, origin validation, readiness and authenticated MCP discovery');
 

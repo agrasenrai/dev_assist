@@ -15,6 +15,6 @@ if (process.argv[2] === 'crash') {
 const agent = new ShiftWeaveOrchestrator(process.env.MCP_SERVER_URL, 'mock', runId);
 await agent.initialize();
 try {
-  const result = await agent.processUtterance('nurse_reema_02', process.argv[2] === 'crash' ? 'Prepare my handoff draft' : 'Resume handoff');
+  const result = await agent.processUtterance('nurse_reema_02', process.argv[2] === 'crash' ? 'Prepare my handoff draft' : 'Resume handoff', { outgoingNurseId: 'nurse_seema_01' });
   console.log('WORKER_RESULT:' + JSON.stringify(result));
 } finally { await agent.close(); }
