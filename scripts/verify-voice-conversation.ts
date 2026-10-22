@@ -92,7 +92,7 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     check('unsupported generated task status is rejected explicitly',()=>{assert.equal(modelStatus(),'FAILED');assert.match(fabricated.speech,/couldn’t generate a verified/);assert.doesNotMatch(fabricated.speech,/The task is completed/);});
     mode='intent';intent={intent:'STATUS',task_id:taskId,status:'COMPLETED'};const proposed=await say('I’m finished with that checklist');
     check('semantic completion stages confirmation without writing',()=>{assert.equal(proposed.pending.ready,true);assert.match(proposed.speech,/Say “confirm”/);assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)as any).status,'IN_PROGRESS');});
-    const beforeWake=calls;const awake=await say('Alexa');
+    const beforeWake=calls;const awake=await say('Medi');
     check('wake-only control preserves the pending semantic proposal',()=>{assert.equal(awake.pending.ready,true);assert.equal(calls,beforeWake);assert.equal(awake.nurse.id,'voice_maya');});
     mode='false-confirm';await say('Tell me a little more');
     check('model cannot manufacture human confirmation',()=>{assert.equal(modelStatus(),'FAILED');assert.equal((db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)as any).status,'IN_PROGRESS');});

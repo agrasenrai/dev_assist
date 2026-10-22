@@ -161,7 +161,7 @@ export function VoiceWorkspace() {
           <p>Spoken coordination over Streamable HTTP MCP (Spec 2025-11-25). Screen tracks active dialogue.</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-          <span className="badge badge-routine">Synthetic demo · Alexa+ voice simulation</span>
+          <span className="badge badge-routine">Synthetic demo · Medi voice simulation</span>
           <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Protocol 2025-11-25 · $0 Local Edge Cache</span>
         </div>
       </header>
@@ -174,7 +174,7 @@ export function VoiceWorkspace() {
         <div className="voice-speech">
           <span className="voice-eyebrow">{busy ? 'WORKING' : voice.status.toUpperCase()}</span>
           <p aria-live="polite">
-            {display?.speech || (busy ? 'Opening your voice session…' : 'Say “Hi, I am Seema. What are my tasks?”')}
+            {display?.speech || (busy ? 'Opening your voice session…' : 'Say “Medi” to start listening, or “Hi, I am Seema. What are my tasks?”')}
           </p>
           {lastHeard && <small>You said: “{lastHeard}”</small>}
         </div>
@@ -186,7 +186,7 @@ export function VoiceWorkspace() {
           {voice.enabled ? 'Pause microphone' : 'Start voice'}
         </button>
         <p className="voice-permission">
-          Start once to allow the browser microphone. Listening pauses automatically while the assistant speaks.
+          Start once to allow the browser microphone. Say “Medi” anytime to begin speaking (1.5s delay). Listening pauses automatically while the assistant speaks.
         </p>
       </section>
 

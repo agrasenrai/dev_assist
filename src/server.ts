@@ -848,7 +848,7 @@ app.post("/api/conflicts/:id/resolve", (req, res) => {
   res.json({ success: true, conflictId: req.params.id, status: 'VERIFIED_RESOLVED', externalSync: 'NOT_REQUESTED' });
 });
 
-/** Chat endpoint for the Alexa+ conversational simulation */
+/** Chat endpoint for the Medi conversational simulation */
 app.post("/api/chat", async (req, res) => {
   const input = z.object({ utterance: z.string().trim().min(1).max(8000), nurseId: z.string().default('nurse_reema_02'),
     shiftId: z.string().optional(), outgoingNurseId: z.string().optional(), incomingNurseId: z.string().optional(),

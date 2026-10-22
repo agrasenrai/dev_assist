@@ -77,7 +77,7 @@ try {
   console.log('PASS default voice workspace and lower-center microphone placement');
   assert.equal(await page.locator('#chip').count(),0);
   assert.equal(await page.getByRole('button',{name:/Say:/}).count(),0);
-  assert.equal(await page.getByRole('textbox',{name:'Type to Alexa+'}).inputValue(),'');
+  assert.equal(await page.getByRole('textbox',{name:'Type to Medi'}).inputValue(),'');
   assert.equal(await page.getByRole('button',{name:'Start microphone',exact:true}).evaluate((button:HTMLElement)=>Boolean(button.closest('#st'))),false);
   await page.evaluate(()=>{(window as any).denyMicrophone=true;});
   await page.getByRole('button', {name:'Start microphone', exact:true}).click();
@@ -104,13 +104,13 @@ try {
     await page.waitForFunction((starts: number) => (window as any).recognitionStarts > starts, starts);
     console.log(`PASS transcript → HTTP/MCP → stored data → speech → listening: ${text}`);
   };
-  await say('Alexa', /Alexa.*listening/);
+  await say('Medi', /Medi.*listening/);
   await say('Hii', /Hey.*here/);
-  await say('Alexa, what is your name?', /Alexa.*nursing workflow assistant/);
+  await say('Medi, what is your name?', /Medi.*nursing workflow assistant/);
   await say('Seema', /Hi Seema/);
   const beforePauseRequests = voiceRequests;
   const beforePauseSpeech = await page.evaluate(() => (window as any).spoken.length);
-  await page.evaluate(() => (window as any).say('Alexa, what tasks'));
+  await page.evaluate(() => (window as any).say('Medi, what tasks'));
   await page.waitForTimeout(1100);
   assert.equal(voiceRequests,beforePauseRequests,'A one-second pause must not submit an unfinished sentence');
   assert.equal(await page.evaluate(() => (window as any).spoken.length),beforePauseSpeech);
@@ -120,7 +120,7 @@ try {
   await page.evaluate(() => (window as any).say('are pending?'));
   await page.waitForFunction((count:number)=>(window as any).spoken.length>count,beforePauseSpeech);
   const joinedRequest = (db.prepare('SELECT request_json FROM operation_receipts WHERE operation=? ORDER BY rowid DESC LIMIT 1').get('VOICE_TURN')as any);
-  assert.equal(JSON.parse(joinedRequest.request_json).utterance,'Alexa, what tasks are pending?');
+  assert.equal(JSON.parse(joinedRequest.request_json).utterance,'Medi, what tasks are pending?');
   assert.equal(voiceRequests,beforePauseRequests+1);
   await page.waitForFunction((count:number)=>(window as any).recognitionStarts>count,previousStarts+1);
   console.log('PASS short pauses and browser recognition restarts preserve one complete sentence without early execution');
@@ -165,7 +165,7 @@ try {
   assert.deepEqual(blank.messages,[]); assert.deepEqual(blank.tasks,[]); assert.deepEqual(blank.handoffs,[]);
   assert.equal(await page.locator('#ast').innerText(),'Ready for your question.');
   assert.equal(await page.getByRole('log',{name:'Your transcript'}).innerText(),'');
-  assert.equal(await page.getByRole('textbox',{name:'Type to Alexa+'}).inputValue(),'');
+  assert.equal(await page.getByRole('textbox',{name:'Type to Medi'}).inputValue(),'');
   assert.equal(await page.getByRole('button',{name:'Start microphone',exact:true}).getAttribute('aria-pressed'),'false');
   assert.equal(await page.getByRole('group',{name:'Shift thread timeline from saved workflow state'}).count(),0);
   assert.equal(await page.evaluate((session:string)=>localStorage.getItem(`shiftweave:voice:pending:${session}`),oldSession),retainedRequest);

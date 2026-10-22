@@ -79,7 +79,7 @@ export interface ProviderHealth {
 
 export interface ChatMessage {
   id: string;
-  role: 'nurse' | 'alexa';
+  role: 'nurse' | 'medi';
   text: string;
   timestamp: string;
   card?: {
