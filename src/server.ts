@@ -686,6 +686,100 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
+/** Streaming Text-to-Speech endpoint (ElevenLabs chunked audio for ultra-low latency playback) */
+app.all('/api/tts/stream', async (req, res) => {
+  try {
+    const text = (req.method === 'POST' ? req.body?.text : req.query.text) as string;
+    const voiceId = (req.method === 'POST' ? req.body?.voiceId : req.query.voiceId) as string | undefined;
+    const modelId = (req.method === 'POST' ? req.body?.modelId : req.query.modelId) as string | undefined;
+
+    if (!text || typeof text !== 'string') {
+      res.status(400).json({ error: 'Text is required for TTS streaming' });
+      return;
+    }
+
+    if (!ElevenLabsService.isConfigured()) {
+      res.status(200).json({ enabled: false, message: 'ElevenLabs not configured; using browser speech synthesis' });
+      return;
+    }
+
+    const result = await ElevenLabsService.streamSpeech({ text, voiceId, modelId });
+    if (!result) {
+      res.status(200).json({ enabled: false, message: 'ElevenLabs not configured; using browser speech synthesis' });
+      return;
+    }
+
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    result.stream.pipe(res);
+    res.on('close', () => {
+      if ('destroy' in result.stream && typeof (result.stream as any).destroy === 'function') {
+        (result.stream as any).destroy();
+      }
+    });
+  } catch (error) {
+    console.error('ElevenLabs TTS streaming error:', error);
+    if (!res.headersSent) {
+      res.status(502).json({ error: error instanceof Error ? error.message : String(error), fallback: true });
+    }
+  }
+});
+
+/** ElevenLabs Conversational AI Session Info & Signed URL endpoint */
+app.get('/api/convai/session', async (_req, res) => {
+  const agentId = ElevenLabsService.getConvaiAgentId();
+
+  if (!agentId) {
+    res.json({
+      enabled: false,
+      mode: 'STREAMING_VOICE',
+      message: 'ELEVENLABS_AGENT_ID not set. Running in Ultra-Fast Streaming Voice mode with instant Flash 2.5 TTS.'
+    });
+    return;
+  }
+
+  const signedUrl = await ElevenLabsService.getSignedConvaiUrl();
+  res.json({
+    enabled: true,
+    agentId,
+    signedUrl,
+    mode: 'FULL_DUPLEX_CONVAI',
+    requiresSignedUrl: Boolean(signedUrl)
+  });
+});
+
+/** Webhook for ElevenLabs Conversational AI server tools */
+app.post('/api/convai/tools', async (req, res) => {
+  try {
+    const { tool_name, session_id, utterance, idempotency_key } = req.body || {};
+    const effectiveSessionId = session_id || 'convai-session';
+    const effectiveKey = idempotency_key || `convai-${Date.now()}`;
+
+    if (tool_name === 'get_voice_context') {
+      const display = VoiceService.read(effectiveSessionId);
+      res.json({ success: true, display });
+      return;
+    }
+
+    if (tool_name === 'execute_voice_turn' || utterance) {
+      const result = await runVoiceTurn({
+        session_id: effectiveSessionId,
+        utterance: utterance || '',
+        expected_revision: req.body.expected_revision ?? 0,
+        idempotency_key: effectiveKey
+      }, localMcpEndpoint());
+      res.json({ success: true, result });
+      return;
+    }
+
+    res.status(400).json({ error: `Unknown tool: ${tool_name}` });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 /** Health check endpoint */
 app.get("/health", async (_req, res) => {
   const provider = getActiveProvider();
