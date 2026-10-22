@@ -26,6 +26,7 @@ import { readEpicContext } from './services/epic-context.service.js';
 import { EpicWorkflowService } from './services/epic-workflow.service.js';
 import { operationalDispatch } from './services/operational-dispatch.js';
 import { StaffAuthService } from './services/staff-auth.service.js';
+import { ElevenLabsService } from './services/elevenlabs.service.js';
 import { staffMiddleware, authorizeMcpTool } from './services/staff-http.js';
 import { currentStaff, staffAuthRequired } from './services/staff-context.js';
 
@@ -653,6 +654,36 @@ app.post('/api/voice', async (req, res) => {
 });
 app.get('/api/voice/:sessionId', (req, res) => {
   res.json(VoiceService.read(z.string().uuid().parse(req.params.sessionId)));
+});
+
+/** Text-to-Speech endpoint (ElevenLabs with automatic browser fallback) */
+app.post('/api/tts', async (req, res) => {
+  try {
+    const { text, voiceId, modelId } = req.body || {};
+    if (!text || typeof text !== 'string') {
+      res.status(400).json({ error: 'Text is required for TTS' });
+      return;
+    }
+
+    if (!ElevenLabsService.isConfigured()) {
+      res.status(200).json({ enabled: false, message: 'ElevenLabs not configured; using browser speech synthesis' });
+      return;
+    }
+
+    const result = await ElevenLabsService.synthesizeSpeech({ text, voiceId, modelId });
+    if (!result) {
+      res.status(200).json({ enabled: false, message: 'ElevenLabs not configured; using browser speech synthesis' });
+      return;
+    }
+
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Length', result.audioBuffer.length);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(result.audioBuffer);
+  } catch (error) {
+    console.error('ElevenLabs TTS synthesis error:', error);
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error), fallback: true });
+  }
 });
 
 /** Health check endpoint */

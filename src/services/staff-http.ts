@@ -19,7 +19,7 @@ export function staffMiddleware(req:Request,res:Response,next:NextFunction) {
   try {
     if(!token)throw new Error('Staff sign-in required');
     const principal=StaffAuthService.authenticate(token);
-    const legacyAllowed=req.path.startsWith('/api/voice') || req.path.startsWith('/api/operations/') || req.path.startsWith('/api/staff/') || req.path==='/api/execution-trace' || req.path==='/mcp';
+    const legacyAllowed=req.path.startsWith('/api/voice') || req.path==='/api/tts' || req.path.startsWith('/api/operations/') || req.path.startsWith('/api/staff/') || req.path==='/api/execution-trace' || req.path==='/mcp';
     if(!legacyAllowed){res.status(403).json({error:'Authenticated workspace uses scoped operational endpoints'});return;}
     staffContext.run({principal,sessionToken:token},()=>next());
   }catch(error){res.status(401).json({error:error instanceof Error?error.message:String(error)});}

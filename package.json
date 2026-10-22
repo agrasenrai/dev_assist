@@ -27,6 +27,8 @@
     "setup": "npm ci && npm --prefix client ci && npm run db:init && npm run import:data && npm run build",
     "backup": "tsx scripts/backup.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "test:alexa-mcp": "tsx scripts/verify-alexa-mcp-connection.ts",
+    "test:elevenlabs": "tsx scripts/test-elevenlabs.ts",
     "test:deployment": "tsx scripts/verify-deployment.ts",
     "epic:connect": "tsx scripts/connect-epic.ts",
     "epic:probe": "tsx scripts/probe-epic.ts",
