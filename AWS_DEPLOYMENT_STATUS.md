@@ -553,10 +553,13 @@ The following are deliberately not complete:
    a trusted certificate. Do not send real credentials over the current HTTP
    URL.
 2. **Account B Bedrock:** create and test the cross-account caller role only
-   if the optional Bedrock challenge is needed.
-3. **Epic:** obtain a separate approved production Epic app, keys, JWKS,
-   permissions, approved patient IDs, and a separate production database.
-   Keep both Epic flags false until read-only synthetic validation succeeds.
+   if the optional Bedrock challenge is needed. The application now supports
+   STS `AssumeRole` when `BEDROCK_ROLE_ARN` is configured. Account B IAM
+   configuration, Parameter Store configuration, and a real cross-account
+   smoke test are still pending.
+3. **Epic:** obtain a separate approved Epic app, keys, JWKS, permissions,
+   approved patient IDs, and a separate production database. Keep both Epic
+   flags false until read-only synthetic validation succeeds.
 4. **Observability:** add the planned CloudWatch logs, alarms, and CloudTrail
    coverage.
 5. **Budgets and lifecycle:** configure account budgets, EBS snapshot
@@ -591,3 +594,168 @@ The following are deliberately not complete:
 > Trusted HTTPS, domain configuration, production Epic authorization, optional
 > Bedrock cross-account access, and full production observability remain
 > pending.
+
+## 10. Remaining Bedrock configuration
+
+Bedrock is optional. The current deployment correctly keeps `LLM_PROVIDER=mock`
+so it remains free and local. If the optional AWS challenge is enabled, use
+this sequence.
+
+### Account B prerequisites
+
+Account B must provide:
+
+1. The Account B ID and chosen Bedrock region.
+2. Bedrock model access enabled in Account B in that region.
+3. An approved tool-capable model or inference profile ID.
+4. An Account B role, for example `ShiftWeaveBedrockCallerRole`.
+5. A trust policy allowing only the Account A role
+   `arn:aws:iam::540087632943:role/ShiftWeaveEC2Role`.
+6. A permissions policy allowing only the required runtime action
+   (`bedrock:Converse`/the corresponding invocation permission) and the
+   selected model or inference-profile resource.
+7. CloudTrail coverage for the role and Bedrock runtime calls.
+
+Do not create Account B access keys. Do not attach broad Bedrock administrator
+permissions. The trust policy must name the Account A role, not the entire
+Account A account, unless a documented organizational policy requires that
+broader principal.
+
+### Account A changes
+
+After Account B supplies the role ARN, Account A needs an inline permission on
+`ShiftWeaveEC2Role`:
+
+```text
+sts:AssumeRole
+Resource: arn:aws:iam::<ACCOUNT_B_ID>:role/ShiftWeaveBedrockCallerRole
+```
+
+The application implements the following flow when `BEDROCK_ROLE_ARN` is set:
+
+```text
+EC2 instance profile credentials
+  -> STS AssumeRole into Account B
+  -> temporary Account B credentials
+  -> BedrockRuntimeClient in the chosen region
+  -> Converse with explicit LLM_MAX_OUTPUT_TOKENS
+```
+
+The code change should preserve the existing mock path, use short-lived
+credentials, log provider/model/region without prompts or PHI, and surface
+STS/Bedrock failures instead of falling back to mock success. It must be built
+and published as a new ARM64 image using the update procedure in section 6.
+
+Only after the code change and cross-account smoke test succeed should the
+following Parameter Store values be changed:
+
+```text
+LLM_PROVIDER=bedrock
+AWS_REGION=<chosen Bedrock region>
+BEDROCK_MODEL_ID=<verified model or inference-profile ID>
+BEDROCK_ROLE_ARN=arn:aws:iam::<ACCOUNT_B_ID>:role/ShiftWeaveBedrockCallerRole
+LLM_MAX_OUTPUT_TOKENS=<explicit bounded value>
+```
+
+Then restart only the application container and verify an actual assistant
+turn. A successful `bedrock list-foundation-models` call alone does not prove
+the runtime role, model access, Converse permission, or tool-call behavior.
+Bedrock calls must remain outside MCP tool handlers.
+
+## 11. Remaining Epic configuration
+
+Epic is also optional and remains disabled in the deployed environment.
+Configuration requires a separate approved app for the target Epic
+environment; sandbox credentials and production credentials must not be mixed.
+
+### Epic prerequisites
+
+Obtain and verify:
+
+1. `EPIC_CLIENT_ID`
+2. `EPIC_KID`
+3. A matching RSA private key and registered public JWKS
+4. `EPIC_TOKEN_URL`
+5. `EPIC_FHIR_BASE_URL`
+6. Approved synthetic or production patient IDs in
+   `EPIC_TEST_PATIENT_IDS`
+7. Epic permissions for the specific resources and searches required
+
+The current supported read set is centered on Patient, Encounter, Condition,
+AllergyIntolerance, MedicationRequest, MedicationAdministration,
+DocumentReference, and linked Binary content. Optional Observation, Flag,
+Device, Practitioner, and Location access must be justified by the feature.
+Generic ICU task retrieval must not be assumed from Community Resource or
+Episode Checklist APIs.
+
+### Epic host configuration
+
+The private key belongs only on the EC2 EBS mount:
+
+```text
+/mnt/shiftweave/keys/private_key.pem
+```
+
+It must be mounted read-only into the app as
+`/run/epic/private_key.pem`, readable by the container's non-root UID 1000,
+with restrictive permissions. The key must not be committed, placed in ECR,
+or stored in chat.
+
+Add these values to Parameter Store, with the private key handled separately
+as a protected file:
+
+```text
+EPIC_CLIENT_ID=<approved client ID>
+EPIC_KID=<registered key ID>
+EPIC_TOKEN_URL=<approved token endpoint>
+EPIC_FHIR_BASE_URL=<approved R4 FHIR endpoint>
+EPIC_TEST_PATIENT_IDS=<comma-separated approved IDs>
+EPIC_READS_ENABLED=false
+EPIC_WRITES_ENABLED=false
+```
+
+The deployment file must retrieve the new non-secret values and regenerate
+`/mnt/shiftweave/.env.deploy` with mode `600`. Restart the app after changing
+environment values; an image rebuild is not required for configuration-only
+changes. Verify `/health` reports `CONFIGURED_NOT_VERIFIED`, then run a
+read-only sync for an approved patient and inspect the returned source IDs,
+timestamps, units, endpoint namespace, and conflicts.
+
+Do not treat empty Epic search results as verified negative clinical history.
+Do not enable writes until a human-reviewed note payload, target encounter
+linkage, remote response ID, idempotency/reconciliation behavior, and
+ambiguous-outcome handling have all been verified. A local handoff draft is not
+an Epic write, and an Epic Clinical Note is not automatically a dedicated Epic
+Handoff update.
+
+## 12. What must be updated after Bedrock or Epic configuration
+
+### Bedrock-only configuration change
+
+Once the STS code is deployed, a model/role configuration change requires:
+
+1. Update the relevant Parameter Store values.
+2. Restart `app` through Compose.
+3. Verify `/health` and the provider status.
+4. Run one synthetic assistant turn with a bounded output-token limit.
+5. Verify the audit/timing trace identifies Bedrock and does not claim a
+   success when STS or the provider fails.
+
+The current source already contains the STS support. It must still be built
+into a new ARM64 image and deployed before the running EC2 container can use
+`BEDROCK_ROLE_ARN`.
+
+### Epic-only configuration change
+
+1. Upload the approved private key to the protected EBS path through SSM.
+2. Add/update the approved Epic parameters.
+3. Keep `EPIC_READS_ENABLED=false` while validating file permissions and
+   configuration.
+4. Restart `app`; verify `/health`.
+5. Enable reads only for the approved test IDs.
+6. Run the read-only Epic sync and review imported snapshots/conflicts.
+7. Keep writes disabled unless the separate human-review and remote
+   reconciliation approval is complete.
+
+Configuration-only changes do not require a new ECR image. Source or schema
+changes always require the ARM64 image build/push/deploy workflow.
