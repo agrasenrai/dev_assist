@@ -3,13 +3,25 @@ dotenv.config();
 
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { db } from '../src/db/connection.js';
-import { initializeDatabase } from '../src/db/schema.js';
-import { importIncomingData } from '../src/db/ingest.js';
-import { HandoffService } from '../src/services/handoff.service.js';
-import { ConflictService } from '../src/services/conflict.service.js';
-import { FieldAuthorityService, FIELD_AUTHORITY_MATRIX } from '../src/services/field-authority.service.js';
-import { EpicMappingService } from '../src/providers/epic-mapping.service.js';
+import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+// Every invocation gets its own isolated database. Never mutate the shared demo DB.
+const root = realpathSync(tmpdir());
+const tempDir = mkdtempSync(path.join(root, 'shiftweave-handoff-test-'));
+process.env.SQLITE_DB_PATH = path.join(tempDir, 'test.db');
+process.env.PORT = '0';
+process.env.SHIFTWEAVE_TEST = '1';
+process.env.NODE_ENV = 'test';
+
+const { db } = await import('../src/db/connection.js');
+const { initializeDatabase } = await import('../src/db/schema.js');
+const { importIncomingData } = await import('../src/db/ingest.js');
+const { HandoffService } = await import('../src/services/handoff.service.js');
+const { ConflictService } = await import('../src/services/conflict.service.js');
+const { FieldAuthorityService, FIELD_AUTHORITY_MATRIX } = await import('../src/services/field-authority.service.js');
+const { EpicMappingService } = await import('../src/providers/epic-mapping.service.js');
 
 async function runHandoffIntegrationVerification() {
   console.log('======================================================');
@@ -204,7 +216,14 @@ async function runHandoffIntegrationVerification() {
   console.log('======================================================\n');
 }
 
-runHandoffIntegrationVerification().catch((err) => {
+try {
+  await runHandoffIntegrationVerification();
+} catch (err) {
   console.error('❌ Integration verification failed:', err);
-  process.exit(1);
-});
+  process.exitCode = 1;
+} finally {
+  try {
+    db.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  } catch {}
+}

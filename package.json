@@ -8,6 +8,8 @@
     "dev:client": "npm --prefix client run dev",
     "build:client": "npm --prefix client run build",
     "db:init": "tsx src/db/init.ts",
+    "db:clean": "tsx scripts/deduplicate-data.ts",
+    "demo": "tsx scripts/demo-presentation.ts",
     "import:data": "tsx src/db/ingest.ts",
     "test:mcp": "tsx scripts/run-tests.ts mcp",
     "test:agent": "tsx scripts/run-tests.ts agent",

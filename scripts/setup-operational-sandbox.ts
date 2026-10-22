@@ -45,7 +45,17 @@ try{
     for(const [index,p]of patients.entries()){
       const outgoing=index<4?'seema':'jordan',incoming=index<4?'reema':'asha',physician=index<4?'doctor.mira':'doctor.arun';
       for(const [username,teamRole]of [[outgoing,'PRIMARY_NURSE'],[incoming,'INCOMING_NURSE'],[physician,'PHYSICIAN']])operations.assignCareTeam({patientId:p.patient_id,staffId:`staff:${username}`,shiftId:shift.id,teamRole:teamRole!,idempotency_key:randomUUID()});
-      for(const [title,category]of [['Review sourced clinical records for handoff','CONSULT'],['Review outstanding nursing documentation','CONSULT'],['Confirm incoming coordination requirements','DISCHARGE_PREP']])operations.createTask({patientId:p.patient_id,nurseId:`staff:${outgoing}`,shiftId:shift.id,title:title!,description:'Operator-configured synthetic nursing coordination task. Not an Epic clinical order or verified medication administration.',category:category!,priority:'ROUTINE',scheduledTime:new Date().toISOString(),idempotency_key:randomUUID()});
+      const taskProfiles = [
+        [['Review sourced clinical records - Camila Lopez','CONSULT'],['Review outstanding nursing documentation','CONSULT'],['Confirm endocrine follow-up requirements','DISCHARGE_PREP']],
+        [['Review sourced clinical records - Derrick Lin','CONSULT'],['Review outstanding nursing documentation (Derrick Lin)','CONSULT'],['Confirm respiratory follow-up requirements','DISCHARGE_PREP']],
+        [['Review sourced clinical records - Desiree Powell','CONSULT'],['Review outstanding nursing documentation (Desiree Powell)','CONSULT'],['Confirm cardiology follow-up requirements','DISCHARGE_PREP']],
+        [['Review sourced clinical records - Elijah Davis','CONSULT'],['Review outstanding nursing documentation (Elijah Davis)','CONSULT'],['Confirm pediatric follow-up requirements','DISCHARGE_PREP']],
+        [['Review sourced clinical records - Dr. Linda Ross','CONSULT'],['Review outstanding nursing documentation (Dr. Linda Ross)','CONSULT'],['Confirm oncology follow-up requirements','DISCHARGE_PREP']],
+        [['Review sourced clinical records - Olivia Roberts','CONSULT'],['Review outstanding nursing documentation (Olivia Roberts)','CONSULT'],['Confirm obstetric follow-up requirements','DISCHARGE_PREP']],
+        [['Review sourced clinical records - Warren McGinnis','CONSULT'],['Review outstanding nursing documentation (Warren McGinnis)','CONSULT'],['Confirm cardiac telemetry follow-up requirements','DISCHARGE_PREP']]
+      ];
+      const patientTasks = taskProfiles[index] || [['Review sourced clinical records for handoff','CONSULT'],['Review outstanding nursing documentation','CONSULT'],['Confirm incoming coordination requirements','DISCHARGE_PREP']];
+      for(const [title,category]of patientTasks)operations.createTask({patientId:p.patient_id,nurseId:`staff:${outgoing}`,shiftId:shift.id,title:title!,description:'Operator-configured synthetic nursing coordination task. Not an Epic clinical order or verified medication administration.',category:category!,priority:'ROUTINE',scheduledTime:new Date().toISOString(),idempotency_key:randomUUID()});
       operations.addNote({patientId:p.patient_id,shiftId:shift.id,text:'Simulation onboarding note: review original Epic source timestamps and preserve missing-data warnings. Nursing duty and task assignments are configured in this operational sandbox.',idempotency_key:randomUUID()});
     }
     const task=db.prepare("SELECT * FROM tasks WHERE title='Review outstanding nursing documentation' ORDER BY id LIMIT 1").get() as any;

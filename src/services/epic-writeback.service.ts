@@ -154,7 +154,6 @@ export class EpicWriteBackService {
    * durable external sync state machine, and remote reconciliation before retries.
    */
   static async publishReviewedNote(input: PublishNoteInput): Promise<PublishNoteResult> {
-    if (input.executionMode !== 'mock' && input.executionMode !== 'simulate_uncertain') return EpicNoteService.publish(input);
     // 1. Explicit Human Review Gate
     if (!input.humanConfirmed) {
       throw new Error('Explicit human review and confirmation is required before publishing external clinical notes');
@@ -189,6 +188,8 @@ export class EpicWriteBackService {
     if (!activeCustody) {
       throw new Error('Custody must be accepted by incoming nurse before publishing clinical notes');
     }
+
+    if (input.executionMode !== 'mock' && input.executionMode !== 'simulate_uncertain') return EpicNoteService.publish(input);
 
     // 5. Already Synced Check (Idempotency)
     if (handoff.external_sync_status === 'SYNCED' && handoff.external_resource_id) {
