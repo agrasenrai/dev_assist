@@ -43,6 +43,28 @@ async function main() {
     console.log(`  ✓ Speech Synthesized Successfully! (${latency}ms)`);
     console.log(`    - Content Type: ${result.contentType}`);
     console.log(`    - Audio Size:   ${result.audioBuffer.length} bytes`);
+
+    console.log(`\n3. Testing Ultra-Low Latency Streaming TTS...`);
+    const streamStart = Date.now();
+    const streamResult = await ElevenLabsService.streamSpeech({ text: testText });
+    if (!streamResult) throw new Error("streamSpeech returned null");
+
+    let firstChunkLatency = 0;
+    let totalBytes = 0;
+    for await (const chunk of streamResult.stream as any) {
+      if (!firstChunkLatency) {
+        firstChunkLatency = Date.now() - streamStart;
+      }
+      totalBytes += (chunk as Buffer).length;
+    }
+    console.log(`  ✓ Audio Streamed Successfully!`);
+    console.log(`    - First Chunk Time: ${firstChunkLatency}ms (Instant Playback Time)`);
+    console.log(`    - Total Streamed:   ${totalBytes} bytes`);
+
+    console.log(`\n4. Conversational AI (S2S) Status:`);
+    const agentId = ElevenLabsService.getConvaiAgentId();
+    console.log(`    - ELEVENLABS_AGENT_ID: ${agentId ? agentId : 'Not set (using Ultra-Fast Streaming Voice mode)'}`);
+
     console.log(`\n======================================================`);
     console.log(`🎉 ElevenLabs Integration is FULLY OPERATIONAL!`);
     console.log(`======================================================\n`);

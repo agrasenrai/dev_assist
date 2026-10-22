@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
-const sentencePauseMs = 1500;
+// Responsive 600ms pause for snappy speech-to-speech interaction
+const sentencePauseMs = 600;
 
 // Browser recognition is a demo adapter. The MCP voice_turn tool also accepts transcripts from a voice host.
 export function useVoiceConversation(onTranscript: (text: string) => Promise<string>) {
@@ -48,41 +49,44 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
     };
     c.finishSpeech = finish;
 
-    // 1. Attempt high-fidelity ElevenLabs TTS via server
+    // 1. Ultra-fast ElevenLabs chunked streaming TTS for immediate playback
     try {
-      const res = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(15000)
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('audio/')) {
-        const blob = await res.blob();
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        c.finishSpeech = () => {
-          audio.pause();
-          URL.revokeObjectURL(audioUrl);
-          finish();
-        };
-        audio.onended = () => {
-          URL.revokeObjectURL(audioUrl);
-          finish();
-        };
-        audio.onerror = () => {
-          URL.revokeObjectURL(audioUrl);
+      const streamUrl = `/api/tts/stream?text=${encodeURIComponent(text)}`;
+      const audio = new Audio(streamUrl);
+      let started = false;
+
+      c.finishSpeech = () => {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+        finish();
+      };
+      audio.onplay = () => {
+        started = true;
+      };
+      audio.onended = () => {
+        audio.removeAttribute('src');
+        audio.load();
+        finish();
+      };
+      audio.onerror = () => {
+        if (!started) {
+          audio.removeAttribute('src');
+          audio.load();
           speakWithBrowser(text, finish, generation);
-        };
-        c.speechTimer = window.setTimeout(() => {
-          if (!c.disposed) setError('Speech playback timed out. The response remains on screen.');
-          audio.pause();
-          URL.revokeObjectURL(audioUrl);
+        } else {
           finish();
-        }, 120000);
-        await audio.play();
-        return;
-      }
+        }
+      };
+      c.speechTimer = window.setTimeout(() => {
+        if (!c.disposed) setError('Speech playback timed out. The response remains on screen.');
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+        finish();
+      }, 120000);
+      await audio.play();
+      return;
     } catch {
       // Gracefully fall back to browser synthesis
     }
@@ -140,7 +144,16 @@ export function useVoiceConversation(onTranscript: (text: string) => Promise<str
     recognition.lang = navigator.language || 'en-US'; recognition.continuous = true; recognition.interimResults = true;
     recognition.onstart = () => setStatus('Listening');
     recognition.onspeechstart = () => {
-      if (c.recognition === recognition) { window.clearTimeout(c.sentenceTimer); c.sentenceTimer = 0; }
+      if (c.recognition === recognition) {
+        window.clearTimeout(c.sentenceTimer);
+        c.sentenceTimer = 0;
+        // Instant Barge-In: if assistant is speaking when user speaks, cancel immediately
+        if (c.finishSpeech) {
+          c.finishSpeech();
+          c.finishSpeech = null;
+          window.speechSynthesis?.cancel();
+        }
+      }
     };
     recognition.onspeechend = () => { if (c.recognition === recognition) waitForSentence(); };
     recognition.onresult = (event: any) => {
