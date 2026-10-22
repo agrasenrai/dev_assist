@@ -1,22 +1,18 @@
 import 'dotenv/config';
-import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 
 export const host = process.env.HOST || '127.0.0.1';
 export const publicOrigin = process.env.PUBLIC_ORIGIN || '';
-const user = process.env.DEMO_USER || '';
-const password = process.env.DEMO_PASSWORD || '';
 const token = process.env.MCP_AUTH_TOKEN || '';
 const exposed = !['127.0.0.1', 'localhost', '::1'].includes(host);
 if(process.env.STAFF_AUTH_REQUIRED==='true'){
   if((process.env.SANDBOX_SESSION_SECRET||'').length<32||token.length<32)throw new Error('Authenticated sandbox requires persistent random SANDBOX_SESSION_SECRET and MCP_AUTH_TOKEN values of at least 32 characters');
   if(process.env.SHIFTWEAVE_TEST!=='1'&&process.env.LLM_PROVIDER!=='bedrock')throw new Error('Authenticated sandbox requires an explicitly configured Bedrock provider; no mock fallback is enabled');
 }
-if ((exposed || process.env.NODE_ENV === 'production') &&
-    (token.length < 32 || !publicOrigin || process.env.STAFF_AUTH_REQUIRED!=='true'&&(!user || password.length < 24))) {
-  throw new Error('Hosted mode requires PUBLIC_ORIGIN and MCP_AUTH_TOKEN (32+ characters); legacy demo mode also requires DEMO_USER and DEMO_PASSWORD (24+ characters)');
+if ((exposed || process.env.NODE_ENV === 'production') && (token.length < 32 || !publicOrigin)) {
+  throw new Error('Hosted mode requires PUBLIC_ORIGIN and MCP_AUTH_TOKEN (32+ characters)');
 }
-if ([...(process.env.STAFF_AUTH_REQUIRED==='true' ? [process.env.SANDBOX_SESSION_SECRET||''] : [user,password]), token, publicOrigin].some(value => /REPLACE_|example\.com/.test(value))) {
+if ([...(process.env.STAFF_AUTH_REQUIRED==='true' ? [process.env.SANDBOX_SESSION_SECRET||''] : []), token, publicOrigin].some(value => /REPLACE_|example\.com/.test(value))) {
   throw new Error('Replace hosted deployment placeholders before startup');
 }
 let parsedOrigin: URL | null = null;
@@ -37,17 +33,5 @@ export const allowedOrigins = new Set([
   ...(publicOrigin ? [publicOrigin] : []),
   ...(parsedOrigin && process.env.NODE_ENV !== 'production' ? [`${parsedOrigin.protocol}//${parsedOrigin.hostname}:5173`] : [])
 ]);
-function equals(a: string, b: string) {
-  const left = Buffer.from(a), right = Buffer.from(b);
-  return left.length === right.length && timingSafeEqual(left, right);
-}
-/** Shared demo gate, not hospital nurse authentication. Tokens only authorize /mcp. */
-export const demoAccess: RequestHandler = (req, res, next) => {
-  if(process.env.STAFF_AUTH_REQUIRED==='true')return next();
-  if (!user && !password) return next();
-  const authorization = req.headers.authorization || '';
-  if (req.path === '/mcp' && token && equals(authorization, `Bearer ${token}`)) return next();
-  if (equals(authorization, `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`)) return next();
-  res.setHeader('WWW-Authenticate', 'Basic realm="ShiftWeave synthetic demo", charset="UTF-8"');
-  res.status(401).json({ error: 'Demo access credentials required' });
-};
+
+export const demoAccess: RequestHandler = (_req, _res, next) => next();

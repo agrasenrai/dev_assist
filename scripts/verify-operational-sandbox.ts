@@ -8,7 +8,7 @@ import {once} from 'node:events';
 import {spawn} from 'node:child_process';
 const directory=fs.mkdtempSync(path.join(os.tmpdir(),'shiftweave-ops-test-'));
 fs.writeFileSync(path.join(directory,'fixture.pem'),'fixture-not-a-key');
-Object.assign(process.env,{SQLITE_DB_PATH:path.join(directory,'test.db'),PORT:'0',HOST:'127.0.0.1',STAFF_AUTH_REQUIRED:'true',SANDBOX_SESSION_SECRET:randomBytes(48).toString('hex'),MCP_AUTH_TOKEN:randomBytes(48).toString('hex'),DEMO_USER:'',DEMO_PASSWORD:'',NODE_ENV:'test',SHIFTWEAVE_TEST:'1',LLM_PROVIDER:'mock',EPIC_CLIENT_ID:'fixture',PRIVATE_KEY_PATH:path.join(directory,'fixture.pem'),EPIC_FHIR_BASE_URL:'https://epic.test/FHIR/R4',EPIC_READS_ENABLED:'true',EPIC_WRITES_ENABLED:'false',EPIC_CREATE_REVIEW_TASKS:'false',EPIC_TEST_PATIENT_IDS:'patient1,patient2'});
+Object.assign(process.env,{SQLITE_DB_PATH:path.join(directory,'test.db'),PORT:'0',HOST:'127.0.0.1',STAFF_AUTH_REQUIRED:'true',SANDBOX_SESSION_SECRET:randomBytes(48).toString('hex'),MCP_AUTH_TOKEN:randomBytes(48).toString('hex'),NODE_ENV:'test',SHIFTWEAVE_TEST:'1',LLM_PROVIDER:'mock',EPIC_CLIENT_ID:'fixture',PRIVATE_KEY_PATH:path.join(directory,'fixture.pem'),EPIC_FHIR_BASE_URL:'https://epic.test/FHIR/R4',EPIC_READS_ENABLED:'true',EPIC_WRITES_ENABLED:'false',EPIC_CREATE_REVIEW_TASKS:'false',EPIC_TEST_PATIENT_IDS:'patient1,patient2'});
 const {appServer}=await import('../src/server.js');
 const {db}=await import('../src/db/connection.js');
 const {StaffAuthService}=await import('../src/services/staff-auth.service.js');
