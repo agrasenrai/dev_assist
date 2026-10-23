@@ -83,3 +83,23 @@ footer{position:absolute;left:56px;right:56px;top:1044px;text-align:center;color
 #preview-guide button{display:block;width:100%;text-align:left;font:400 23px/1.4 var(--sa);color:#f2eee6;background:#202442;border:1px solid #464b7c;border-radius:12px;padding:10px 12px;margin-top:10px;cursor:pointer}
 #preview-guide button:hover{background:#30375f}#preview-guide button:focus-visible,#preview-guide summary:focus-visible{outline:3px solid var(--dy);outline-offset:2px}
 #preview-guide a{font-size:21px;color:#b9c4ff}
+
+/* Voice-first controls: the assistant stays centered; typing opens on demand. */
+.voice-microphone{width:88px;height:88px;padding:5px;border-radius:50%;background:#11152bf2;box-shadow:0 10px 35px #0006,0 0 35px #8ea0ff18}
+.voice-microphone .assistant-voice-button{position:relative;width:76px;height:76px;min-height:76px;padding:0;display:grid;place-items:center;border:1px solid #8ea0ff80;border-radius:50%;color:#ffdab0;background:radial-gradient(circle at 35% 25%,#4c507f,#25294e 55%,#101528);transition:box-shadow .2s,background .2s}
+.voice-microphone .assistant-voice-button[aria-pressed=true]{color:#d9fff0;background:radial-gradient(circle at 35% 25%,#395e69,#252e4e 60%,#101528)}
+.voice-microphone .assistant-mark{width:64px;height:64px;overflow:visible}
+.voice-microphone .voice-band{transform-box:fill-box;transform-origin:center}
+.voice-microphone[data-activity=listening] .assistant-voice-button{box-shadow:0 0 24px #8ea0ff55}
+.voice-microphone[data-activity=hearing] .assistant-voice-button{box-shadow:0 0 0 7px #7fe3b51a,0 0 38px #7fe3b570}
+.voice-microphone[data-activity=hearing] .voice-band,.voice-microphone[data-activity=speaking] .voice-band{animation:assistant-wave .65s ease-in-out infinite alternate}
+.voice-microphone[data-activity=speaking] .assistant-voice-button{box-shadow:0 0 36px #ffb86b66;color:#ffdab0}
+.voice-microphone[data-activity=processing] .assistant-ring{transform-origin:32px 32px;animation:assistant-think 1.7s linear infinite}
+.voice-microphone .voice-keyboard-button{position:absolute;left:calc(100% + 16px);top:50%;transform:translateY(-50%);display:grid;place-items:center;width:48px;height:48px;min-height:48px;padding:0;border:1px solid #555e8e;border-radius:50%;background:#1a1e39;color:#cfd6ff}
+.voice-microphone .voice-keyboard-button[aria-expanded=true]{border-color:#ffb86b;color:#ffdab0;background:#3a2c30}
+.voice-microphone .voice-keyboard-button svg{width:24px;height:24px}
+.voice-microphone > span{width:200px;left:50%;transform:translateX(-50%);background:transparent;font-size:13px;letter-spacing:.03em}
+#st #dock:not(.ty) #in,#st #dock:not(.ty) #sd{display:none}
+@keyframes assistant-wave{from{transform:scaleY(.45)}to{transform:scaleY(1.25)}}
+@keyframes assistant-think{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.voice-microphone .voice-band,.voice-microphone .assistant-ring{animation:none!important}}

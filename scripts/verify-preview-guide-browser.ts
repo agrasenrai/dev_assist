@@ -27,8 +27,17 @@ try{
   const page=await browser.newPage({viewport:{width:1536,height:864}});
   let requests=0;page.on('request',(r:any)=>{if(r.method()==='POST'&&r.url().endsWith('/api/voice'))requests++;});
   await page.goto(base);await page.getByRole('complementary',{name:'What you can ask'}).waitFor();
+  assert.equal(await page.locator('#in').isVisible(),false);
+  await page.getByRole('button',{name:'Show keyboard',exact:true}).click();
+  await page.getByRole('textbox',{name:'Type to Medi'}).fill('Draft to preserve');
+  await page.getByRole('button',{name:'Hide keyboard',exact:true}).click();
+  assert.equal(await page.locator('#in').isVisible(),false);
+  await page.getByRole('button',{name:'Show keyboard',exact:true}).click();
+  assert.equal(await page.locator('#in').inputValue(),'Draft to preserve');
+  await page.getByRole('button',{name:'Hide keyboard',exact:true}).click();
   const example=page.getByRole('button',{name:'My name is Seema Patel. What are my tasks?',exact:true});
   await example.click();assert.equal(await page.locator('#in').inputValue(),'My name is Seema Patel. What are my tasks?');
+  assert.equal(await page.locator('#in').isVisible(),true);
   assert.equal(requests,0,'Choosing an example must not send a voice request');
   const transcriptSize=await page.locator('#usr').evaluate((el:Element)=>getComputedStyle(el).fontSize);
   assert.equal(transcriptSize,'30px');
