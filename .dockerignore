@@ -13,3 +13,13 @@ data/*.db*
 *.pdf
 .agents
 .codex
+.sandbox
+**/*.db
+**/*.db-wal
+**/*.db-shm
+data/backups
+deploy/*.png
+deploy/*report.json
+deploy/*preview.json
+data/simulations/*.png
+**/*~

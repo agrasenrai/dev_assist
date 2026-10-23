@@ -4,12 +4,12 @@ This decision applies to the current hackathon implementation, not every future 
 
 ```mermaid
 flowchart TD
-  Nurse[Browser microphone or typed transcript] --> TLS[Caddy HTTPS and demo access gate]
+  Nurse[Browser microphone or typed transcript] --> TLS[Caddy HTTPS]
   TLS --> Voice[Express voice gateway]
   Voice --> MCP[Streamable HTTP /mcp — 2025-11-25]
   MCP --> Router[Durable voice state and deterministic confirmations]
-  Router -->|Ask assistant| Agent[Read-only LLM planning loop]
-  Agent --> Model[Mock / Bedrock Converse / Gemini]
+  Router --> Agent[Semantic intent and optional combined identification plan]
+  Agent --> Model[Bedrock Converse in production / free local mock]
   Agent -->|runtime discovery and tool calls| MCP
   MCP --> Services[Validated workflow services]
   Services --> DB[(SQLite WAL + FULL synchronous on local EBS)]
@@ -31,7 +31,7 @@ flowchart TD
 | One origin for UI/API/MCP | Simple browser routing, HTTPS microphone support and fewer cross-origin failure modes | Shared deployment lifecycle |
 | SQLite on EBS-backed local filesystem | Existing SQL joins and atomic receipt/domain/event/checkpoint transactions remain intact | One writer host; disk failure needs backup recovery |
 | No DynamoDB rewrite | Current schema/services use joins and synchronous SQL transactions throughout; changing storage is a redesign, not an environment switch | A future multi-region service needs a deliberate data-access redesign |
-| Bedrock optional | Real AWS tool-use integration can substantiate mini-challenge participation | Model access, cost, region and IAM remain user configuration |
+| Bedrock in production; optional locally | Real AWS tool-use integration; free local mock still available | Model access, cost, region and IAM remain user configuration |
 | Deterministic confirmations | Models cannot authorize custody, resolve discrepancies or publish notes merely by emitting a tool call | Less open-ended phrasing for state-changing actions |
 | Epic as supplemental source | Approved patient reads can be shown without pretending medication orders are nurse assignments | Hospital identity, roster, encounter and task mappings remain separate work |
 
@@ -51,13 +51,14 @@ MCP supplies transport and discovery, not business-level exactly-once semantics.
 
 ## Latency design
 
-The fast path for identity, task display and explicit confirmations is deterministic and makes no LLM call. “Ask assistant…” invokes the selected planner only when requested. The planner uses discovered tool schemas, bounded sequential execution and a per-iteration time-budget check. Each model request has a timeout. Bedrock reuses its client across the turn, caps output tokens and avoids hidden SDK retries. The bridge uses local HTTP within the host, so MCP calls do not traverse the public TLS endpoint.
+Ordinary voice requests use one semantic model call. A combined introduction carries the next operation in the same plan; the server validates identity before validating/executing that operation. Factual replies come from the completed backend operation, avoiding another wording inference. General conversation remains model-generated. Explicit human controls such as confirmation need no inference. Exceptional repairs and legacy saved workflows can require additional calls. Bedrock SDK clients are reused across turns and closed on server shutdown, without sharing dialogue or patient state. The bridge uses loopback Streamable HTTP, so internal MCP calls do not traverse the public TLS endpoint.
 
 The time-budget check is not a strict global cancellation deadline: an already-running request can continue until its own timeout. Ambiguous failure preserves the retry key and checkpoint. Never auto-retry a human or external write just to reduce perceived latency.
 
 Measure these separately:
 
 - `LLM:DECISION`: time until a complete planning response, labelled by provider and iteration.
+- `LLM:VOICE_DECISION`: voice intent stage, token counts, SDK client reuse, credential-resolution time and provider-reported inference time.
 - `ORCHESTRATOR:TOOL_CALL:*`: actual tool duration.
 - `VOICE:TURN_FINISHED`: server-side voice turn duration and receipt outcome.
 - Smoke test discovery time: transport initialize plus runtime tool discovery.

@@ -21,9 +21,9 @@ COPY --from=build --chown=node:node /app/client/dist ./client/dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node data/incoming/sample_template.json ./data/incoming/sample_template.json
 COPY --chown=node:node data/hospital ./data/hospital
-COPY --chown=node:node data/simulations ./data/simulations
+COPY --chown=node:node data/simulations/catalog.json ./data/simulations/catalog.json
 RUN mkdir -p /app/storage /app/backups && chown -R node:node /app/storage /app/backups
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["npm", "start"]
+CMD ["sh", "-c", "node build/scripts/preflight.js && exec node build/src/server.js"]
