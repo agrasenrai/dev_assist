@@ -22,7 +22,8 @@ services:
       options: { max-size: 10m, max-file: '3' }
   https:
     image: caddy:2
-    env_file: ${SHIFTWEAVE_ENV_FILE:-.env.deploy}
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN using the Compose --env-file option}
     ports: ['80:80', '443:443']
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro

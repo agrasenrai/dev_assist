@@ -4,7 +4,7 @@ Nursing workflow coordination, local handoff drafts, human discrepancy review, a
 
 **Authenticated staff workspace:** [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md) covers the Epic-sourced clinical dataset, administrator/nurse/physician accounts, duty roster, care teams, explicit handoff custody, reviewed sandbox documents and recovery. This is a separate profile from the original fixture demo below. Staff and operational observations are labelled simulation records, not Epic hospital staff.
 
-**End-to-end setup:** [DEPLOYMENT.md](DEPLOYMENT.md) covers local setup, Docker/HTTPS deployment, LLM and Epic placeholders, persistent storage, backup and verification. Recommended hosted topology: one EC2 host with EBS-backed SQLite and optional Bedrock. See [deployment architecture](deploy/ARCHITECTURE.md) for the design tradeoffs.
+**End-to-end setup:** [DEPLOYMENT.md](DEPLOYMENT.md) covers local setup, Docker/HTTPS deployment, LLM and Epic placeholders, persistent storage, backup and verification. Hosted production uses Bedrock; free local mock mode remains available. For the existing ARM64 EC2/EBS deployment, follow the [current update checklist](deploy/UPDATE_CHECKLIST.md) and [EC2 Compose template](deploy/compose.ec2.yaml), preserving its bind paths. See the [cleanup report](CLEANUP_REPORT.md) for removed files, preserved material and verification, and [deployment architecture](deploy/ARCHITECTURE.md) for tradeoffs.
 
 **Epic workflow:** [EPIC_WORKFLOW.md](EPIC_WORKFLOW.md) documents verified live sandbox reads through MCP, sourced voice handoff, explicit custody transfer, and note review. The live note-create attempt returned HTTP 403; write-back remains disabled pending Epic authorization.
 

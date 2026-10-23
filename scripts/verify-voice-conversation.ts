@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { BedrockLLMProvider, type AgentMessage } from '../src/agent/llm-provider.js';
+import { BedrockLLMProvider, bedrockVoiceMessages, bedrockReplyArguments, type AgentMessage } from '../src/agent/llm-provider.js';
 import { db } from '../src/db/connection.js';
 import { CheckpointService } from '../src/services/checkpoint.service.js';
 import { VoiceService, type VoiceIntent } from '../src/services/voice.service.js';
@@ -8,11 +8,29 @@ import { composeRecordReply, validateReply } from '../src/services/voice-agent.s
 
 /** Adapter fixtures exercise real HTTP/MCP and durable services; live inference is checked separately. */
 export async function verifyVoiceConversation(base:string,check:(name:string,action:()=>unknown)=>void) {
+  check('wording inference keeps verified facts and repair feedback without resending unrelated history',()=>{
+    const source={authoritativeAnswer:'Allergy records unavailable. Task is pending.',facts:[{id:'fact:0',text:'Allergy records unavailable.'},{id:'fact:1',text:'Task is pending.'}]};
+    const messages:AgentMessage[]=[{role:'user',content:'old unrelated conversation '.repeat(1000)},
+      {role:'tool',toolName:'interpret_voice_request',toolCallId:'source',content:JSON.stringify({...source,directory:['Unrelated nurse'],tasks:['large unused context']})},
+      {role:'tool',toolName:'reply_to_nurse',toolCallId:'repair',content:JSON.stringify({error:'Record answer lacks matching source evidence'})}];
+    const compact=bedrockVoiceMessages(messages,{voiceReplyOnly:true,scope:{currentUtterance:'What is its status?'}});
+    const request=JSON.parse(compact[0]!.content);assert.equal(compact.length,1);assert.equal(request.question,'What is its status?');
+    assert.deepEqual(request.facts,source.facts);assert.equal(request.authoritativeAnswer,source.authoritativeAnswer);assert.match(request.validationFeedback[0],/source evidence/);
+    assert(!JSON.stringify(compact).includes('Unrelated nurse'));assert(JSON.stringify(compact).length<JSON.stringify(messages).length/5);
+    assert.equal(bedrockVoiceMessages(messages,{voiceReplyOnly:false}),messages);
+    assert.equal(bedrockVoiceMessages([{role:'user',content:'hello'}],{voiceReplyOnly:true}).length,1);
+    const selected=bedrockReplyArguments({kind:'RECORDS',speech:"Here's what I found.",evidence:['fact:1','fact:0']});
+    assert.equal(selected.speech,"Here's what I found. {{fact:1}} {{fact:0}}");
+    const composed=composeRecordReply(String(selected.speech),selected.evidence as string[],source.authoritativeAnswer);
+    validateReply(composed.speech,composed.evidence,source.authoritativeAnswer);
+    assert.throws(()=>composeRecordReply(String(bedrockReplyArguments({kind:'RECORDS',speech:'',evidence:['fact:999']}).speech),['fact:999'],source.authoritativeAnswer),/source evidence/);
+  });
   const original=BedrockLLMProvider.prototype.decideNextStep, originalProvider=process.env.LLM_PROVIDER;
   process.env.LLM_PROVIDER='bedrock';
   const session=randomUUID();let revision=0,calls=0;let lastMessages:AgentMessage[]=[];
   let intent:VoiceIntent|undefined;
   let continuationIntent:VoiceIntent|undefined;
+  let onePass=false;
   let invalidNameOnce=false;
   let generatedReply:{speech:string;kind:string;viaTool:boolean;readFirst?:boolean}|undefined;
   let mode:'chat'|'intent'|'failure'|'tool'|'fabricate'|'source-change'|'false-confirm'='chat';
@@ -36,6 +54,7 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     if(mode==='chat')return{finalSpeech:utterance.includes("don't like")?"I understand. I'll give you some space."
       :utterance.includes('confused')?"That's okay. We can take it one step at a time."
       :"I'm sorry you're not feeling well. What would you like help with?"};
+    if(onePass)return{toolCall:{toolName:'interpret_voice_request',arguments:{...intent,render_backend:true,introduction:"Here's what I found.",...(continuationIntent?{after_identification:continuationIntent}:{})}}};
     const identifiedIndex=steps.findIndex(m=>m.toolName==='interpret_voice_request'&&JSON.parse(m.content).identificationComplete);
     if(intent?.intent==='IDENTIFY'&&identifiedIndex<0)return{toolCall:{toolName:'interpret_voice_request',arguments:intent}};
     const requestSteps=steps.slice(identifiedIndex+1);
@@ -168,11 +187,13 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     check('source-backed patient headings and neutral Bedrock transitions pass without weakening fact validation',()=>{
       const source='You have 1 assigned task. Review transport for Dr. Rowan Demo is pending. Location not verified.';
       const reply=composeRecordReply("Here's the breakdown. For Dr. Rowan Demo: {{fact:1}} And one more thing — {{fact:0}}",['fact:1','fact:0'],source);
+      const fullPicture=composeRecordReply("Here's the full picture. {{fact:0}} {{fact:1}}",['fact:0','fact:1'],source);
+      validateReply(fullPicture.speech,fullPicture.evidence,source);
       assert.match(reply.speech,/Review transport for Dr\. Rowan Demo is pending\./);
       assert.match(reply.speech,/Location not verified/);
       assert.doesNotThrow(()=>validateReply(reply.speech,reply.evidence,source));
       assert.throws(()=>composeRecordReply('For Invented Patient: {{fact:1}}',['fact:1'],source),/matching source evidence/);
-      for(const addition of [' The patient has a latex allergy.',' The task is completed.',' Here is the breakdown: increase the medication dose.',' You have 9 tasks.']){
+      for(const addition of [' The patient has a latex allergy.'," Here's the full picture. The patient has a latex allergy.",' The task is completed.',' Here is the breakdown: increase the medication dose.',' You have 9 tasks.']){
         const unsafe=composeRecordReply(`{{fact:1}}${addition}`,['fact:1'],source);
         assert.throws(()=>validateReply(unsafe.speech,unsafe.evidence,source));
       }
@@ -253,6 +274,42 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     const explicitHandoff=await say(`Review handoff ${availableHandoff.id}`);
     check('explicit scoped handoff selection replaces a previous missing-source filter',()=>{
       assert.equal(explicitHandoff.selectedHandoffId,availableHandoff.id);assert.match(explicitHandoff.speech,/Handoff from/);
+    });
+    onePass=true;mode='intent';intent={intent:'IDENTIFY',nurse_name:'Maya',continue_request:true};continuationIntent={intent:'TASKS',status:'ALL'};
+    const fastInput={session_id:randomUUID(),utterance:'I am Maya, what is waiting for me today?',expected_revision:0,idempotency_key:randomUUID()};
+    const fastCalls=calls,fast=await post(fastInput);
+    check('combined identity and task plan needs one inference and returns fresh backend facts',()=>{
+      assert.equal(fast.status,200);assert.equal(calls-fastCalls,1);assert.equal(fast.data.nurse.id,'voice_maya');
+      assert.match(fast.data.speech,/Review documented shift checklist/);assert.doesNotMatch(fast.data.speech,/What can I help|couldn.t generate/);
+      assert.equal(fast.data.messages.filter((m:any)=>m.role==='nurse').length,1);
+    });
+    const fastRetryCalls=calls;assert.deepEqual(await post(fastInput),fast);
+    check('one-inference response retry restores the exact receipt without another model call',()=>assert.equal(calls,fastRetryCalls));
+    continuationIntent=undefined;intent={intent:'PATIENT',patient_id:patientId,detail:'ALLERGIES'};
+    const patientCalls=calls;
+    const fastPatient=await post({...fastInput,utterance:'What are their allergies?',expected_revision:fast.data.revision,idempotency_key:randomUUID()});
+    check('single-inference patient follow-up preserves missing-data warnings',()=>{
+      assert.equal(calls-patientCalls,1);assert.equal(fastPatient.status,200);assert.match(fastPatient.data.speech,/allerg|recorded/i);
+    });
+    intent={intent:'IDENTIFY',nurse_name:'Unknown Nurse',continue_request:true};continuationIntent={intent:'TASKS'};
+    const unknownPlan=await post({...fastInput,session_id:randomUUID(),utterance:'I am Unknown Nurse, show my tasks',idempotency_key:randomUUID()});
+    check('combined plan never runs the follow-up when identity cannot be resolved',()=>{assert.equal(unknownPlan.data.nurse,null);assert.deepEqual(unknownPlan.data.tasks,[]);});
+    intent={intent:'IDENTIFY',nurse_name:'Maya',continue_request:true};continuationIntent={intent:'TASK',task_id:'outside-nurse-scope'};
+    const badPlan=await post({...fastInput,session_id:randomUUID(),idempotency_key:randomUUID()});
+    check('planned task references are validated after identity selection',()=>assert.match(badPlan.data.speech,/outside your current view/));
+    continuationIntent={intent:'STATUS',task_id:taskId,status:'PENDING'};
+    const fastEvents=(db.prepare('SELECT count(*) n FROM task_events').get() as any).n;
+    const fastProposal=await post({...fastInput,session_id:randomUUID(),utterance:'I am Maya, set my checklist to pending',idempotency_key:randomUUID()});
+    check('one-inference combined update still stages confirmation without changing task data',()=>{
+      assert.equal(fastProposal.data.pending.ready,true);assert.equal((db.prepare('SELECT count(*) n FROM task_events').get() as any).n,fastEvents);
+    });
+    continuationIntent={intent:'TASKS'};
+    const fastRecovery={...fastInput,session_id:randomUUID(),idempotency_key:randomUUID()};
+    VoiceService.saveAssistantTurn=(...args:Parameters<typeof save>)=>{if(args[0].idempotency_key===fastRecovery.idempotency_key)throw new Error('simulated lost one-call response');return save.apply(VoiceService,args);};
+    try{assert.equal((await post(fastRecovery)).status,409);}finally{VoiceService.saveAssistantTurn=save;}
+    const fastRecoveryCalls=calls,fastRestored=await post(fastRecovery);
+    check('lost one-inference response recovers persisted identity and operation without repeating inference',()=>{
+      assert.equal(fastRestored.status,200);assert.equal(calls,fastRecoveryCalls);assert.equal(fastRestored.data.nurse.id,'voice_maya');assert.match(fastRestored.data.speech,/Review documented shift checklist/);
     });
   }finally{BedrockLLMProvider.prototype.decideNextStep=original;if(originalProvider===undefined)delete process.env.LLM_PROVIDER;else process.env.LLM_PROVIDER=originalProvider;}
 }

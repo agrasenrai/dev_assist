@@ -1,6 +1,7 @@
 import { db } from "../db/connection.js";
 import { randomUUID } from "crypto";
 import { MutationService } from './mutation.service.js';
+import { taskScope, scopeToolArguments } from './source-policy.js';
 
 export interface ConflictRecord {
   id: string;
@@ -33,7 +34,7 @@ export class ConflictService {
       FROM conflicts c
       JOIN tasks t ON t.id = c.task_id
       JOIN patients p ON p.id = t.patient_id
-      WHERE c.status = 'UNRESOLVED'
+      WHERE c.status = 'UNRESOLVED' AND ${taskScope('t')}
       ORDER BY c.detected_at DESC
     `;
     return db.prepare(query).all() as ConflictRecord[];
@@ -51,7 +52,7 @@ export class ConflictService {
       FROM conflicts c
       JOIN tasks t ON t.id = c.task_id
       JOIN patients p ON p.id = t.patient_id
-      WHERE c.task_id = ? AND c.status = 'UNRESOLVED'
+      WHERE c.task_id = ? AND c.status = 'UNRESOLVED' AND ${taskScope('t')}
       LIMIT 1
     `;
     const row = db.prepare(query).get(taskId) as ConflictRecord | undefined;
@@ -94,9 +95,10 @@ export class ConflictService {
   ): boolean {
     if (!resolutionNote?.trim()) throw new Error('A bedside verification note is required');
     if (!['COMPLETED', 'IN_PROGRESS', 'CANCELLED'].includes(finalStatus)) throw new Error('Invalid final status');
+    scopeToolArguments('resolve_conflict',{nurse_id:resolvedByNurseId});
     return MutationService.execute('RESOLVE_CONFLICT', idempotencyKey,
       { conflictId, resolvedByNurseId, finalStatus, resolutionNote }, resolvedByNurseId, () => {
-    const conflict = db.prepare("SELECT task_id, status FROM conflicts WHERE id = ?").get(conflictId) as { task_id: string; status: string } | undefined;
+    const conflict = db.prepare(`SELECT c.task_id, c.status FROM conflicts c JOIN tasks t ON t.id=c.task_id WHERE c.id = ? AND ${taskScope('t')}`).get(conflictId) as { task_id: string; status: string } | undefined;
     if (!conflict) return false;
     if (conflict.status !== 'UNRESOLVED') throw new Error('Conflict is already resolved; refresh current state');
     const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(conflict.task_id) as { status: string };

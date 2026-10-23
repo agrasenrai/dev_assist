@@ -1,6 +1,8 @@
 # ShiftWeave deployment and configuration
 
-Recommended hackathon topology: **one always-on EC2 Linux host, one application container, SQLite on local EBS-backed Docker storage, and Caddy HTTPS**. React, voice gateway, agent, Express MCP and durable workflow state share the host. Bedrock is optional; mock remains the free default. This is a synthetic-data demonstrator, not hospital production software.
+For the existing **t4g.medium ARM64 / encrypted EBS / ECR / Caddy** deployment, use [the current update checklist](deploy/UPDATE_CHECKLIST.md) and [EC2 Compose template](deploy/compose.ec2.yaml). They preserve the supplied `/mnt/shiftweave` bind paths and certificates and explain the required one-time hospital import. Do not replace the deployed Compose file with the root named-volume example.
+
+Recommended topology remains one always-on EC2 host and one application container. React, voice gateway, Express MCP and SQLite workflow state share the host. Mock remains the free local default; hosted production requires Bedrock. This is a synthetic-data demonstrator, not verified hospital production software.
 
 For the authenticated Epic/staff profile, follow [OPERATIONAL_SANDBOX.md](OPERATIONAL_SANDBOX.md). The fixture import and machine-token-only smoke flow below apply to the original fixture profile. Do not run the fixture import against a provisioned operational database. Set `STAFF_AUTH_REQUIRED=true`, preserve `SANDBOX_SESSION_SECRET`, select Bedrock explicitly and deploy a backup of the provisioned database to the persistent SQLite path configured by Compose. Each user signs in with their individual sandbox account. MCP calls additionally require that staff session; the service bearer token alone does not grant staff access. This profile uses reviewed local sandbox document publication while Epic writes remain disabled.
 
@@ -20,7 +22,7 @@ Open http://localhost:3000. `setup` installs both dependency trees, initializes 
 
 Provision one Linux EC2 host with Docker Engine and the Compose plugin. A small x86-64 host with 4 GiB RAM is a reasonable starting build host; measure actual utilization before resizing. This is a sizing suggestion, not a benchmark or free-tier promise. Place Docker's data directory on encrypted EBS storage. Use one replica; no shared SQLite file on EFS/NFS. Preserve the volume when replacing the host and enable EBS snapshots. Cloud hosting, domain names and model calls can incur charges.
 
-Point a DNS A record at the host's stable public address. Allow inbound TCP 80 and 443; keep port 3000 private and restrict administration to your trusted access method. Install Docker using its official [Ubuntu installation guide](https://docs.docker.com/engine/install/ubuntu/), including the Compose plugin. Clone this repository onto the host, then:
+For a new generic host, point DNS at its stable address, allow TCP 80/443, keep port 3000 private, and install Docker/Compose using the official [Ubuntu guide](https://docs.docker.com/engine/install/ubuntu/). The commands below assume the persistent database has already been provisioned or consistently restored into the chosen volume. Production refuses a missing database; image startup does not manufacture fixture data. The existing `/mnt/shiftweave` deployment must use the dedicated update checklist instead.
 
 ```sh
 cp .env.deploy.example .env.deploy
@@ -28,13 +30,14 @@ mkdir -p keys
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 # Generate secret; fill .env.deploy with an editor.
 chmod 600 .env.deploy
-docker compose config --quiet
-docker compose build
-docker compose run --rm app node build/scripts/preflight.js
-docker compose run --rm app node build/src/db/ingest.js
-docker compose up -d
-docker compose ps
-docker compose exec app node build/scripts/smoke.js
+docker compose --env-file .env.deploy config --quiet
+docker compose --env-file .env.deploy build
+docker compose --env-file .env.deploy run --rm app node build/scripts/preflight.js
+# Existing populated deployment: follow deploy/UPDATE_CHECKLIST.md instead.
+# Do not run legacy fixture ingestion against a provisioned production database.
+docker compose --env-file .env.deploy up -d
+docker compose --env-file .env.deploy ps
+docker compose --env-file .env.deploy exec app node build/scripts/smoke.js
 ```
 
 If Node is not installed on the host, generate the secret with `openssl rand -hex 32`. The database import is explicit so restarting a server never resets the demo. Compose's `workflow-data` volume holds the database and WAL on the host; it is persistent across container recreation, not across deletion of the host's disk. Never use `docker compose down -v` to update this deployment.
@@ -48,7 +51,7 @@ Open `https://YOUR_DOMAIN`. Caddy obtains TLS certificates once DNS and ports ar
 | `DOMAIN` | DNS hostname, without scheme |
 | `PUBLIC_ORIGIN` | Exact `https://hostname`, no trailing slash |
 | `MCP_AUTH_TOKEN` | Random secret, at least 32 characters |
-| `LLM_PROVIDER` | `mock` or `bedrock` |
+| `LLM_PROVIDER` | `bedrock` for production; `mock` is local-only |
 
 Public binding fails at startup if these are missing or still contain shipped placeholders. Selecting a nurse by name is **not authenticated nurse identity**. Keep credentials server-side. Do not put cloud keys or the MCP token in React/Vite variables. `/readyz` is an intentionally minimal unauthenticated process/database probe. `/health` reports configuration, not verified cloud connectivity.
 
@@ -61,7 +64,7 @@ For the AWS mini challenge set `LLM_PROVIDER=bedrock`, `AWS_REGION`, and `BEDROC
 Prefer an EC2 instance IAM role with least-privilege `bedrock:InvokeModel` access to the selected model/profile and its required regional resources. For Docker bridge networking, configure IMDSv2 access appropriately (including a response hop limit of 2 if needed); do not disable IMDSv2. Alternatively supply temporary AWS access key, secret, and session token to the server environment. Never bake them into an image. Cross-region inference profiles may require additional regional model permissions.
 
 Bedrock requires configured service access. Only explicit mock mode makes no paid model calls. Preflight validates configuration presence, not external permissions.
-The voice workspace uses Bedrock to interpret ordinary requests, reads scoped records through MCP, and grounds generated record replies in current backend evidence. Supported changes use the existing proposal and explicit human-confirmation flow. The separate legacy chat orchestrator retains its existing behavior. See VOICE_VERIFICATION.md for verification and limits.
+The voice workspace uses one semantic model call for ordinary requests, including a combined introduction/operation plan. Backend services validate and execute the operation and provide the factual spoken answer. SDK clients are pooled across turns without pooling patient context. Supported changes still require the existing proposal and human-confirmation flow. The separate legacy chat orchestrator retains its existing behavior. See memory.md and the current update checklist for measured timing and limits.
 ## 4. Epic configuration and boundaries
 
 Follow `incomingapikey.md` and the target Epic environment's approved API catalog. Configure `EPIC_CLIENT_ID`, `EPIC_KID`, `EPIC_TOKEN_URL`, `EPIC_FHIR_BASE_URL`, and comma-separated `EPIC_TEST_PATIENT_IDS`. Register your matching public JWKS with Epic. Put the private signing key at `keys/private_key.pem` on the host; Compose mounts it read-only. It must be readable by container UID 1000; use restrictive ownership/permissions. For local execution use `PRIVATE_KEY_PATH`. Set `EPIC_READS_ENABLED=true` only after configuration.
@@ -75,8 +78,8 @@ Finalized single-patient Epic handoffs have a note preview with patient, encount
 ## 5. Backup, restore and updates
 
 ```sh
-docker compose exec app node build/scripts/backup.js /app/backups/demo-before-update.db
-docker compose cp app:/app/backups/demo-before-update.db ./demo-before-update.db
+docker compose --env-file .env.deploy exec app node build/scripts/backup.js /app/backups/demo-before-update.db
+docker compose --env-file .env.deploy cp app:/app/backups/demo-before-update.db ./demo-before-update.db
 ```
 
 The online backup API produces a consistent SQLite snapshot. Copy it off the host to durable storage; another volume on the same host is not a disaster-recovery solution. Retention and encryption are deployment responsibilities. Do not copy just the live `.db` while ignoring its WAL.
@@ -88,7 +91,7 @@ For an update: back up, rebuild, then `docker compose up -d`. Startup uses addit
 ## 6. Judging demonstration and evidence
 
 1. Introduce Seema; show the task screen and source labels.
-2. Say “Ask assistant, summarize my shift”; inspect MCP discovery/tool calls and `LLM:DECISION` timings. Use Bedrock only when a real successful provider call is visible.
+2. Ask a natural task/patient question; no “Ask assistant” prefix is required. Inspect `LLM:VOICE_DECISION`, `VOICE:SEMANTIC_TOOL` and `VOICE:TURN_FINISHED` evidence. Distinguish current voice flow from legacy chat traces.
 3. Review a discrepancy; demonstrate that an incomplete/expired confirmation cannot mutate the task.
 4. Prepare a handoff for Reema, switch identity, and explicitly accept custody. Drafting alone does not transfer responsibility.
 5. Demonstrate interruption/recovery; show actual checkpoints and unchanged draft count on retry.

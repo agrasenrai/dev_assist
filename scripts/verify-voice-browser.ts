@@ -258,14 +258,11 @@ try {
     semanticCalls++;assert.equal(context?.voiceWorkflow,true);assert(tools.some(t=>t.name==='read_voice_context'));
     const index=messages.findLastIndex(m=>m.role==='user'),steps=messages.slice(index+1);
     if(!steps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
-    const result=steps.find(m=>m.role==='tool'&&m.toolName==='interpret_voice_request');
-    if(!result)return{toolCall:{toolName:'interpret_voice_request',arguments:{intent:'TASKS',status:'ALL'}}};
-    const facts=JSON.parse(result.content).facts as Array<{id:string}>;
-    return{toolCall:{toolName:'reply_to_nurse',arguments:{kind:'RECORDS',speech:`Here’s where things stand. ${facts.map(f=>`{{${f.id}}}`).join(' ')}`,evidence:facts.map(f=>f.id)}}};
+    return{toolCall:{toolName:'interpret_voice_request',arguments:{intent:'TASKS',status:'ALL',render_backend:true,introduction:"Here's what I found."}}};
   };
   try{
-    await say('Give me a picture of where things stand',/Here’s where things stand.*assigned task/);
-    assert.equal(semanticCalls,2);console.log('PASS simulated speech → semantic Bedrock adapter → scoped MCP → grounded model reply → playback → listening in two model calls');
+    await say('Give me a picture of where things stand',/Here's what I found.*assigned task/);
+    assert.equal(semanticCalls,1);console.log('PASS simulated speech → one semantic model call → scoped MCP → grounded backend answer → playback → listening');
   }finally{BedrockLLMProvider.prototype.decideNextStep=originalDecision;process.env.LLM_PROVIDER='mock';}
   cloudMode=true;await page.reload();
   await page.getByRole('button',{name:'Start microphone',exact:true}).click();

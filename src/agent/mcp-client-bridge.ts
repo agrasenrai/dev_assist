@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { staffContext } from '../services/staff-context.js';
+import { sourceContext, internalSourceHeaders, type SourceRealm } from '../services/source-context.js';
 
 dotenv.config();
 
@@ -35,13 +36,16 @@ export class MCPClientBridge {
   private endpoint: string;
   private sessionId: string | null = null;
   private requestId = 1;
+  private realm:SourceRealm|undefined;
   private authHeaders(): Record<string, string> {
     const token = staffContext.getStore()?.sessionToken;
-    return { ...(process.env.MCP_AUTH_TOKEN ? { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } : {}), ...(token ? { 'X-ShiftWeave-Staff-Session': token } : {}) };
+    return { ...(process.env.MCP_AUTH_TOKEN ? { Authorization: `Bearer ${process.env.MCP_AUTH_TOKEN}` } : {}), ...(token ? { 'X-ShiftWeave-Staff-Session': token } : {}),
+      ...(this.realm&&['127.0.0.1','localhost','[::1]'].includes(new URL(this.endpoint).hostname)?internalSourceHeaders(this.realm):{}) };
   }
 
   constructor(endpoint = process.env.MCP_SERVER_URL || "http://localhost:3000/mcp") {
     this.endpoint = endpoint;
+    this.realm=sourceContext.getStore()||(staffContext.getStore()?'legacy':process.env.SHIFTWEAVE_TEST==='1'?(process.env.HOSPITAL_SIMULATION_ENABLED==='true'?'preview':'legacy'):undefined);
   }
 
   /**

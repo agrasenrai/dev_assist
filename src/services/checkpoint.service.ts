@@ -1,6 +1,7 @@
 import { db } from "../db/connection.js";
 import { randomUUID } from "crypto";
 import { canonicalJson } from './canonical-json.js';
+import { sourceRealm } from './source-context.js';
 
 export interface CheckpointRecord {
   id: string;
@@ -35,6 +36,7 @@ export class CheckpointService {
     if (!idempotencyKey?.trim() || !Number.isInteger(stepIndex) || stepIndex < 1) {
       throw new Error('Checkpoint requires a key and positive integer step index');
     }
+    if(sourceRealm()!=='legacy')statePayload={...statePayload,_sourceRealm:sourceRealm()};
     // 1. Idempotency Check: Did this checkpoint already commit?
     const existing = db.prepare(`
       SELECT id, workflow_run_id AS workflowRunId, step_index AS stepIndex,

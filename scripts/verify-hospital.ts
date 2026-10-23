@@ -54,7 +54,7 @@ try {
   assert.deepEqual(db.prepare("SELECT * FROM nurses WHERE id='original:seema'").get(),original);
   assert.equal((db.prepare("SELECT count(*) n FROM nurses WHERE id LIKE 'hospital:%'").get() as any).n,3);
   assert.equal((db.prepare('SELECT count(*) n FROM hospital_patients').get() as any).n,3);
-  assert.deepEqual(db.pragma('foreign_key_check'),[]);pass('additive provisioning, backup and replay preserve original records; 3 hospital patients, 3 nurses, 5 tasks');
+  assert.deepEqual(db.pragma('foreign_key_check'),[]);pass('additive provisioning, backup and replay preserve original records; 3 hospital patients, 3 nurses, 9 tasks');
   const {appServer}=await import('../src/server.js');app=appServer;if(!app.listening)await once(app,'listening');
   const base=`http://127.0.0.1:${(app.address() as any).port}`;
   const {MCPClientBridge}=await import('../src/agent/mcp-client-bridge.js');bridge=new MCPClientBridge(`${base}/mcp`);
@@ -66,7 +66,9 @@ try {
     let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);child.on('error',reject);
     child.on('close',code=>code===0?resolve():reject(new Error(output)));
   });pass('independent official SDK client works without dashboard or importing database/server code');
-  const call=async(name:string,args:any)=>{const r=await bridge.callTool(name,args);assert(!r.isError,JSON.stringify(r));return JSON.parse(r.content[0].text);};
+  const covered=new Set<string>();
+  const call=async(name:string,args:any)=>{const r=await bridge.callTool(name,args);assert(!r.isError,JSON.stringify(r));covered.add(name);return JSON.parse(r.content[0].text);};
+  const expectedError=async(name:string,args:any)=>{const r=await bridge.callTool(name,args);assert(r.isError,`${name} should reject this request`);covered.add(name);};
   const session=randomUUID();let display=await call('get_voice_display',{session_id:session});assert.equal(display.dataSource,'hospital');
   const turn=async(utterance:string)=>{display=await call('voice_turn',{session_id:session,utterance,expected_revision:display.revision,idempotency_key:randomUUID()});return display;};
   await turn('I am Seema Patel, what are my tasks');assert.equal(display.nurse.id,'hospital:seema');assert.equal(display.tasks.length,3);pass('combined nurse introduction resolves the correct source and database tasks');
@@ -95,10 +97,9 @@ try {
   await turn('Confirm');assert.match(display.speech,/changed|expired/i);assert.equal((db.prepare("SELECT status FROM tasks WHERE id='hospital:task:transport'").get() as any).status,'IN_PROGRESS');
   pass('source revalidation blocks a stale confirmation and wake-only control preserves a valid proposal');
   await turn('Mark Confirm transport arrangements completed');assert(display.pending);
-  const selection={session_id:session,source:'epic',expected_revision:display.revision,idempotency_key:randomUUID()};
-  display=await call('select_voice_source',selection);assert.equal(display.pending,null);assert.equal(display.nurse,null);assert.equal(display.messages.length,0);assert.deepEqual(await call('select_voice_source',selection),display);
-  await turn('I am Seema Patel');assert.equal(display.nurse.id,'original:seema');pass('source switch clears confirmations/context, preserves records and avoids duplicate-name collisions');
-  display=await call('select_voice_source',{session_id:session,source:'hospital',expected_revision:display.revision,idempotency_key:randomUUID()});await turn('I am Seema Patel');
+  await expectedError('select_voice_source',{session_id:session,source:'epic',expected_revision:display.revision,idempotency_key:randomUUID()});
+  await turn('Cancel');assert.equal(display.nurse.id,'hospital:seema');
+  pass('preview MCP cannot switch its immutable source or expose an existing nurse with the same name');
   const catalog=await call('review_simulation',{action:'list'});assert.equal(catalog.scenarios.length,6);
   for(const scenario of catalog.scenarios) {
     let run=await call('review_simulation',{action:'start',scenario_id:scenario.id,idempotency_key:randomUUID()});
@@ -107,6 +108,40 @@ try {
     if(scenario.id==='hospital-recovery')assert.equal(run.last.outcome,'COMPLETED');
   }
   pass('all six hosted guided scenarios execute through MCP, including real interruption/recovery');
+  await turn('I am Jordan Lee');assert.equal(display.nurse.id,'hospital:jordan');assert(display.tasks.some((t:any)=>t.id==='hospital:task:jordan-roster'));
+  await turn('Show available tasks');assert.match(display.speech,/information pack|transport contact/i);
+  await turn('Assign a task to me');assert.equal(display.pending,null);assert.match(display.speech,/which/i);
+  await turn('Assign Check patient information pack to me');assert(display.pending?.ready,display.speech);
+  assert(!db.prepare("SELECT id FROM task_assignments WHERE task_id='hospital:task:welcome-pack' AND transfer_status='ACTIVE'").get());
+  await turn('Confirm');assert(display.tasks.some((t:any)=>t.id==='hospital:task:welcome-pack'));pass('Jordan has real assigned work; choosing and confirming an unassigned task persists a new assignment');
+  const directClaim={nurse_id:'hospital:jordan',shift_id:'hospital:shift',task_id:'hospital:task:transport-contact',human_confirmed:true,idempotency_key:randomUUID()};
+  const claimed=await call('claim_hospital_task',directClaim);assert(claimed.success);assert.deepEqual(await call('claim_hospital_task',directClaim),claimed);
+  await expectedError('claim_hospital_task',{...directClaim,nurse_id:'hospital:reema',idempotency_key:randomUUID()});
+  await expectedError('claim_hospital_task',{...directClaim,task_id:'hospital:task:paperwork',idempotency_key:randomUUID()});
+  await expectedError('claim_hospital_task',{...directClaim,human_confirmed:false,idempotency_key:randomUUID()});
+  await turn('Show available tasks');assert.match(display.speech,/no available/i);pass('MCP claim retries are idempotent; competing claims, owned tasks and missing human confirmation are rejected');
+  await turn('Show discrepancies');assert.match(display.speech,/disagree|review/i);
+  await turn('Resolve discrepancy for Review transport documentation in progress because I checked the transport note');assert(display.pending?.ready,display.speech);
+  await turn('Confirm');assert.equal((db.prepare("SELECT status FROM conflicts WHERE task_id='hospital:task:documentation-review'").get() as any).status,'VERIFIED_RESOLVED');pass('synthetic discrepancy review persists source values, verification note and resolution through voice MCP');
+  const assigned=await call('get_assigned_tasks',{nurse_id:'hospital:jordan',shift_id:'hospital:shift'});assert(assigned.tasks_count>0);
+  await call('get_task_details',{task_id:'hospital:task:jordan-roster'});
+  const changes=await call('get_task_changes',{since_timestamp:'2000-01-01T00:00:00Z',unit_id:'SYNTHETIC-HOSPITAL'});assert(changes.events_count>0);
+  await call('get_handoff_context',{outgoing_nurse_id:'hospital:jordan',incoming_nurse_id:'hospital:reema',shift_id:'hospital:shift'});
+  const draft=await call('create_handoff_draft',{outgoing_nurse_id:'hospital:jordan',incoming_nurse_id:'hospital:reema',shift_id:'hospital:shift',summary_markdown:'',carried_forward_task_ids:['hospital:task:jordan-roster'],idempotency_key:randomUUID()});assert(draft.handoff_id);
+  await call('acknowledge_task',{task_id:'hospital:task:jordan-roster',nurse_id:'hospital:jordan',action:'FLAG_FOR_SUPERVISOR',human_confirmed:true,resolution_note:'Synthetic reviewer verified a coordination follow-up',idempotency_key:randomUUID()});
+  const workflow=(db.prepare("SELECT workflow_run_id FROM workflow_checkpoints WHERE workflow_run_id LIKE '%review-recovery:%' ORDER BY rowid DESC LIMIT 1").get() as any).workflow_run_id;
+  const saved=await call('get_workflow_checkpoint',{workflow_run_id:workflow});assert(saved.has_checkpoint);
+  await call('save_workflow_checkpoint',{workflow_run_id:workflow,step_index:saved.checkpoint.stepIndex+1,step_name:'REVIEWER_VERIFIED',state_payload:saved.checkpoint.statePayload,idempotency_key:randomUUID()});
+  await call('resume_workflow',{workflow_run_id:workflow,idempotency_key:randomUUID()});
+  await expectedError('get_epic_patient_context',{patient_id:'synthetic-not-epic',idempotency_key:randomUUID()});
+  await expectedError('sync_epic_workspace',{nurse_id:'hospital:jordan',shift_id:'hospital:shift',idempotency_key:randomUUID()});
+  await expectedError('preview_epic_handoff_note',{handoff_id:draft.handoff_id,nurse_id:'hospital:jordan'});
+  await expectedError('publish_reviewed_handoff_note',{handoff_id:draft.handoff_id,nurse_id:'hospital:jordan',human_confirmed:true,idempotency_key:randomUUID()});
+  await expectedError('operational_sandbox',{action:'directory',input:{}});
+  // Automatic refresh is a real nested MCP call; exercise it directly as well.
+  await call('refresh_hospital_records',{nurse_id:'hospital:jordan',shift_id:'hospital:shift',idempotency_key:randomUUID()});
+  assert.deepEqual(tools.map((t:any)=>t.name).filter((name:string)=>!covered.has(name)),[]);
+  pass(`all ${tools.length} discovered MCP tools executed: synthetic workflow successes and explicit Epic/auth boundary rejections`);
   if(http&&!live) {
     const {HospitalService}=await import('../src/services/hospital.service.js');
     paginate=true;assert.equal((await HospitalService.refresh('hospital:reema','hospital:shift',randomUUID())).status,'READY');paginate=false;pass('FHIR pagination is followed');

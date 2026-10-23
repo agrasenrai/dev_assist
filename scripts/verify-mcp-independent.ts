@@ -18,13 +18,11 @@ try {
     const result=await client.callTool({name,arguments:args});assert(!result.isError,JSON.stringify(result));
     const content=result.content as {type:string;text?:string}[];const block=content.find(c=>c.type==='text');assert(block?.text);return JSON.parse(block.text);
   };
-  const session_id=randomUUID();let display=await call('get_voice_display',{session_id});
-  const nurse=display.availableNurses?.find((n:any)=>n.name===process.env.MCP_TEST_NURSE_NAME)||display.availableNurses?.find((n:any)=>n.assignedTasks>0)||display.availableNurses?.[0];
-  assert(nurse,'Select/provision the synthetic hospital source; no nurse ID is hardcoded in this client');
-  display=await call('voice_turn',{session_id,utterance:`I am ${nurse.name}, what tasks are assigned to me?`,expected_revision:display.revision,idempotency_key:randomUUID()});
-  assert.equal(display.nurse?.id,nurse.id);assert(Array.isArray(display.tasks));assert(display.speech);
-  display=await call('voice_turn',{session_id,utterance:'What tasks are still unfinished?',expected_revision:display.revision,idempotency_key:randomUUID()});
-  assert(display.speech);assert.equal(display.nurse?.id,nurse.id);
-  assert((await client.getServerCapabilities())?.tools);
-  console.log('PASS official MCP SDK client: connection, discovery, database nurse lookup, natural-language task request and persistent follow-up. No dashboard or local database imported.');
+  const session_id=randomUUID();const display=await call('get_voice_display',{session_id});
+  assert.equal(display.dataSource,'epic','An ordinary external MCP client must default to Epic');
+  assert(!display.availableNurses?.some((n:any)=>n.id.startsWith('hospital:')));
+  for(const name of ['claim_hospital_task','review_simulation','refresh_hospital_records','select_voice_source'])assert(!tools.tools.some(t=>t.name===name));
+  const synthetic=await client.callTool({name:'get_task_details',arguments:{task_id:'hospital:task:paperwork'}});assert(synthetic.isError);
+  assert(client.getServerCapabilities()?.tools);
+  console.log('PASS independent official MCP SDK client defaults to Epic, cannot discover preview controls and cannot read a synthetic task. No dashboard/database/server imports.');
 } finally {await client.close();}

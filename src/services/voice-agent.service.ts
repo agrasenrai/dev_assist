@@ -1,4 +1,4 @@
-import { VoiceService, voiceIntentSchema, type VoiceInput } from './voice.service.js';
+import { VoiceService, voiceIntentSchema, type VoiceInput, type VoiceIntent } from './voice.service.js';
 import { ShiftWeaveOrchestrator } from '../agent/orchestrator.js';
 import { db } from '../db/connection.js';
 import { canonicalJson } from './canonical-json.js';
@@ -12,17 +12,26 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 const busy = new Set<string>();
+const semanticIntentSchema=voiceIntentSchema.extend({
+  after_identification:voiceIntentSchema.refine(value=>value.intent!=='IDENTIFY','Only one identification is permitted').optional(),
+  render_backend:z.boolean().optional(),
+  introduction:z.enum(['',"Here's what I found.","Here's the breakdown."]).optional()
+}).refine(value=>!value.after_identification||(value.intent==='IDENTIFY'&&value.continue_request===true),'A follow-up plan requires combined identification');
+function baseIntent(value:unknown) {
+  const {after_identification,render_backend,introduction,...intent}=semanticIntentSchema.parse(value);
+  return {intent,after_identification,render_backend,introduction};
+}
 
 const intentTool: MCPToolDefinition = {name:'interpret_voice_request',description:
-  'Execute a structured reading request or stage a supported human action through the existing voice workflow. Never confirms actions. Read the current context before choosing record IDs. One workflow operation per utterance; IDENTIFY with continue_request may precede it.',
-  inputSchema: z.toJSONSchema(voiceIntentSchema) as MCPToolDefinition['inputSchema']};
+  'Understand and execute the current request with render_backend=true. For an introduction plus question, send IDENTIFY, continue_request=true and after_identification with the remaining intent in ONE call. Backend validates identity before the planned request, retrieves current records and speaks the result. Do not invent IDs. Actions are staged for human confirmation.',
+  inputSchema: z.toJSONSchema(semanticIntentSchema) as MCPToolDefinition['inputSchema']};
 const replySchema = z.object({kind:z.enum(['CONVERSATION','CLARIFICATION','RECORDS','UNSUPPORTED','REFUSAL']),speech:z.string().trim().min(1).max(5000),evidence:z.array(z.string().regex(/^fact:\d+$/)).max(100)}).strict();
 const replyTool: MCPToolDefinition = {name:'reply_to_nurse',description:
   'Deliver your natural spoken answer. For RECORDS, reference supplied fact IDs in evidence and put {{fact:N}} placeholders into speech; the server inserts exact source text. General conversation and clarification use empty evidence and no placeholders.',
   inputSchema:z.toJSONSchema(replySchema) as MCPToolDefinition['inputSchema']};
 type Display = ReturnType<typeof VoiceService.read>;
 type SemanticState = {requestHash:string;messages:AgentMessage[];pendingTool?:{name:string;args:Record<string,unknown>;id:string;command?:string};
-  action?:{display:Display;intent:string};identificationRevision?:number;prefetchedRevision?:number;version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number;intentRepairs?:number};
+  action?:{display:Display;intent:string};plannedIntent?:VoiceIntent;plannedIntroduction?:string;identificationRevision?:number;prefetchedRevision?:number;version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number;intentRepairs?:number};
 const replyErrors=new Set(['Model cannot claim a workflow action','Clinical advice is outside the voice workflow','Record answer lacks matching source evidence',
   'Record claims must be contained in source evidence','Record answer introduced an unsupported number','Record answer introduced an unsupported status',
   'Record answer omitted source uncertainty','Record claims require a current backend result','Read operation required before a record answer']);
@@ -45,7 +54,7 @@ export function composeRecordReply(speech:string,ids:string[],source:string) {
 }
 
 function recordContext(display: Display) {
-  return {revision:display.revision,nurse:display.nurse,shift:display.shift,tasks:display.tasks,candidates:display.candidates,
+  return {revision:display.revision,nurse:display.nurse,shift:display.shift,tasks:display.tasks,candidates:display.candidates,availableTasks:display.availableTasks,
     selectedTaskId:display.selectedTaskId,selectedHandoffId:display.selectedHandoffId,pending:display.pending,conflicts:display.conflicts,
     handoffs:display.handoffs.map(({snapshot,...handoff})=>handoff),
     epicRecords:display.epicRecords.map(r=>({patientId:r.patientId,epicPatientId:r.epicPatientId,name:r.name,retrievedAt:r.retrievedAt,status:r.status,error:r.error}))};
@@ -80,7 +89,7 @@ export function validateReply(speech: string, evidence: string[], source?: strin
   }
   if (source) {
     const connective=evidence.reduce((text,quote)=>text.split(quote).join(''),speech);
-    const neutralConnective=connective.replace(/’/g,"'").replace(/\bhere(?:'s| is) the breakdown\b|\band one more thing\b/gi,'');
+    const neutralConnective=connective.replace(/’/g,"'").replace(/\bhere(?:'s| is) the (?:breakdown|full picture)\b|\band one more thing\b/gi,'');
     const neutral=new Set("a about also an and another are as at be bit brief briefly can catch check detail details else for found from got happy have he help her here here's heres hers hi him his how i i've ive i'm im if important in information is it it's its just know latest left let let's lets like look looking me more my no note noted noting nothing now of okay on or our over question questions quick read reading change changes regarding related relevant right said says see share shift snapshot so some something stand stands sure take that that's thats the their theirs them then there's theres these they things this those to up update us useful want was we we've weve well what what's whats when where which with worth would yes you your you're youre yours".split(' '));
     if((neutralConnective.toLowerCase().replace(/’/g,"'").match(/[a-z']+/g)||[]).some(word=>!neutral.has(word))||/\d/.test(neutralConnective))
       throw new Error('Record claims must be contained in source evidence');
@@ -133,6 +142,22 @@ async function runConversation(input: VoiceInput, endpoint: string) {
       if(!discovered.some(t=>t.name==='get_voice_display')) throw new Error('Voice context tool is unavailable');
       for(let iteration=0;iteration<7;iteration++) {
         if(Date.now()-started>65000) throw new Error('Voice model time budget reached');
+        if(!current.pendingTool&&current.plannedIntent) {
+          const intent=current.plannedIntent;
+          let command:string;
+          try {command=VoiceService.commandForIntent(input,intent);}
+          catch(error) {
+            const message=error instanceof Error?error.message:'';
+            if(/^(?:Please give|More than one nurse|I couldn’t find that nurse|That task is outside|Which task|I couldn’t find that patient|That handoff is outside|What should I write|No changes were made)/.test(message)) {
+              current.speech=message;current.status='SUCCESS';delete current.plannedIntent;break;
+            }
+            throw error;
+          }
+          const id=`${key}:planned-request`;
+          current.pendingTool={name:'interpret_voice_request',args:{...intent,render_backend:true,introduction:current.plannedIntroduction||''},id,command};
+          current.messages.push({role:'assistant',content:'',toolCall:{toolName:'interpret_voice_request',arguments:current.pendingTool.args},toolCallId:id});
+          delete current.plannedIntent;persist('VOICE_PLANNED_REQUEST');
+        }
         if(!current.pendingTool) {
           const {messages,...scope} = VoiceService.agentContext(input.session_id);
           // The host can perform this read safely without asking the model to
@@ -149,7 +174,10 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             current.prefetchedRevision=scope.revision;current.version=VoiceService.agentVersion(input.session_id);
             persist('VOICE_CONTEXT_PREFETCHED');
           }
-          const result = await provider.decideNextStep(current.messages,tools,{voiceWorkflow:true,voiceReplyOnly:Boolean(current.action),scope:{...scope,currentUtterance:input.utterance,identityResolved:current.identificationRevision!==undefined}});
+          const decisionStarted=Date.now();
+          const result = await provider.decideNextStep(current.messages,tools,{voiceWorkflow:true,voiceSinglePass:true,voiceReplyOnly:Boolean(current.action),scope:{...scope,currentUtterance:input.utterance,identityResolved:current.identificationRevision!==undefined}});
+          AuditService.log({actorType:'AGENT',actorId,action:'LLM:VOICE_DECISION',targetResource:`voice:${input.session_id}`,outcome:'SUCCESS',
+            latencyMs:Date.now()-decisionStarted,details:{provider:provider.providerId,stage:current.action?'reply':'intent',iteration,...result.metrics}});
 
           if(result.toolCall) {
             const call = result.toolCall;
@@ -158,7 +186,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             let command: string | undefined;
             if(call.toolName==='interpret_voice_request') {
               if(current.identificationRevision!==undefined && call.arguments.intent==='IDENTIFY') throw new Error('Nurse identification is already complete for this request');
-              try {command=VoiceService.commandForIntent(input,call.arguments);}
+              try {command=VoiceService.commandForIntent(input,baseIntent(call.arguments).intent);}
               catch(error) {
                 if(error instanceof z.ZodError) throw error;
                 const message=error instanceof Error?error.message:'';
@@ -199,7 +227,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
           const display=JSON.parse(result.content[0]!.text) as Display;
           output=recordContext(display);current.read=true;current.version=VoiceService.agentVersion(input.session_id);
         } else if(pending.name==='interpret_voice_request') {
-          const intent=voiceIntentSchema.parse(pending.args);
+          const plan=baseIntent(pending.args),intent=plan.intent;
           // This private child receipt makes a crash between service commit and model checkpoint safe to retry.
           const identifyingRequest=intent.intent==='IDENTIFY'&&intent.continue_request===true;
           const child={...input,expected_revision:current.identificationRevision??input.expected_revision,
@@ -220,6 +248,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
           output={authoritativeAnswer:display.speech,facts:sourceFacts(display.speech),...recordContext(display)};
           if(identifyingRequest && display.nurse && display.shift) {
             current.identificationRevision=display.revision;current.read=false;
+            if(plan.after_identification){current.plannedIntent=plan.after_identification;current.plannedIntroduction=plan.introduction||'';}
             output={identificationComplete:true,requestPending:true,instruction:'Read the newly identified nurse context and fulfill the remaining request in scope.currentUtterance. Do not identify again or stop at a greeting.',...recordContext(display)};
           } else {
             current.action={display,intent:intent.intent};
@@ -227,6 +256,12 @@ async function runConversation(input: VoiceInput, endpoint: string) {
               (intent.intent==='HANDOFF'&&!display.selectedHandoffId)) {
               // Human proposals, identity gates and confirmed outcomes stay exactly as validated by the backend.
               current.speech=display.speech;current.status='SUCCESS';
+            } else if(plan.render_backend) {
+              // Intent is understood by the LLM, but facts come only from the just-executed
+              // backend operation. No second inference or generated patient claim is needed.
+              const speech=[plan.introduction||'',display.speech].filter(Boolean).join(' ');
+              validateReply(speech,[display.speech],display.speech);
+              current.speech=speech;current.status='SUCCESS';
             }
           }
         } else {

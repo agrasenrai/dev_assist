@@ -154,6 +154,7 @@ export class EpicWriteBackService {
    * durable external sync state machine, and remote reconciliation before retries.
    */
   static async publishReviewedNote(input: PublishNoteInput): Promise<PublishNoteResult> {
+    if(process.env.NODE_ENV==='production'&&(input.executionMode==='mock'||input.executionMode==='simulate_uncertain'))throw new Error('Mock publication is disabled in production');
     if (process.env.NODE_ENV === 'production' && (input.executionMode === 'mock' || input.executionMode === 'simulate_uncertain')) {
       throw new Error('Simulated EHR publication is disabled in production');
     }

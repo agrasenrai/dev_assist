@@ -6,6 +6,7 @@ import { FieldAuthorityService, FIELD_AUTHORITY_MATRIX } from './field-authority
 import { EpicWorkflowService } from './epic-workflow.service.js';
 import { HospitalService } from './hospital.service.js';
 import { currentStaff, staffAuthRequired, requireStaff } from './staff-context.js';
+import { scopeToolArguments, taskScope } from './source-policy.js';
 
 export interface HandoffDraftInput {
   outgoing_nurse_id: string; incoming_nurse_id: string; shift_id: string;
@@ -14,6 +15,7 @@ export interface HandoffDraftInput {
 }
 export class HandoffService {
   static finalize(handoffId: string, nurseId: string, key: string, humanConfirmed: boolean) {
+    scopeToolArguments('finalize_handoff',{handoff_id:handoffId,nurse_id:nurseId});
     if(staffAuthRequired()&&requireStaff(['STAFF_NURSE','CHARGE_NURSE']).id!==nurseId)throw new Error('Finalizing nurse must match authenticated staff');
     if (!humanConfirmed) throw new Error('Human review confirmation is required');
     return MutationService.execute('FINALIZE_HANDOFF', key, { handoffId, nurseId }, nurseId, () => {
@@ -54,7 +56,7 @@ export class HandoffService {
         }
         const tasks = db.prepare(`SELECT t.*, p.full_name AS patientName, p.room_number AS roomNumber FROM tasks t
           JOIN patients p ON p.id = t.patient_id JOIN task_assignments a ON a.task_id = t.id
-          WHERE a.nurse_id = ? AND a.shift_id = ? AND a.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`)
+          WHERE a.nurse_id = ? AND a.shift_id = ? AND a.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD') AND ${taskScope('t')}`)
           .all(args.outgoing_nurse_id, args.shift_id) as Array<{ id: string; patient_id: string; status: string; title: string; patientName: string; roomNumber: string }>;
         for (const id of args.carried_forward_task_ids) {
           if (!tasks.some(t => t.id === id && !['COMPLETED', 'CANCELLED'].includes(t.status))) {
@@ -115,6 +117,7 @@ export class HandoffService {
 
   static acknowledge(args: { task_id: string; nurse_id: string; action: string; resolution_note?: string | undefined;
     idempotency_key: string; handoff_id?: string | undefined; human_confirmed: boolean }) {
+    scopeToolArguments('acknowledge_task',{task_id:args.task_id,nurse_id:args.nurse_id,handoff_id:args.handoff_id});
     if (!args.human_confirmed) throw new Error('Explicit human confirmation is required');
     if(staffAuthRequired()&&requireStaff(['STAFF_NURSE','CHARGE_NURSE']).id!==args.nurse_id)throw new Error('Acknowledging nurse must match authenticated staff');
     return MutationService.execute('ACKNOWLEDGE_TASK', args.idempotency_key, args, args.nurse_id, () => {

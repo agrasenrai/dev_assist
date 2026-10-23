@@ -16,6 +16,7 @@ import { SQLiteCacheProvider } from '../src/providers/sqlite-cache-provider.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { internalSourceHeaders } from '../src/services/source-context.js';
 
 if (process.env.SHIFTWEAVE_TEST !== '1') throw new Error('Use npm test; tests must run against a temporary database');
 const mode = process.argv[2] || 'all';
@@ -64,7 +65,7 @@ try {
   const sdk = new Client({ name: 'independent-verification', version: '1.0.0' });
   try {
     // SDK declarations disagree on optional sessionId with exactOptionalPropertyTypes.
-    await sdk.connect(new StreamableHTTPClientTransport(new URL(endpoint)) as Transport);
+    await sdk.connect(new StreamableHTTPClientTransport(new URL(endpoint),{requestInit:{headers:internalSourceHeaders('legacy')}}) as Transport);
     const tools = await sdk.listTools();
     check('official SDK initializes and discovers the same tools', () => assert.deepEqual(tools.tools.map(t => t.name).sort(), discovered.map(t => t.name).sort()));
     const result = await sdk.callTool({ name: 'get_assigned_tasks', arguments: { nurse_id: 'nurse_seema_01' } });
