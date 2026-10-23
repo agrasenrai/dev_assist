@@ -1,1 +1,0 @@
-{"commands":["cd /mnt/shiftweave && docker compose --env-file .env.deploy up -d --remove-orphans 2>&1 && echo DONE"]}
