@@ -79,6 +79,36 @@ try{
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.equal(await page.locator('#lm svg').evaluate((el:Element)=>getComputedStyle(el).animationName),'none');
   console.log('PASS centered unboxed welcome, all examples retained, same guide animates right after identity, logos preserved, no context/transcript/control overlap, keyboard behavior and reduced motion; opening/workflow screenshots at desktop and laptop sizes.');
+  const openRecovery=async()=>{
+    await page.getByRole('button',{name:'Workspace tools',exact:true}).click();
+    await page.getByRole('button',{name:'Recovery controls',exact:true}).click();
+    await page.getByRole('dialog',{name:'recovery details'}).waitFor();
+  };
+  await openRecovery();
+  assert.equal(await page.getByRole('button',{name:'Resume Saved Workflow',exact:true}).isDisabled(),true,'No resumable run should be offered before starting the demo');
+  await page.getByRole('button',{name:'Simulate Wi-Fi Drop / Crash',exact:true}).click();
+  await page.locator('.chaos-feedback[data-outcome=INTERRUPTED]').waitFor();
+  assert.match(await page.locator('.chaos-feedback').innerText(),/progress is saved/i);
+  assert.equal(await page.locator('.chaos-feedback').getAttribute('role'),'status');
+  const savedRun=await page.evaluate(()=>localStorage.getItem('shiftweave:chaosRun'));
+  assert(savedRun?.startsWith('source:preview:'));
+  assert(db!.prepare('SELECT id FROM workflow_checkpoints WHERE workflow_run_id=?').get(savedRun));
+  await page.reload();await page.getByRole('button',{name:'Workspace tools',exact:true}).waitFor();
+  await openRecovery();assert.equal(await page.getByRole('button',{name:'Resume Saved Workflow',exact:true}).isEnabled(),true);
+  await page.getByRole('button',{name:'Resume Saved Workflow',exact:true}).click();
+  await page.locator('.chaos-feedback[data-outcome=RECOVERED]').waitFor();
+  assert.match(await page.locator('.chaos-feedback').innerText(),/Recovered saved workflow/);
+  const count=(db!.prepare('SELECT count(*) n FROM handoffs').get() as any).n;
+  await page.getByRole('button',{name:'Resume Saved Workflow',exact:true}).click();
+  await page.locator('.chaos-feedback[data-outcome=RECOVERED]').waitFor();
+  assert.equal((db!.prepare('SELECT count(*) n FROM handoffs').get() as any).n,count);
+  await page.route('**/api/chaos/simulate',(route:any)=>route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Recovery service unavailable for this test'})}));
+  await page.getByRole('button',{name:'Resume Saved Workflow',exact:true}).click();
+  await page.locator('.chaos-feedback[data-outcome=ERROR]').waitFor();
+  assert.equal(await page.locator('.chaos-feedback').getAttribute('role'),'alert');
+  assert.match(await page.locator('.chaos-feedback').innerText(),/Recovery service unavailable/);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('shiftweave:chaosRun')),savedRun,'A failed recovery must retain the saved run');
+  console.log('PASS preview recovery controls: expected interruption is a status, scoped checkpoint survives reload, resume/retry do not duplicate drafts, actual failures remain alerts');
 }finally{
   await browser?.close();if(app?.listening){app.closeAllConnections();await new Promise<void>(resolve=>app!.close(()=>resolve()));}db?.close();
   assert.equal(path.dirname(path.resolve(directory)),path.resolve(tmpdir()));assert(path.basename(directory).startsWith('shiftweave-guide-'));rmSync(directory,{recursive:true,force:true});

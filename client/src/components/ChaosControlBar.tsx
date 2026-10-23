@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Zap, ShieldCheck, RefreshCw, AlertTriangle, Cpu, CheckCircle } from 'lucide-react';
-import { triggerChaos } from '../api.js';
+import { savedChaosRunId, triggerChaos } from '../api.js';
 
 interface Props {
   onRefreshAll: () => Promise<void>;
@@ -9,15 +9,24 @@ interface Props {
 export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
   const [chaosStatus, setChaosStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [canResume, setCanResume] = useState(()=>Boolean(savedChaosRunId()));
+  const [outcome, setOutcome] = useState<'WORKING'|'INTERRUPTED'|'RECOVERED'|'ERROR'>('WORKING');
+  const feedback={WORKING:{background:'rgba(56, 189, 248, 0.12)',border:'#38bdf866',color:'#bae6fd'},
+    INTERRUPTED:{background:'rgba(245, 158, 11, 0.12)',border:'#f59e0b66',color:'#fde68a'},
+    RECOVERED:{background:'rgba(16, 185, 129, 0.15)',border:'#10b98166',color:'#a7f3d0'},
+    ERROR:{background:'rgba(244, 63, 94, 0.15)',border:'#f43f5e66',color:'#fecdd3'}}[outcome];
 
   const handleCrash = async () => {
     setLoading(true);
+    setOutcome('WORKING');
     setChaosStatus("💥 Triggering simulated network drop / tablet crash mid-handoff...");
     try {
       const res = await triggerChaos('crash');
+      setCanResume(Boolean(res.workflowRunId));setOutcome(res.status);
       setChaosStatus(res.message);
       await onRefreshAll();
     } catch (err: any) {
+      setOutcome('ERROR');
       setChaosStatus(`Error: ${err.message}`);
     } finally {
       setLoading(false);
@@ -26,12 +35,15 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
 
   const handleRecover = async () => {
     setLoading(true);
+    setOutcome('WORKING');
     setChaosStatus("🔄 Reconciling SQLite state and recovering from checkpoint...");
     try {
       const res = await triggerChaos('recover');
+      setCanResume(Boolean(res.workflowRunId));setOutcome(res.status);
       setChaosStatus(res.message);
       await onRefreshAll();
     } catch (err: any) {
+      setOutcome('ERROR');
       setChaosStatus(`Error: ${err.message}`);
     } finally {
       setLoading(false);
@@ -52,7 +64,7 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
             </span>
           </div>
           <p style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '2px' }}>
-            Test non-trivial agentic recovery: inject an exception after saved tool results, then restore the durable workflow.
+            First simulate an interruption to save progress, then resume the saved workflow. Your actual Wi-Fi connection stays on.
           </p>
         </div>
 
@@ -69,7 +81,7 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
 
           <button
             onClick={handleRecover}
-            disabled={loading}
+            disabled={loading || !canResume}
             className="btn btn-cyan"
             style={{ fontSize: '0.8rem', padding: '8px 14px' }}
           >
@@ -80,19 +92,19 @@ export const ChaosControlBar: React.FC<Props> = ({ onRefreshAll }) => {
       </div>
 
       {chaosStatus && (
-        <div style={{
+        <div className="chaos-feedback" data-outcome={outcome} role={outcome==='ERROR'?'alert':'status'} style={{
           marginTop: '12px',
-          background: chaosStatus.startsWith('Recovered') ? 'rgba(16, 185, 129, 0.15)' : 'rgba(244, 63, 94, 0.15)',
-          border: chaosStatus.startsWith('Recovered') ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(244, 63, 94, 0.4)',
+          background: feedback.background,
+          border: `1px solid ${feedback.border}`,
           borderRadius: '8px',
           padding: '8px 12px',
           fontSize: '0.78rem',
-          color: chaosStatus.startsWith('Recovered') ? '#a7f3d0' : '#fecdd3',
+          color: feedback.color,
           display: 'flex',
           alignItems: 'center',
           gap: '8px'
         }}>
-          {chaosStatus.startsWith('Recovered') ? <CheckCircle size={15} /> : <AlertTriangle size={15} />}
+          {outcome==='RECOVERED' ? <CheckCircle size={15} /> : outcome==='ERROR' ? <AlertTriangle size={15} /> : outcome==='WORKING' ? <RefreshCw size={15} /> : <ShieldCheck size={15} />}
           <span>{chaosStatus}</span>
         </div>
       )}

@@ -55,11 +55,12 @@ export async function acknowledgeTask(taskId: string, action: 'ACCEPT_HANDOFF' |
   pendingKeys.delete(identity);
   return result;
 }
+export function savedChaosRunId() { return localStorage.getItem('shiftweave:chaosRun'); }
 export async function triggerChaos(action: 'crash' | 'recover') {
   const key = 'shiftweave:chaosRun';
-  const runId = localStorage.getItem(key);
+  const runId = savedChaosRunId();
   if (action === 'recover' && !runId) throw new Error('Start an interruption demo first');
-  const result = await request<any>('/api/chaos/simulate', { action, ...(action === 'recover' ? { workflowRunId: runId } : {}) });
+  const result = await request<{status:'INTERRUPTED'|'RECOVERED';workflowRunId:string;checkpointId?:string;message:string}>('/api/chaos/simulate', { action, ...(action === 'recover' ? { workflowRunId: runId } : {}) });
   if (result.workflowRunId) localStorage.setItem(key, result.workflowRunId);
   return result;
 }
