@@ -324,8 +324,6 @@ deploy/             Deployment templates and update guidance
 
 - [Engineering friction log](FRICTION_LOG.md)
 - [Preview questions and MCP cross-check guide](PREVIEW_TEST_GUIDE.md)
-- [Hospital database coverage](HOSPITAL_DATABASE_COVERAGE.md)
-- [Simulation workflows](SIMULATIONS.md)
 - [EC2 update checklist](deploy/UPDATE_CHECKLIST.md)
 - [Deployment architecture](deploy/ARCHITECTURE.md)
 
