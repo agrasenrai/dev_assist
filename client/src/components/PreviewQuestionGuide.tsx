@@ -13,12 +13,12 @@ export function PreviewQuestionGuide({display,onChoose}:{display:VoiceDisplay;on
   ];
   return <aside id="preview-guide" aria-label="What you can ask">
     <h2>What you can ask</h2>
-    <p>Speak naturally, or select an example to edit below. Examples never send automatically.</p>
-    {groups.map(group=><details key={group.title} open={display.nurse?group.title==='Explore your records':group.title==='Start a conversation'}>
+    <p>{display.nurse?'Speak naturally, or select an example to edit below.':'Start with a name, a question, or a simple hello.'} Examples never send automatically.</p>
+    {groups.map(group=><details key={group.title} open={display.nurse?group.title==='Explore your records':group.title==='Start a conversation'||group.title==='Explore your records'}>
       <summary>{group.title}</summary>
-      {group.questions.map(question=><button type="button" key={question} onClick={()=>onChoose(question)}>{question}</button>)}
+      <div className="question-list">{group.questions.map(question=><button type="button" key={question} onClick={()=>onChoose(question)}>{question}</button>)}</div>
     </details>)}
-    <p>Choose a nurse first. Patient follow-ups use the last patient discussed. Changes need your explicit confirmation. Missing records and clinical advice should receive an honest limitation.</p>
+    <p className="guide-note">{display.nurse?'Follow-ups use your current context. Changes need your explicit confirmation.':'Choose a nurse to open their workflow. Ask in your own words.'}</p>
     <a href="/?workspace=simulations">Try interruption and recovery scenarios →</a>
   </aside>;
 }

@@ -109,6 +109,18 @@ try {
   }
   pass('all six hosted guided scenarios execute through MCP, including real interruption/recovery');
   await turn('I am Jordan Lee');assert.equal(display.nurse.id,'hospital:jordan');assert(display.tasks.some((t:any)=>t.id==='hospital:task:jordan-roster'));
+  await turn('Show receiving nurse');assert.match(display.speech,/No receiving nurse is recorded/);assert(!/You have \d/.test(display.speech));
+  pass('incoming nurse is derived from an actual outgoing handoff; missing receiver does not repeat tasks or invent a nurse');
+  const beforeReviewEvents=(db.prepare('SELECT count(*) n FROM task_events').get() as any).n;
+  await turn('Guide discrepancy review');assert.match(display.speech,/Transport task record says pending/);assert.match(display.speech,/Shift coordination note says in progress/);
+  assert.match(display.speech,/what you checked/);assert.equal(display.pending,null);
+  await turn('Resolve discrepancy for task hospital:task:documentation-review');assert(display.pending&&!display.pending.ready);
+  await turn('Guide discrepancy review for task hospital:task:documentation-review');assert(display.pending&&!display.pending.ready);
+  await turn('in progress');assert.match(display.speech,/What should I note/);
+  await turn('Guide discrepancy review for task hospital:task:documentation-review');assert.match(display.speech,/what you checked/);assert(display.pending&&!display.pending.ready);
+  assert.equal((db.prepare('SELECT count(*) n FROM task_events').get() as any).n,beforeReviewEvents);
+  await turn('Cancel');
+  pass('discrepancy guidance explains source disagreement and missing verification fields without writing or discarding the pending review');
   await turn('Show available tasks');assert.match(display.speech,/information pack|transport contact/i);
   await turn('Assign a task to me');assert.equal(display.pending,null);assert.match(display.speech,/which/i);
   await turn('Assign Check patient information pack to me');assert(display.pending?.ready,display.speech);

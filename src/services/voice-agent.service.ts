@@ -147,7 +147,8 @@ async function runConversation(input: VoiceInput, endpoint: string) {
     const fromRevision=current.action?.display.revision??current.identificationRevision;
     return VoiceService.saveAssistantTurn(input,current.speech!,{provider:provider.providerId,status:current.status!},
       fromRevision!==undefined ? {fromRevision,replaceLast:true,preservePending:true,
-        replaceTurns:Number(Boolean(current.action))+Number(current.identificationRevision!==undefined)} : undefined);
+        replaceTurns:Number(Boolean(current.action))+Number(current.identificationRevision!==undefined)} :
+        {fromRevision:context.revision,replaceLast:false,preservePending:true});
   };
   const started = Date.now();
   try {
@@ -293,8 +294,11 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             if(!(error instanceof z.ZodError)&&!replyErrors.has(reason))throw error;
             if((current.replyRepairs||0)>=1)throw error;
             current.replyRepairs=(current.replyRepairs||0)+1;
+            const reviewContext=VoiceService.agentContext(input.session_id,false);
+            const reviewClarification=pending.args.kind==='CLARIFICATION'&&reviewContext.nurse&&reviewContext.focus==='conflicts';
             current.messages.push({role:'tool',toolName:pending.name,toolCallId:pending.id,content:JSON.stringify({error:error instanceof z.ZodError?'INVALID_REPLY_SCHEMA':reason,
               instruction:current.action?'Reply again using fact IDs from the last operation. Put {{fact:N}} placeholders in speech and matching fact:N IDs in evidence. Do not add clinical or priority judgments. Do not call another operation.':
+                reviewClarification?'This review clarification needs current backend context. Use interpret_voice_request with CONFLICTS detail GUIDANCE for a question about what is needed, or RESOLVE for a status/note the user actually supplied. Do not state a status or confirmation readiness from dialogue alone.':
                 'Answer the current user message naturally with empty evidence. Do not use fact IDs or answer patient facts. For treatment, diagnosis or order-change requests, clearly say you cannot recommend treatment or change clinical orders and ask the user to consult their clinical team. A refusal must not include advice. Do not request records for general conversation.'})});
             delete current.pendingTool;persist('VOICE_REPLY_REJECTED');continue;
           }

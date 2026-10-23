@@ -45,12 +45,28 @@ try {
     }catch{passed=false;failures++;}
     console.log(JSON.stringify({question,answer:display.speech,passed,ms:Date.now()-start}));
     if(!passed){
-      const saved=db!.prepare("SELECT state_payload FROM workflow_checkpoints WHERE json_extract(state_payload,'$.semantic.failureCode') IS NOT NULL ORDER BY rowid DESC LIMIT 1").get() as {state_payload:string}|undefined;
+      const saved=db!.prepare("SELECT state_payload FROM workflow_checkpoints WHERE json_extract(state_payload,'$.semantic.requestHash') IS NOT NULL ORDER BY rowid DESC LIMIT 1").get() as {state_payload:string}|undefined;
       if(saved){const state=JSON.parse(saved.state_payload).semantic;console.log(JSON.stringify({failureCode:state.failureCode,
+        decisions:state.messages.filter((m:any)=>m.toolCall?.toolName==='interpret_voice_request').map((m:any)=>m.toolCall.arguments),
         rejectedReplies:state.messages.filter((m:any)=>m.toolCall?.toolName==='reply_to_nurse').map((m:any)=>m.toolCall.arguments)}));}
     }
     return display;
   }
+  if(process.argv.includes('--jordan-review')){
+    await ask('hi Maddy I am Jordan Lee and what I am at as',d=>assert.equal(d.nurse?.id,'hospital:jordan'));
+    await ask('I am asking water my task',d=>assert.match(d.speech,/transport documentation|team roster/i));
+    await ask("okay it's fine who is incoming news",d=>{assert.match(d.speech,/receiving nurse|taking over|incoming nurse/i);assert(!/You have \d/.test(d.speech));});
+    await ask('I want to know who is the incoming nurse',d=>{assert.match(d.speech,/No receiving nurse|not recorded|no .*handoff|don.t have/i);assert(!/You have \d/.test(d.speech));});
+    await ask("okay let's do a discrepancy review",d=>assert(d.focus==='conflicts'||d.pending?.prompt));
+    await ask('okay do description review',d=>assert(d.focus==='conflicts'||d.pending?.prompt));
+    await ask('review transport documentation',d=>assert.match(d.speech,/transport documentation|status|note/i));
+    await ask('ok do discrepancy review',d=>{assert(d.focus==='conflicts');assert.match(d.speech,/verify|verified|check|status/i);});
+    await ask('so what I need to do what do you want from me',d=>{assert.match(d.speech,/what you checked|what .*verified|status.*correct/i);assert(d.focus==='conflicts');});
+    await ask('I verified it is in progress',d=>{assert(d.pending&&!d.pending.ready);assert.match(d.speech,/note|checked|review/i);});
+    await ask('what should I tell you now',d=>{assert.match(d.speech,/what you checked|own words|review note/i);assert(d.pending&&!d.pending.ready);});
+    await ask('I checked the transport note',d=>assert(d.pending?.ready));
+    await ask('Confirm',d=>{assert(!d.pending);assert.equal((db!.prepare("SELECT status FROM conflicts WHERE task_id='hospital:task:documentation-review'").get() as any).status,'VERIFIED_RESOLVED');});
+  }else{
   await ask('Hi Medi, how are you?',d=>{assert(!d.nurse);assert(d.speech.length>5);});
   await ask('I am Seema Patel. What should I be working on?',d=>{assert.equal(d.nurse?.id,'hospital:seema');assert.equal(d.tasks.length,3);});
   await ask('Hi again, how is it going?',d=>{assert.equal(d.nurse?.id,'hospital:seema');assert(d.speech.length>5);});
@@ -72,6 +88,7 @@ try {
   await ask('Can I pick up some extra work?',d=>assert(d.availableTasks?.length>=1));
   await ask('Assign Check patient information pack to me',d=>assert(d.pending?.ready));
   await ask('Confirm',d=>assert(d.tasks.some((t:any)=>t.id==='hospital:task:welcome-pack')));
+  }
   assert.equal(failures,0,`${failures} live question checks failed; see synthetic transcript above`);
   console.log(`PASS ${tested} varied live Bedrock questions through MCP against isolated synthetic SQLite records.`);
 }finally{

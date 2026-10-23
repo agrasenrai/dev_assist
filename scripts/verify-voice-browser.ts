@@ -206,7 +206,7 @@ try {
   const blank = await fetch(base + `/api/voice/${newSession}`).then(response => response.json());
   assert.equal(blank.nurse,null); assert.equal(blank.pending,null); assert.equal(blank.revision,0);
   assert.deepEqual(blank.messages,[]); assert.deepEqual(blank.tasks,[]); assert.deepEqual(blank.handoffs,[]);
-  assert.equal(await page.locator('#ast').innerText(),'Ready for your question.');
+  assert.equal(await page.locator('#ast').innerText(),'Your shift, a little clearer.');
   assert.equal(await page.getByRole('log',{name:'Your transcript'}).innerText(),'');
   assert.equal(await page.locator('#in').inputValue(),'');
   assert.equal(await page.getByRole('button',{name:'Start microphone',exact:true}).getAttribute('aria-pressed'),'false');

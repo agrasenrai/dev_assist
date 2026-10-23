@@ -22,7 +22,7 @@ function Thread({ display, onTask, onHandoff }: { display: VoiceDisplay | null; 
   const knot = display?.focus === 'conflicts' && display.conflicts.length > 0;
   const label = (x: number, y: number, a: string, b: string, color?: string) => <><text x={x} y={y} className="lb" fill={color} textAnchor="middle">{short(a)}</text><text x={x} y={y + 26} className="sb" textAnchor="middle">{short(b, 48)}</text></>;
   return <svg viewBox={knot ? '320 0 1280 470' : '0 0 1920 470'} role="group" aria-label="Shift thread timeline from saved workflow state">
-    <path d="M60 170C500 150 800 190 1180 170" className="th" stroke="var(--nt)" opacity={display?.nurse ? 1 : .25} />
+    <path d="M60 170C500 150 800 190 1180 170" className="th workflow-line" stroke="var(--nt)" opacity={display?.nurse ? 1 : .25} />
     <text x="60" y="100" className="lb">{handoff?.outgoingName || display?.nurse?.name || 'Your shift'}{display?.shift ? ` · ${display.shift.type.toLowerCase()}` : ''}</text>
     <line x1="960" y1="36" x2="960" y2="385" className={`gt ${display?.conflicts.length ? 'bk' : ''}`} />
     <text x="976" y="60" className="lb">{display?.conflicts.length ? 'Human review required' : 'Handover'}</text>
@@ -74,7 +74,11 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
   const turn = useCallback(async (utterance: string) => {
     if (busyRef.current) return 'Please wait for the current request to finish.';
     busyRef.current = true; setBusy(true); setError(''); setLastHeard(utterance); setNote('');
-    if (/\b(i am|i['’]?m|switch to|end.*session|sign out)\b/i.test(utterance)) { setDisplay(null); setDrawer(null); }
+    if (/\b(i am|i['’]?m|switch to|end.*session|sign out)\b/i.test(utterance)) {
+      // Clear the previous identity's visible records without unmounting the preview guide.
+      setDisplay(current=>current?{...current,nurse:null,shift:null,pending:null,tasks:[],candidates:[],availableTasks:[],handoffs:[],conflicts:[],epicRecords:[],selectedTaskId:null,selectedHandoffId:null,messages:[],speech:''}:null);
+      setDrawer(null);
+    }
     try {
       const current = await readVoiceDisplay();
       const text = /^retry last request[.! ]*$/i.test(utterance) ? pendingVoiceRequest() : utterance;
@@ -106,11 +110,11 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
     try{const current=await readVoiceDisplay();const next=await selectVoiceSource(source,current.revision);setDisplay(next);setDrawer(null);setLastHeard('');setError('');}
     catch(e){setError(e instanceof Error?e.message:String(e));}finally{busyRef.current=false;setBusy(false);}
   };
-  const speech = error || (display?.messages.length ? display.speech : '') || 'Ready for your question.';
+  const speech = error || (display?.messages.length ? display.speech : '') || 'Your shift, a little clearer.';
   const title = display?.pending ? 'Human confirmation' : display?.focus === 'conflicts' ? 'Documentation review' : handoff ? 'Shift handoff' : 'Your shift context';
   const hasPanel = Boolean(display?.nurse || error);
   const inspect = (task: VoiceTask) => { submit(`Explain task ${task.id}`); };
-  return <><main id="st" data-preview={hospital&&!authenticatedStaff?'true':undefined} data-m={mode} data-np={!hasPanel ? '' : undefined} data-s={error ? 'int' : undefined} style={{ transform: `translate(${(size.w - 1920 * scale) / 2}px,${(size.h - 1080 * scale) / 2}px) scale(${scale})` }}>
+  return <><main id="st" data-preview={hospital&&!authenticatedStaff?'true':undefined} data-stage={display?.nurse?'workflow':'welcome'} data-m={mode} data-np={!hasPanel ? '' : undefined} data-s={error ? 'int' : undefined} style={{ transform: `translate(${(size.w - 1920 * scale) / 2}px,${(size.h - 1080 * scale) / 2}px) scale(${scale})` }}>
     <header><div className="brand"><svg viewBox="0 0 40 34" fill="none" strokeWidth="3.5" strokeLinecap="round" aria-hidden="true"><path d="M3 9c10 0 10 16 17 16s9-16 17-16" stroke="#8EA0FF" /><path d="M3 25c10 0 10-16 17-16s9 16 17 16" stroke="#FFB86B" /></svg>ShiftWeave</div>
       <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div>{sourceOptions.enabled?<label className="pill">Data source <select aria-label="Hospital data source" value={hospital?'hospital':'epic'} disabled={busy||voice.enabled} onChange={e=>void switchSource(e.target.value as 'hospital'|'epic')}><option value="hospital" disabled={!sourceOptions.provisioned}>Simulation hospital</option><option value="epic">Epic sandbox / existing records</option></select></label>:<span className="pill">Medi · Voice simulation</span>}</header>
     <div id="lm">{display?.nurse && <Thread display={display} onTask={inspect} onHandoff={() => setDrawer('handoffs')} />}</div>

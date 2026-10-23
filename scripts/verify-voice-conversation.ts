@@ -111,6 +111,25 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     check('semantic discrepancy reads do not start a resolution action',()=>{assert.match(discrepancies.speech,/No unresolved discrepancy/);assert.equal(discrepancies.pending,null);});
     db.prepare("UPDATE conflicts SET status='UNRESOLVED' WHERE id='voice_conflict'").run();
     db.prepare("UPDATE tasks SET status='FLAGGED_CONFLICT' WHERE id=?").run(taskId);
+    const reviewEvents=(db.prepare('SELECT count(*) n FROM task_events').get() as any).n;
+    intent={intent:'RESOLVE',task_id:taskId,status:'IN_PROGRESS',note:'Verified it is in progress'};
+    const statusOnly=await say('I verified it is in progress');
+    check('verified status alone cannot become a generated review note',()=>{
+      const state=CheckpointService.getLatestCheckpoint(`voice:${session}`)?.statePayload.voice as any;
+      assert(statusOnly.pending&&!statusOnly.pending.ready);assert.equal(state.pending.finalStatus,'IN_PROGRESS');assert.equal(state.pending.note,null);
+    });
+    mode='chat';const smallTalk=await say('Can we take this slowly?');
+    check('conversational follow-up preserves the unfinished review',()=>assert(smallTalk.pending&&!smallTalk.pending.ready));
+    mode='intent';intent={intent:'CONFLICTS',detail:'GUIDANCE'};const guidance=await say('What do you need from me?');
+    check('review guidance uses backend requirements and preserves the verified status',()=>{assert.match(guidance.speech,/what you checked/);assert(guidance.pending&&!guidance.pending.ready);});
+    intent={intent:'RESOLVE',task_id:taskId,note:'checked transport note'};
+    const exactNote=await say('I checked the transport note');
+    check('note-only follow-up preserves exact human wording when the model drops articles',()=>{
+      const state=CheckpointService.getLatestCheckpoint(`voice:${session}`)?.statePayload.voice as any;
+      assert(exactNote.pending?.ready);assert.equal(state.pending.note,'I checked the transport note');
+      assert.equal((db.prepare('SELECT count(*) n FROM task_events').get() as any).n,reviewEvents);
+    });
+    await say('Cancel');
     intent={intent:'RESOLVE',task_id:taskId,status:'IN_PROGRESS',note:'I used start and finish timestamps to review both sources'};
     const review=await say('I used start and finish timestamps to review both sources');
     check('status words inside a structured review note cannot select another operation',()=>{
