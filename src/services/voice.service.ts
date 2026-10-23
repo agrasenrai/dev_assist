@@ -39,7 +39,9 @@ export const voiceIntentSchema = z.object({
   recipient_name: z.string().trim().min(1).max(150).optional(),
   source_nurse_name: z.string().trim().min(1).max(150).optional().describe('HANDOFF only: the nurse whose saved handoff is requested, distinct from the current speaker'),
   task_id: z.string().min(1).max(250).optional(),
+  task_name: z.string().trim().min(1).max(250).optional().describe('Task title spoken by the user; backend resolves it within the current nurse scope'),
   patient_id: z.string().min(1).max(250).optional(),
+  patient_name: z.string().trim().min(1).max(150).optional().describe('Patient name or room spoken by the user; never guess an ID'),
   handoff_id: z.string().min(1).max(250).optional(),
   epic_patient_id: z.string().regex(/^[A-Za-z0-9.-]+$/).max(250).optional(),
   status: z.enum(['PENDING','IN_PROGRESS','COMPLETED','CANCELLED','UNFINISHED','ALL']).optional(),
@@ -87,16 +89,18 @@ export class VoiceService {
 
   private static records(state: State) {
     if (!state.nurse || !state.shift) return { tasks: [] as Task[], candidates: [] as Task[], availableTasks: [] as Task[], handoffs: [] as Handoff[], conflicts: [] as ConflictRecord[], epicRecords: [] as ReturnType<typeof EpicWorkflowService.recordsForPatients> };
-    const all = db.prepare(`SELECT t.id, t.patient_id AS patientId, p.full_name AS patientName, p.room_number AS roomNumber, t.title,
-      t.status, t.priority, t.source_system AS source FROM tasks t JOIN patients p ON p.id = t.patient_id WHERE ${taskScope('t')}`).all() as Task[];
     const assigned = db.prepare(`SELECT task_id AS id FROM task_assignments WHERE nurse_id = ? AND shift_id = ?
       AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`).all(state.nurse.id, state.shift.id) as Array<{ id: string }>;
-    const tasks = all.filter(t => assigned.some(a => a.id === t.id));
     const handoffs = this.handoffs(state);
     const candidateIds = new Set(handoffs.filter(h => h.incomingId === state.nurse!.id && h.status !== 'FINALIZED')
       .flatMap(h => (JSON.parse(h.snapshot).carriedForwardIds as string[]).filter(id =>
         db.prepare(`SELECT id FROM task_assignments WHERE task_id = ? AND nurse_id = ? AND shift_id = ?
           AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`).get(id, h.outgoingId, h.shiftId))));
+    const ids=[...new Set([...assigned.map(a=>a.id),...candidateIds])];
+    const all = ids.length ? db.prepare(`SELECT t.id, t.patient_id AS patientId, p.full_name AS patientName, p.room_number AS roomNumber, t.title,
+      t.status, t.priority, t.source_system AS source FROM tasks t JOIN patients p ON p.id = t.patient_id
+      WHERE ${taskScope('t')} AND t.id IN (${ids.map(()=>'?').join(',')})`).all(...ids) as Task[] : [];
+    const tasks = all.filter(t => assigned.some(a => a.id === t.id));
     const candidates = all.filter(t => candidateIds.has(t.id) && !tasks.some(own => own.id === t.id));
     const visible = new Set([...tasks, ...candidates].map(t => t.id));
     return { tasks, candidates, availableTasks:state.dataSource==='hospital'?HospitalService.availableTasks(state.nurse.id,state.shift.id):[] as Task[], handoffs, conflicts: ConflictService.getUnresolvedConflicts().filter(c => visible.has(c.taskId)),
@@ -156,10 +160,10 @@ export class VoiceService {
     return this.turn(input,`Review handoff from nurse ${matches[0]!.id}`);
   }
 
-  static agentContext(sessionId: string) {
+  static agentContext(sessionId: string, includeDirectory=true) {
     const state = this.load(sessionId);
     const staff = currentStaff();
-    const directory = staffAuthRequired() && staff ? [{name:staff.name}] :
+    const directory = !includeDirectory ? [] : staffAuthRequired() && staff ? [{name:staff.name}] :
       db.prepare(`SELECT full_name AS name FROM nurses n WHERE ${nurseScope('n')} AND role IN ('STAFF_NURSE','CHARGE_NURSE') AND (CASE WHEN ?='hospital' THEN id LIKE 'hospital:%' ELSE id NOT LIKE 'hospital:%' END) ORDER BY full_name`).all(state.dataSource || 'existing');
     return {dataSource:state.dataSource,revision:state.revision,nurse:state.nurse,shift:state.shift,selectedTaskId:state.selectedTaskId,
       selectedPatientId:state.selectedPatientId,selectedHandoffId:state.selectedHandoffId,handoffSourceNurseId:state.handoffSourceNurseId,pending:state.pending,
@@ -199,6 +203,17 @@ export class VoiceService {
     if (!state.nurse) return 'Show my tasks'; // Existing identity gate; never expose records before selection.
     if (!state.shift) return 'Show my tasks';
     const records = this.records(state), visible = [...records.tasks,...records.candidates,...(intent.intent==='ASSIGN_SELF'?records.availableTasks:[])];
+    if(intent.task_name&&!intent.task_id){
+      const matches=visible.filter(t=>normal(t.title)===normal(intent.task_name!));
+      if(matches.length!==1)throw new Error('Which task do you mean? Please give the patient and task title.');
+      intent.task_id=matches[0]!.id;
+    }
+    if(intent.patient_name&&!intent.patient_id){
+      const matches=[...new Map(visible.filter(t=>normal(t.patientName)===normal(intent.patient_name!)||normal(t.roomNumber)===normal(intent.patient_name!.replace(/^room\s+/i,'')))
+        .map(t=>[t.patientId,t])).values()];
+      if(matches.length!==1)throw new Error('I couldn’t find that patient uniquely in your current view. Which patient do you mean?');
+      intent.patient_id=matches[0]!.patientId;
+    }
     const requestedTask = intent.task_id || (!state.pending?.ready ? state.pending?.taskIds[0] : undefined) || state.selectedTaskId;
     const task = requestedTask ? visible.find(t => t.id === requestedTask) : visible.length === 1 ? visible[0] : undefined;
     if (intent.task_id && !task) throw new Error('That task is outside your current view. Which assigned task do you mean?');
