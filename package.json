@@ -48,6 +48,8 @@
     "test:operations": "tsx scripts/verify-operational-sandbox.ts",
     "hospital:setup": "tsx scripts/setup-hospital.ts",
     "test:hospital": "tsx scripts/verify-hospital.ts",
+    "test:preview-questions-live": "tsx scripts/verify-preview-questions-live.ts",
+    "test:preview-guide": "tsx scripts/verify-preview-guide-browser.ts",
     "hospital:start": "tsx scripts/start-hospital.ts",
     "hospital:prepare": "tsx scripts/start-hospital.ts --prepare-only",
     "test:mcp-independent": "tsx scripts/verify-mcp-independent.ts",

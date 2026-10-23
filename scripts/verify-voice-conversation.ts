@@ -58,6 +58,7 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     const identifiedIndex=steps.findIndex(m=>m.toolName==='interpret_voice_request'&&JSON.parse(m.content).identificationComplete);
     if(intent?.intent==='IDENTIFY'&&identifiedIndex<0)return{toolCall:{toolName:'interpret_voice_request',arguments:intent}};
     const requestSteps=steps.slice(identifiedIndex+1);
+    if(intent?.intent==='HANDOFF'&&intent.source_nurse_name&&!requestSteps.some(m=>m.toolName==='interpret_voice_request'))return{toolCall:{toolName:'interpret_voice_request',arguments:intent}};
     if(!requestSteps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
     const result=requestSteps.find(m=>m.toolName==='interpret_voice_request');
     if(!result)return{toolCall:{toolName:'interpret_voice_request',arguments:identifiedIndex>=0?continuationIntent!:intent!}};
@@ -84,8 +85,15 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
       assert.equal(VoiceService.commandForIntent(input,{intent:'IDENTIFY',nurse_name:'Maya Test'}),'I am Maya Test');
       assert.throws(()=>VoiceService.commandForIntent(input,{intent:'IDENTIFY',nurse_name:'Nora Test'}),/Please give/);
     });
-    mode='chat';const feeling=await say('I am confused');
+    mode='chat';
+    const originalVersion=VoiceService.agentVersion;let recordVersions=0;
+    VoiceService.agentVersion=(id:string)=>{recordVersions++;return originalVersion.call(VoiceService,id);};
+    let feeling:any;
+    try{feeling=await say('I am confused');}finally{VoiceService.agentVersion=originalVersion;}
     check('feelings do not reset the selected nurse',()=>{assert.equal(feeling.nurse.id,'voice_maya');assert.match(feeling.speech,/one step/);});
+    check('general conversation does not load or fingerprint clinical context before inference',()=>{
+      assert.equal(recordVersions,0);assert(!lastMessages.some(m=>m.toolName==='read_voice_context'));
+    });
     mode='intent';intent={intent:'DRAFT',recipient_name:'Nora Test'};
     const beforeDrafts=(db.prepare('SELECT count(*) n FROM handoffs').get()as any).n;
     const negated=await say('Do not prepare a handoff for Nora Test');
@@ -156,7 +164,14 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
       'I cannot access the chart. I recommend a medication treatment.',
       'I cannot see it, but increase the medication dose.',
       'I cannot recommend treatment. Increase the medication dose.',
-      'I do not know; start the medication treatment.'
+      'I do not know; start the medication treatment.',
+      'I can recommend increasing the medication dose.',
+      'You can take 20 mg of medication.',
+      'James needs observation.',
+      'Rowan is 47.',
+      'James has HIV.',
+      'Rowan is diabetic.',
+      'James has a daughter.'
     ];
     const beforeUnsafeEvents=(db.prepare('SELECT count(*) n FROM task_events').get()as any).n;
     for(const viaTool of [false,true])for(const speech of rejectedReplies) {
@@ -170,8 +185,21 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     generatedReply={speech:'The patient has a latex allergy.',kind:'REFUSAL',viaTool:true,readFirst:true};
     await say('Please check again');
     check('reply kind and context-only reads do not authorize unsourced patient claims',()=>assert.equal(modelStatus(),'FAILED'));
+    generatedReply={speech:"That's not something I'm able to help with. Recommending treatment is for the clinical team, not me. I handle workflow coordination — tasks, handoffs, and patient record summaries.",kind:'REFUSAL',viaTool:true};
+    const refusalCalls=calls;const clinicalRefusal=await say('Recommend treatment for this patient');
+    check('clinical refusal renders an enforced boundary without a repair inference or advice',()=>{
+      assert.equal(modelStatus(),'SUCCESS');assert.equal(calls-refusalCalls,1);assert.match(clinicalRefusal.speech,/cannot recommend treatment/);
+      assert.match(clinicalRefusal.speech,/clinical team/);assert.equal(clinicalRefusal.pending,null);
+    });
     for(const speech of ["I'm sorry you're not feeling well. What would you like help with?",'Which patient do you mean?',
-      'I cannot recommend treatment. Please ask your clinical team.',"I don't have verified patient information."]) {
+      'I cannot recommend treatment. Please ask your clinical team.',
+      "I can't recommend treatment for this patient. Please consult your clinical team.",
+      "I'm not able to recommend treatment for your patient. Please speak with your care team.",
+      "That's outside what I'm able to do — recommending treatment is a clinical decision that needs to come from the care team, not me. I can pull up patient details, task notes, or handoff info if that would help.",
+      "That's not something I can do — recommending treatment is a clinical decision for the care team, not me. I can help with tasks, patient workflow info, or handoff notes if you need those.",
+      "I don't have verified patient information.",
+      'MCP is a protocol that lets an assistant discover and use tools.',
+      '2 + 2 = 4.']) {
       generatedReply={speech,kind:'CONVERSATION',viaTool:true};
       const accepted=await say('Can you help me?');
       check(`safe general reply remains available: ${speech}`,()=>{assert.equal(modelStatus(),'SUCCESS');assert.equal(accepted.speech,speech);});
@@ -183,6 +211,7 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
       assert.throws(()=>validateReply(fact,[fact],'No verified allergy records are available.'),/matching source evidence/);
       assert.throws(()=>validateReply(`${fact} I cannot see the chart. Increase the medication dose.`,[fact],fact),/Clinical advice/);
       assert.throws(()=>validateReply('Do not increase the medication dose.',[]),/Clinical advice/);
+      assert.throws(()=>validateReply("That's outside what I'm able to do — recommending treatment is a clinical decision for the care team, not me. You can take 20 mg of medication.",[]),/Clinical advice/);
     });
     check('source-backed patient headings and neutral Bedrock transitions pass without weakening fact validation',()=>{
       const source='You have 1 assigned task. Review transport for Dr. Rowan Demo is pending. Location not verified.';

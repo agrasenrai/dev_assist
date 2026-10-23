@@ -256,8 +256,7 @@ try {
   let semanticCalls=0;
   BedrockLLMProvider.prototype.decideNextStep=async(messages,tools,context)=>{
     semanticCalls++;assert.equal(context?.voiceWorkflow,true);assert(tools.some(t=>t.name==='read_voice_context'));
-    const index=messages.findLastIndex(m=>m.role==='user'),steps=messages.slice(index+1);
-    if(!steps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
+    assert(!messages.some(m=>m.toolName==='read_voice_context'),'Model must select an intent before clinical context is loaded');
     return{toolCall:{toolName:'interpret_voice_request',arguments:{intent:'TASKS',status:'ALL',render_backend:true,introduction:"Here's what I found."}}};
   };
   try{

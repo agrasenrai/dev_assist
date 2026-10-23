@@ -31,10 +31,11 @@ const replyTool: MCPToolDefinition = {name:'reply_to_nurse',description:
   inputSchema:z.toJSONSchema(replySchema) as MCPToolDefinition['inputSchema']};
 type Display = ReturnType<typeof VoiceService.read>;
 type SemanticState = {requestHash:string;messages:AgentMessage[];pendingTool?:{name:string;args:Record<string,unknown>;id:string;command?:string};
-  action?:{display:Display;intent:string};plannedIntent?:VoiceIntent;plannedIntroduction?:string;identificationRevision?:number;prefetchedRevision?:number;version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number;intentRepairs?:number};
+  action?:{display:Display;intent:string};plannedIntent?:VoiceIntent;plannedIntroduction?:string;identificationRevision?:number;prefetchedRevision?:number;recordsRead?:boolean;hospitalRefreshed?:boolean;version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number;intentRepairs?:number};
 const replyErrors=new Set(['Model cannot claim a workflow action','Clinical advice is outside the voice workflow','Record answer lacks matching source evidence',
   'Record claims must be contained in source evidence','Record answer introduced an unsupported number','Record answer introduced an unsupported status',
   'Record answer omitted source uncertainty','Record claims require a current backend result','Read operation required before a record answer']);
+const clinicalBoundarySpeech='I cannot recommend treatment. I cannot modify clinical orders. Please ask your clinical team.';
 function sourceFacts(source: string) {return source.split(/(?<=[!?])\s+|(?<!\b(?:Dr|Mr|Mrs|Ms|Prof|Sr|Jr)\.)(?<=\.)\s+/).filter(Boolean).map((text,index)=>({id:`fact:${index}`,text}));}
 export function composeRecordReply(speech:string,ids:string[],source:string) {
   const facts=sourceFacts(source), selected=ids.map(id=>facts.find(f=>f.id===id));
@@ -68,23 +69,26 @@ export function validateReply(speech: string, evidence: string[], source?: strin
   if (source && (!evidence.length || evidence.some(quote=>!source.includes(quote)||!speech.includes(quote))))
     throw new Error('Record answer lacks matching source evidence');
   const generated = source ? evidence.reduce((text,quote)=>text.split(quote).join(''),speech) : speech;
-  const clinicalTopics = '(?:diagnos(?:is|es)|treatments?|treatment recommendations|medications?|medication changes|doses?|prescriptions?|medical advice|clinical advice)';
-  const refusal = new RegExp(`^(?:i|we) (?:cannot|can't|do not|don't|will not|won't|am unable to|are unable to) (?:diagnose|prescribe|recommend|provide|give|administer|change|modify|adjust)(?: (?:a |any |the |your )?${clinicalTopics}(?: (?:or|and) (?:a |any |the |your )?${clinicalTopics})*)?[.!?]?$`,'i');
+  const clinicalTopics = '(?:diagnos(?:is|es)|treatments?|treatment recommendations|clinical orders?|medications?|medication changes|doses?|prescriptions?|medical advice|clinical advice)';
+  const refusal = new RegExp(`^(?:i|we|i'm|we're) (?:cannot|can't|do not|don't|will not|won't|am unable to|are unable to|am not able to|are not able to|not able to|unable to) (?:diagnose|prescribe|recommend|provide|give|administer|change|modify|adjust|offer|make)(?: (?:a |any |the |your |specific |personalized )?${clinicalTopics}(?: (?:or|and) (?:a |any |the |your |specific )?${clinicalTopics})*)?(?: for (?:you|your patient|this patient|a patient|patients))?[.!?]?$`,'i');
+  const referral=/^(?:please )?(?:ask|consult|contact|speak (?:to|with)|talk (?:to|with)|check with) (?:your|the|a) (?:clinical team|care team|medical team|doctor|physician|qualified clinician|healthcare professional)(?: (?:for|about) (?:treatment|medical advice|clinical advice|treatment recommendations|a diagnosis))?[.!?]?$/i;
+  const clinicalBoundary=/^(?:recommending treatment|making a diagnosis|changing clinical orders) is a clinical decision (?:that needs to come from|for) (?:your|the) (?:clinical|care|medical) team,? not me[.!?]?$/i;
   const clarification = /^(?:(?:which|what) (?:patient|task|handoff)(?: do you mean| are you referring to| would you like to discuss)|what (?:is your (?:registered )?nurse name|would you like (?:me )?to check)|please (?:give|tell) me (?:your (?:registered )?nurse name|the patient and task title))[.!?]?$/i;
   const unavailable = /^i (?:don't|do not) have (?:verified|current|available) (?:patient|task|handoff|clinical|medical) (?:information|records|data)[.!?]?$/i;
-  for (const clause of generated.replace(/[’]/g,"'").split(/(?<=[.!?])\s+|[;\n]|\b(?:but|however|instead)\b/i).map(text=>text.trim()).filter(Boolean)) {
+  for (const clause of generated.replace(/[’]/g,"'").split(/(?<=[.!?])\s+|[;\n—–]|\b(?:but|however|instead)\b/i).map(text=>text.trim()).filter(Boolean)) {
     // Exceptions match a complete refusal/clarification, never an arbitrary suffix.
     const generalFriendly = /^(?:i(?:'m| am| was| can| could| will| would| assist| help| coordinate| support| manage| track| look| check| provide| work| serve)|my\s+(?:\w+\s+)*(?:name|role|purpose|job|goal|task|focus|function|responsibility)\b|i'm designed to|i was built to|i am built to|i'm here to|i am here to|as (?:your|an) (?:assistant|companion|system)|to (?:get started|begin|proceed|access|check|see|view|review|pull|use)|once you|when you|whenever you(?:'re| are)?|if (?:you|you'd|you would|we|someone)|for (?:example|instance)|such as|things like|like\b|you(?:'re| are| can| could| may| might|'ll| will| have only to)|feel free|please (?:ask|tell|share|let|give)|ask me|you'll be able to|just (?:tell|share|let|give|ask|say|provide|speak|call)|simply (?:tell|share|let|give|ask|say|provide)|(?:tell|share|give|let)\s+(?:me|us)|let (?:me|us) know|or\s+(?:you|if|tell|share|let|simply|just)|so\s+(?:i|we|you)\s+can|shiftweave (?:is|helps|supports|coordinates|tracks|provides|was|aims)|the (?:system|platform|app|assistant) (?:is|helps|supports|tracks)|this (?:app|system|project|assistant|tool) (?:is|helps|supports)|how (?:can|is|are|would|do)|what (?:can|would|is|are|kind|do)|which (?:record|task|patient|feature)|is there (?:anything|a)|would you like|do you (?:want|need)|can i (?:help|assist)|shall i|should i|hello|hey+|hi+|good (?:morning|afternoon|evening|day)|welcome|ready to help|let(?:'s| us) (?:focus|get|know|see)|take care|you're welcome|i'm doing well|we are focused|of course|certainly|sure\b|sure thing|glad to help|happy to help|yes|no problem|no worries|anytime|here (?:is|are)|there(?:'s| is| are)|nothing (?:was|were|has|have)|no (?:changes?|records?|actions?)\b|that(?:'s| is| sounds) (?:fine|okay|alright|good|great|what|how))\b/i;
-    if (refusal.test(clause)) continue;
-
-    if (clarification.test(clause) || unavailable.test(clause) || generalFriendly.test(clause)) continue;
+    if (refusal.test(clause) || referral.test(clause) || clinicalBoundary.test(clause)) continue;
     if (/\b(?:recommend\w*|prescrib\w*|administer\w*|increas\w*|decreas\w*|adjust\w*|chang\w*|stop\w*|start\w*|tak(?:e|ing))\b[\s\S]*\b(?:dos(?:e|age)\w*|medicat\w*|treat\w*|prescription\w*|mg)\b/i.test(clause))
       throw new Error('Clinical advice is outside the voice workflow');
+    if (clarification.test(clause) || unavailable.test(clause) || generalFriendly.test(clause)) continue;
     if (!source && (
       /\b(?:patients?|tasks?|handoffs?|charts?|records?|allerg\w*|diagnos\w*|conditions?|medicat\w*|treat\w*|dosage\w*|doses?|prescriptions?|vitals?|temperature|blood pressure|oxygen|stable|unstable|admi(?:ssion|tted)|discharg\w*|rooms?|beds?|completed|pending|in progress|cancelled|canceled|assigned|he|she|his|her|their|they)\b/i.test(clause)
-      || /\d/.test(clause)
       || /\b(?:you|i|we|it|this|that)\s+(?:has|have|had)\b/i.test(clause)
-      || /\b(?!(?:i|we|you|it|that|this|there|here|what|who|which|how|the|a|an)\b)[\p{L}'-]+(?:\s+[\p{L}'-]+){0,3}\s+(?:is|was|has|had|seems|appears|looks|needs|takes|received)\b/iu.test(clause)
+      || (!/\bis (?:a|an) (?:protocol|standard|interface|database|language|tool|format|method|system|technology|framework|concept|process|way)\b/i.test(clause)
+        && /\b(?!(?:i|we|you|it|that|this|there|here|what|who|which|how|the|a|an)\b)[\p{L}'-]+(?:\s+[\p{L}'-]+){0,3}\s+(?:is|was|has|had|seems|appears|looks|needs|takes|received)\b/iu.test(clause))
+      || /\b(?:needs|received|requires)\s+(?:care|observation|monitoring|therapy)\b|\b(?:aged|age|weighs)\s+\d|\b\d+\s*(?:mg|mmhg|bpm|years? old)\b/i.test(clause)
+      || /\b[\p{L}'-]+\s+(?:is|was)\s+\d+\b/iu.test(clause)
     )) throw new Error('Record claims require a current backend result');
   }
   if (source) {
@@ -105,6 +109,17 @@ export function validateReply(speech: string, evidence: string[], source?: strin
   }
 }
 
+async function refreshHospitalContext(input:VoiceInput,endpoint:string) {
+  const context=VoiceService.agentContext(input.session_id,false);
+  if(context.dataSource!=='hospital'||!context.nurse||!context.shift)return;
+  const bridge=new MCPClientBridge(endpoint);
+  try {
+    await bridge.initialize();
+    const result=await bridge.callTool('refresh_hospital_records',{nurse_id:context.nurse.id,shift_id:context.shift.id,idempotency_key:input.idempotency_key});
+    if(result.isError||JSON.parse(result.content[0]!.text).status==='FAILED')throw new Error('Simulation hospital refresh unavailable');
+  }finally{await bridge.close();}
+}
+
 async function runConversation(input: VoiceInput, endpoint: string) {
   const provider = getLLMProvider();
   const bridge = new MCPClientBridge(endpoint);
@@ -113,13 +128,20 @@ async function runConversation(input: VoiceInput, endpoint: string) {
   const checkpoint = CheckpointService.getLatestCheckpoint(key);
   let step = checkpoint?.stepIndex || 0;
   let state = checkpoint?.statePayload.semantic as SemanticState | undefined;
-  const context = VoiceService.agentContext(input.session_id);
+  const context = VoiceService.agentContext(input.session_id,false);
   const actorId = currentStaff()?.id || context.nurse?.id || 'voice-demo';
   if(state && state.requestHash!==requestHash) {provider.close?.();throw new Error('Conversation request key was reused for a different request');}
   if(!state && context.revision!==input.expected_revision) {provider.close?.();throw new Error('Voice session changed. Refresh before speaking again.');}
   state ||= {requestHash,messages:[...context.messages.map(m=>({role:m.role==='nurse'?'user' as const:'assistant' as const,content:m.text})),
-    {role:'user',content:input.utterance}],version:VoiceService.agentVersion(input.session_id),read:false};
+    {role:'user',content:input.utterance}],version:`session:${context.revision}`,recordsRead:false,read:false};
   const current = state;
+  const version=()=>current.recordsRead===false?`session:${VoiceService.agentContext(input.session_id,false).revision}`:VoiceService.agentVersion(input.session_id);
+  const prepareRecords=async(intent:VoiceIntent)=>{
+    if(!['IDENTIFY','END'].includes(intent.intent)&&!current.hospitalRefreshed){
+      await refreshHospitalContext(input,endpoint);current.hospitalRefreshed=true;
+    }
+    current.recordsRead=true;current.version=VoiceService.agentVersion(input.session_id);
+  };
   const persist = (name:string) => CheckpointService.saveCheckpoint(key,++step,name,{semantic:current},`${key}:step:${step}`);
   const finish = () => {
     const fromRevision=current.action?.display.revision??current.identificationRevision;
@@ -145,7 +167,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
         if(!current.pendingTool&&current.plannedIntent) {
           const intent=current.plannedIntent;
           let command:string;
-          try {command=VoiceService.commandForIntent(input,intent);}
+          try {await prepareRecords(intent);command=VoiceService.commandForIntent(input,intent);}
           catch(error) {
             const message=error instanceof Error?error.message:'';
             if(/^(?:Please give|More than one nurse|I couldn’t find that nurse|That task is outside|Which task|I couldn’t find that patient|That handoff is outside|What should I write|No changes were made)/.test(message)) {
@@ -159,21 +181,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
           delete current.plannedIntent;persist('VOICE_PLANNED_REQUEST');
         }
         if(!current.pendingTool) {
-          const {messages,...scope} = VoiceService.agentContext(input.session_id);
-          // The host can perform this read safely without asking the model to
-          // spend an inference turn choosing it. The actual MCP result and tool
-          // IDs are still checkpointed; only interpret_voice_request can ground
-          // an answer or stage an operation.
-          if(scope.nurse&&!current.action&&current.prefetchedRevision!==scope.revision){
-            const result=await bridge.callTool('get_voice_display',{session_id:input.session_id});
-            if(result.isError)throw new Error('Current voice records unavailable');
-            const display=JSON.parse(result.content[0]!.text) as Display;
-            const id=`${key}:context:${scope.revision}`;
-            current.messages.push({role:'assistant',content:'',toolCall:{toolName:'read_voice_context',arguments:{}},toolCallId:id},
-              {role:'tool',toolName:'read_voice_context',toolCallId:id,content:JSON.stringify(recordContext(display))});
-            current.prefetchedRevision=scope.revision;current.version=VoiceService.agentVersion(input.session_id);
-            persist('VOICE_CONTEXT_PREFETCHED');
-          }
+          const {messages,...scope} = VoiceService.agentContext(input.session_id,false);
           const decisionStarted=Date.now();
           const result = await provider.decideNextStep(current.messages,tools,{voiceWorkflow:true,voiceSinglePass:true,voiceReplyOnly:Boolean(current.action),scope:{...scope,currentUtterance:input.utterance,identityResolved:current.identificationRevision!==undefined}});
           AuditService.log({actorType:'AGENT',actorId,action:'LLM:VOICE_DECISION',targetResource:`voice:${input.session_id}`,outcome:'SUCCESS',
@@ -186,7 +194,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             let command: string | undefined;
             if(call.toolName==='interpret_voice_request') {
               if(current.identificationRevision!==undefined && call.arguments.intent==='IDENTIFY') throw new Error('Nurse identification is already complete for this request');
-              try {command=VoiceService.commandForIntent(input,baseIntent(call.arguments).intent);}
+              try {const intent=baseIntent(call.arguments).intent;await prepareRecords(intent);command=VoiceService.commandForIntent(input,intent);}
               catch(error) {
                 if(error instanceof z.ZodError) throw error;
                 const message=error instanceof Error?error.message:'';
@@ -225,7 +233,7 @@ async function runConversation(input: VoiceInput, endpoint: string) {
           const result=await bridge.callTool('get_voice_display',{session_id:input.session_id});
           if(result.isError) throw new Error('Current voice records unavailable');
           const display=JSON.parse(result.content[0]!.text) as Display;
-          output=recordContext(display);current.read=true;current.version=VoiceService.agentVersion(input.session_id);
+          output=recordContext(display);current.read=true;current.recordsRead=true;current.version=VoiceService.agentVersion(input.session_id);
         } else if(pending.name==='interpret_voice_request') {
           const plan=baseIntent(pending.args),intent=plan.intent;
           // This private child receipt makes a crash between service commit and model checkpoint safe to retry.
@@ -269,8 +277,15 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             const reply=replySchema.parse(pending.args);
             if(reply.kind==='RECORDS'&&!current.action) throw new Error('Read operation required before a record answer');
             if(current.action&&reply.kind!=='RECORDS')throw new Error('Record answer lacks matching source evidence');
-            const composed=reply.kind==='RECORDS'?composeRecordReply(reply.speech,reply.evidence,current.action!.display.speech):{speech:reply.speech,evidence:reply.evidence};
-            validateReply(composed.speech,composed.evidence,reply.kind==='RECORDS'?current.action?.display.speech:undefined);
+            let composed=reply.kind==='RECORDS'?composeRecordReply(reply.speech,reply.evidence,current.action!.display.speech):{speech:reply.speech,evidence:reply.evidence};
+            try {validateReply(composed.speech,composed.evidence,reply.kind==='RECORDS'?current.action?.display.speech:undefined);}
+            catch(error){
+              if(reply.kind!=='REFUSAL'||current.action||reply.evidence.length||!(error instanceof Error)||error.message!=='Clinical advice is outside the voice workflow')throw error;
+              // A model-selected refusal cannot authorize clinical advice. Render the
+              // enforced boundary instead of repeatedly asking it to reword that advice.
+              // Unsourced record claims still fail their independent evidence check.
+              composed={speech:clinicalBoundarySpeech,evidence:[]};validateReply(composed.speech,[]);
+            }
             current.speech=composed.speech;current.status='SUCCESS';output={delivered:true};
           } catch(error) {
 
@@ -279,7 +294,8 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             if((current.replyRepairs||0)>=1)throw error;
             current.replyRepairs=(current.replyRepairs||0)+1;
             current.messages.push({role:'tool',toolName:pending.name,toolCallId:pending.id,content:JSON.stringify({error:error instanceof z.ZodError?'INVALID_REPLY_SCHEMA':reason,
-              instruction:'Reply again using fact IDs from the last operation. Put {{fact:N}} placeholders in speech and matching fact:N IDs in evidence. Do not copy or paraphrase facts. Outside placeholders use only a short neutral phrase such as "Here is what I found." No clinical or priority judgments. Do not call another operation.'})});
+              instruction:current.action?'Reply again using fact IDs from the last operation. Put {{fact:N}} placeholders in speech and matching fact:N IDs in evidence. Do not add clinical or priority judgments. Do not call another operation.':
+                'Answer the current user message naturally with empty evidence. Do not use fact IDs or answer patient facts. For treatment, diagnosis or order-change requests, clearly say you cannot recommend treatment or change clinical orders and ask the user to consult their clinical team. A refusal must not include advice. Do not request records for general conversation.'})});
             delete current.pendingTool;persist('VOICE_REPLY_REJECTED');continue;
           }
         }
@@ -290,10 +306,10 @@ async function runConversation(input: VoiceInput, endpoint: string) {
         if(current.speech) break;
       }
       if(!current.speech) throw new Error('Voice model step budget reached');
-      if(current.version!==VoiceService.agentVersion(input.session_id)) throw new Error('Source records changed during the answer');
+      if(current.version!==version()) throw new Error('Source records changed during the answer');
     } catch(error) {
 
-      const changed=current.version!==VoiceService.agentVersion(input.session_id);
+      const changed=current.version!==version();
       const reason=error instanceof Error?error.message:'';
       current.failureCode=changed?'SOURCE_CHANGED':error instanceof z.ZodError?'INVALID_SCHEMA':replyErrors.has(reason)?reason:
         reason==='Record reply must provide source evidence'?'RECORD_REPLY_NEEDS_EVIDENCE':'MODEL_OR_TOOL_UNAVAILABLE';
@@ -333,7 +349,7 @@ export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
       return JSON.parse(receipt.response_json);
     }
     const command = VoiceService.commandText(input.utterance);
-    const sourceDisplay=VoiceService.read(input.session_id);
+    const sourceDisplay=VoiceService.agentContext(input.session_id,false);
     if(sourceDisplay.dataSource==='hospital') {
       if(/\bepic\b/i.test(command)) {
         succeeded=true;return VoiceService.saveAssistantTurn(input,'You are using the synthetic hospital. Select Epic sandbox to use Epic records.');
@@ -342,7 +358,9 @@ export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
       // Reconcile before a confirmation too. The version check excludes only refresh
       // timestamps, so actual changed records still invalidate the proposed action.
       const passive=(!command&&/\bmedi\b/i.test(input.utterance))||/^(?:cancel|no|stop|never mind|no cancel)[.! ]*$/i.test(command);
-      if(sourceDisplay.nurse&&sourceDisplay.shift&&!passive) {
+      const needsRefresh=(process.env.LLM_PROVIDER||'mock').toLowerCase()==='mock'||
+        /^(?:yes|confirm|yes confirm|confirm it|yes please|refresh hospital(?: records| patients)?|sync hospital(?: records| patients)?)[.! ]*$/i.test(command);
+      if(sourceDisplay.nurse&&sourceDisplay.shift&&!passive&&needsRefresh) {
         const bridge=new MCPClientBridge(endpoint);
         try {
           await bridge.initialize();

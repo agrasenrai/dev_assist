@@ -6,6 +6,7 @@ import type { VoiceDisplay, VoiceTask } from '../voice-types.js';
 import type { AuditLogItem } from '../types.js';
 import { EpicNoteReview } from './EpicNoteReview.js';
 import { ChaosControlBar } from './ChaosControlBar.js';
+import { PreviewQuestionGuide } from './PreviewQuestionGuide.js';
 import '../one-thread.css';
 
 type Drawer = 'records' | 'tasks' | 'handoffs' | 'history' | 'recovery' | null;
@@ -107,10 +108,11 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
   const title = display?.pending ? 'Human confirmation' : display?.focus === 'conflicts' ? 'Documentation review' : handoff ? 'Shift handoff' : 'Your shift context';
   const hasPanel = Boolean(display?.nurse || error);
   const inspect = (task: VoiceTask) => { submit(`Explain task ${task.id}`); };
-  return <><main id="st" data-m={mode} data-np={!hasPanel ? '' : undefined} data-s={error ? 'int' : undefined} style={{ transform: `translate(${(size.w - 1920 * scale) / 2}px,${(size.h - 1080 * scale) / 2}px) scale(${scale})` }}>
+  return <><main id="st" data-preview={hospital&&!authenticatedStaff?'true':undefined} data-m={mode} data-np={!hasPanel ? '' : undefined} data-s={error ? 'int' : undefined} style={{ transform: `translate(${(size.w - 1920 * scale) / 2}px,${(size.h - 1080 * scale) / 2}px) scale(${scale})` }}>
     <header><div className="brand"><svg viewBox="0 0 40 34" fill="none" strokeWidth="3.5" strokeLinecap="round" aria-hidden="true"><path d="M3 9c10 0 10 16 17 16s9-16 17-16" stroke="#8EA0FF" /><path d="M3 25c10 0 10-16 17-16s9 16 17 16" stroke="#FFB86B" /></svg>ShiftWeave</div>
       <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div>{sourceOptions.enabled?<label className="pill">Data source <select aria-label="Hospital data source" value={hospital?'hospital':'epic'} disabled={busy||voice.enabled} onChange={e=>void switchSource(e.target.value as 'hospital'|'epic')}><option value="hospital" disabled={!sourceOptions.provisioned}>Simulation hospital</option><option value="epic">Epic sandbox / existing records</option></select></label>:<span className="pill">Medi · Voice simulation</span>}</header>
     <div id="lm">{display?.nurse && <Thread display={display} onTask={inspect} onHandoff={() => setDrawer('handoffs')} />}</div>
+    {hospital&&!authenticatedStaff&&display&&<PreviewQuestionGuide display={display} onChoose={question=>{setInput(question);inputRef.current?.focus();}}/>}
     {hasPanel && <section id="pn" className="in" data-t={error || display?.conflicts.length ? 'ro' : handoff?.status === 'FINALIZED' ? 'ok' : 'dy'} aria-label="Current workflow context">
       <div className="t">{error ? 'Request unavailable' : title}</div>
       <h1 className="h">{error ? 'No success claimed' : display?.pending ? (display.pending.ready ? 'Review, then confirm' : 'Your verification is needed') : display?.focus === 'conflicts' ? (conflict ? `${conflict.patientName || 'Patient'} · records disagree` : 'No unresolved discrepancies') : handoff ? `${handoff.outgoingName} → ${handoff.incomingName}` : selected ? selected.patientName : `${display?.nurse?.name} · ${display?.shift?.unit || 'No active shift'}`}</h1>

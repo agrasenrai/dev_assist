@@ -5,6 +5,7 @@ export interface VoiceDisplay {
   dataSource?: 'existing'|'hospital'|'epic';
   revision: number;
   nurse: { id: string; name: string; department: string } | null;
+  availableNurses?: Array<{id:string;name:string;badge:string;unit:string;assignedTasks:number}>;
   shift: { id: string; unit: string; type: string; start: string; end: string } | null;
   speech: string; focus: 'tasks' | 'conflicts' | 'handoff';
   selectedTaskId: string | null; selectedHandoffId: string | null;

@@ -67,3 +67,19 @@ footer{position:absolute;left:56px;right:56px;top:1044px;text-align:center;color
 .voice-entry-error{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9;padding:10px 16px;border-radius:12px;background:#141632;color:#ffb4c1;font:14px/1.5 var(--sa);max-width:calc(100vw - 32px)}.voice-entry-error a{color:#ffb86b}
 #st #usr{height:auto;min-height:28px;max-height:64px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}#st #ast{max-height:120px}
 .voice-microphone span{top:auto;bottom:calc(100% + 4px);border-radius:8px;background:#141632}.voice-microphone p{bottom:calc(100% + 30px)}
+
+/* Readable nurse transcript and an optional guide scoped to the synthetic voice preview. */
+#st #usr{font-size:30px;line-height:1.35;font-weight:600;color:#ffe0b5;min-height:42px;max-height:96px;padding:4px 0 10px}
+#st #talk{top:750px;height:200px;display:flex;flex-direction:column;gap:8px}
+#st #ast{flex:1;min-height:64px;max-height:150px}
+#st #in{font-size:26px}
+#st[data-preview=true] #lm{width:1400px;overflow:hidden}
+#st[data-preview=true] #pn{left:750px}
+#preview-guide{position:absolute;top:112px;right:48px;width:420px;max-height:610px;overflow:auto;z-index:1;padding:22px;background:#12142bf5;border:1px solid #464b7c;border-radius:24px;scrollbar-width:thin;color:var(--tx)}
+#preview-guide h2{font:500 32px var(--se);margin-bottom:10px}
+#preview-guide p{font:400 21px/1.45 var(--sa);color:#d1d3e9;margin:10px 0 16px}
+#preview-guide details{border-top:1px solid var(--ln);padding:12px 0}
+#preview-guide summary{font-size:23px;font-weight:600;cursor:pointer;color:#ffcc91}
+#preview-guide button{display:block;width:100%;text-align:left;font:400 23px/1.4 var(--sa);color:#f2eee6;background:#202442;border:1px solid #464b7c;border-radius:12px;padding:10px 12px;margin-top:10px;cursor:pointer}
+#preview-guide button:hover{background:#30375f}#preview-guide button:focus-visible,#preview-guide summary:focus-visible{outline:3px solid var(--dy);outline-offset:2px}
+#preview-guide a{font-size:21px;color:#b9c4ff}
