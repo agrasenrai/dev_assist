@@ -11,6 +11,7 @@ export interface VoiceDisplay {
   pending: { prompt: string; ready: boolean; expiresAt: number } | null;
   messages: Array<{ role: 'nurse' | 'assistant'; text: string }>;
   tasks: VoiceTask[]; candidates: VoiceTask[];
+  availableTasks?: VoiceTask[];
   handoffs: Array<{ id: string; incomingName: string; outgoingName: string; status: string; summary: string }>;
   conflicts: Array<{ id: string; taskId: string; patientName?: string; patientRoom?: string;
     systemAName: string; systemAVal: string; systemBName: string; systemBVal: string }>;

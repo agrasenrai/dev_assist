@@ -132,6 +132,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
       <button className="btn" disabled={busy || !display?.nurse} onClick={() => submit('Ask assistant, summarize my shift')}>Ask assistant</button>
       <button className="btn" disabled={busy || !display?.nurse} onClick={() => submit(hospital?'Refresh hospital records':'Sync Epic patients')}>{hospital?'Refresh hospital records':'Sync Epic patients'}</button>
       <button className="btn" onClick={() => { setDrawer('tasks'); setTools(false); }}>Tasks & discrepancies</button>
+      {hospital&&<button className="btn" disabled={busy||!display?.nurse} onClick={()=>submit('Show available tasks')}>Available tasks</button>}
       <button className="btn" onClick={() => { setDrawer('handoffs'); setTools(false); }}>Handoffs & note review</button>
       <button className="btn" onClick={() => { setDrawer('records'); setTools(false); }}>Patient source records</button>
       <button className="btn" onClick={() => { setDrawer('history'); setTools(false); }}>Conversation history</button>
@@ -159,6 +160,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
         {display?.conflicts.map(c => { const task = tasks.find(t => t.id === c.taskId); return <article key={c.id}><h3>{c.patientName} · documentation discrepancy</h3><p>{c.systemAName}: {c.systemAVal}</p><p>{c.systemBName}: {c.systemBVal}</p>
           <label>Human verification note<textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Enter what you actually verified; no note is prefilled" /></label>
           <div className="bt">{['in progress', 'completed', 'cancelled'].map(status => <button className="btn" key={status} disabled={busy || !note.trim() || !task} onClick={() => { submit(`Resolve discrepancy for task ${task!.id} ${status} because ${note}`); setDrawer(null); }}>Stage {status}</button>)}</div><small>Stages a proposal; explicit confirmation is still required.</small></article>; })}
+        {hospital&&Boolean(display?.availableTasks?.length)&&<><h3>Available unassigned tasks</h3>{display?.availableTasks?.map(t=><article key={t.id}><h3>{t.patientName} · {t.roomNumber}</h3><p>{t.title}</p><button className="btn" disabled={busy} onClick={()=>{submit(`Assign task ${t.id} to me`);setDrawer(null);}}>Review assignment to me</button></article>)}</>}
         {Boolean(display?.candidates.length) && <button className="btn p" disabled={busy} onClick={() => { submit('Accept all handoff tasks'); setDrawer(null); }}>Review custody acceptance</button>}</>}
       {drawer === 'records' && <>{!display?.epicRecords?.length && <p>No patient snapshots returned for this view. Refresh after introducing yourself.</p>}{display?.epicRecords?.map(r => <article key={r.patientId}><h3>{r.name} · {r.status}</h3><p>Patient/{r.epicPatientId} · Retrieved {r.retrievedAt}</p>{r.error && <p className="err">Refresh error: {r.error}. Retained data may be stale.</p>}
         {Object.entries(r.snapshot.sections).map(([name, section]) => <p key={name}>{name}: {section.status} · {section.resources.length} records {section.error || section.warnings.join('; ')}</p>)}

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "nurses": [
     {
       "id": "hospital:seema",
@@ -57,6 +57,47 @@
       "title": "Verify receiving team contact",
       "status": "COMPLETED",
       "category": "CONSULT"
+    },
+    {
+      "id": "jordan-roster",
+      "patient": "sw-taylor",
+      "nurse": "hospital:jordan",
+      "title": "Review receiving team roster",
+      "status": "PENDING",
+      "category": "CONSULT"
+    },
+    {
+      "id": "welcome-pack",
+      "patient": "sw-rowan",
+      "title": "Check patient information pack",
+      "status": "PENDING",
+      "category": "DISCHARGE_PREP",
+      "pool_custodian": "hospital:reema"
+    },
+    {
+      "id": "transport-contact",
+      "patient": "sw-casey",
+      "title": "Verify transport contact number",
+      "status": "PENDING",
+      "category": "DISCHARGE_PREP",
+      "pool_custodian": "hospital:reema"
+    },
+    {
+      "id": "documentation-review",
+      "patient": "sw-rowan",
+      "nurse": "hospital:jordan",
+      "title": "Review transport documentation",
+      "status": "PENDING",
+      "category": "CONSULT"
+    }
+  ],
+  "conflicts": [
+    {
+      "task": "documentation-review",
+      "firstSource": "Transport task record",
+      "firstValue": "PENDING",
+      "secondSource": "Shift coordination note",
+      "secondValue": "IN_PROGRESS"
     }
   ]
 }

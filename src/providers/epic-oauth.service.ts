@@ -50,7 +50,8 @@ export class EpicOAuthService {
     const fhirBaseUrl = process.env.EPIC_FHIR_BASE_URL || 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
     const privateKeyPath = process.env.PRIVATE_KEY_PATH || './keys/private_key.pem';
     const privateKeyPassphrase = process.env.PRIVATE_KEY_PASSPHRASE;
-    const keyId = process.env.EPIC_KID || '691586d6-d0fe-4efc-800d-d5316d69128c';
+    const keyId = process.env.EPIC_KID;
+    if(!keyId)throw new Error('EPIC_KID is not configured in server environment');
 
     if (!clientId) {
       throw new Error('EPIC_CLIENT_ID is not configured in server environment');

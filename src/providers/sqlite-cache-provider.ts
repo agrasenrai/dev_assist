@@ -2,6 +2,7 @@ import { db } from "../db/connection.js";
 import type { IEHRProvider, Patient, Task, TaskEvent, TaskStatus } from "./types.js";
 import { MutationService } from "../services/mutation.service.js";
 import { randomUUID } from "crypto";
+import { patientScope,taskScope } from '../services/source-policy.js';
 
 export class SQLiteCacheProvider implements IEHRProvider {
   readonly providerId = "sqlite-edge-cache";
@@ -27,7 +28,7 @@ export class SQLiteCacheProvider implements IEHRProvider {
       JOIN tasks t ON t.patient_id = p.id
       JOIN task_assignments ta ON ta.task_id = t.id
       JOIN shifts s ON s.id = ta.shift_id
-      WHERE s.unit_id = ?
+      WHERE s.unit_id = ? AND ${patientScope('p')}
       ORDER BY p.room_number ASC
     `;
     const rows = db.prepare(query).all(unitId) as Patient[];
@@ -44,7 +45,7 @@ export class SQLiteCacheProvider implements IEHRProvider {
       FROM tasks t
       JOIN task_assignments ta ON ta.task_id = t.id
       JOIN patients p ON p.id = t.patient_id
-      WHERE ta.nurse_id = ? AND ta.shift_id = ? AND ta.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')
+      WHERE ta.nurse_id = ? AND ta.shift_id = ? AND ta.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD') AND ${taskScope('t')}
       ORDER BY t.scheduled_time ASC
     `;
     return db.prepare(query).all(nurseId, shiftId) as Task[];
@@ -59,8 +60,8 @@ export class SQLiteCacheProvider implements IEHRProvider {
              ta.nurse_id AS assignedNurseId, t.created_at AS createdAt, t.updated_at AS updatedAt
       FROM tasks t
       JOIN patients p ON p.id = t.patient_id
-      LEFT JOIN task_assignments ta ON ta.task_id = t.id
-      WHERE t.id = ?
+      LEFT JOIN task_assignments ta ON ta.task_id = t.id AND ta.transfer_status IN ('ACTIVE','CARRIED_FORWARD')
+      WHERE t.id = ? AND ${taskScope('t')}
       LIMIT 1
     `;
     const task = db.prepare(taskQuery).get(taskId) as Task | undefined;
@@ -92,7 +93,7 @@ export class SQLiteCacheProvider implements IEHRProvider {
              new_value AS newValue, source, actor_id AS actorId,
              idempotency_key AS idempotencyKey, timestamp, metadata
       FROM task_events
-      WHERE datetime(timestamp) >= datetime(?)
+      WHERE datetime(timestamp) >= datetime(?) AND EXISTS(SELECT 1 FROM tasks st WHERE st.id=task_events.task_id AND ${taskScope('st')})
       ORDER BY timestamp DESC
     `;
     return db.prepare(query).all(since.toISOString()) as TaskEvent[];
@@ -112,7 +113,7 @@ export class SQLiteCacheProvider implements IEHRProvider {
   updateLocalTaskStatus(taskId: string, newStatus: TaskStatus, actorId: string, idempotencyKey: string, note?: string) {
     return MutationService.execute('UPDATE_LOCAL_TASK', idempotencyKey,
       { taskId, newStatus, actorId, note }, actorId, () => {
-        const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId) as { status: string } | undefined;
+        const task = db.prepare(`SELECT status FROM tasks t WHERE id = ? AND ${taskScope('t')}`).get(taskId) as { status: string } | undefined;
         if (!task) throw new Error('Task not found');
         if (!db.prepare('SELECT id FROM nurses WHERE id = ?').get(actorId)) throw new Error('Unknown nurse');
         if (!['PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'].includes(newStatus)) throw new Error('Invalid local task transition');

@@ -1,3 +1,4 @@
+import { scopedWorkflow } from '../services/source-policy.js';
 import { MCPClientBridge, type MCPToolDefinition } from "./mcp-client-bridge.js";
 import { getLLMProvider, MockAutonomousAgent, type ILLMProvider, type AgentMessage, type AgentTurnResult, type ToolCallDecision } from "./llm-provider.js";
 import { AuditService } from "../services/audit.service.js";
@@ -31,7 +32,7 @@ export class ShiftWeaveOrchestrator {
   constructor(endpoint = "http://localhost:3000/mcp", providerId?: string, runId?: string, private readOnly = false) {
     this.mcpBridge = new MCPClientBridge(endpoint);
     this.llmProvider = getLLMProvider(providerId);
-    this.activeWorkflowRunId = runId || `wf_run_${randomUUID()}`;
+    this.activeWorkflowRunId = scopedWorkflow(runId || `wf_run_${randomUUID()}`);
   }
   async initialize() {
     const info = await this.mcpBridge.initialize();

@@ -8,6 +8,8 @@ import { canonicalJson } from './canonical-json.js';
 import { getActiveProvider } from '../providers/index.js';
 import { EpicWorkflowService } from './epic-workflow.service.js';
 import { HospitalService, hospitalEnabled } from './hospital.service.js';
+import { sourceRealm } from './source-context.js';
+import { taskScope,nurseScope,handoffScope } from './source-policy.js';
 import { StaffAuthService } from './staff-auth.service.js';
 import { currentStaff, staffAuthRequired } from './staff-context.js';
 import { SQLiteCacheProvider } from '../providers/sqlite-cache-provider.js';
@@ -19,7 +21,7 @@ type Shift = { id: string; unit: string; type: string; start: string; end: strin
 type Task = { id: string; patientId: string; patientName: string; roomNumber: string; title: string; status: string; priority: string; source: string };
 type Handoff = { id: string; incomingId: string; outgoingId: string; incomingName: string; outgoingName: string;
   status: string; summary: string; snapshot: string; shiftId: string };
-type Pending = { kind: 'RESOLVE' | 'ACCEPT' | 'FINALIZE' | 'ESCALATE' | 'STATUS'; taskIds: string[];
+type Pending = { kind: 'RESOLVE' | 'ACCEPT' | 'FINALIZE' | 'ESCALATE' | 'STATUS' | 'CLAIM'; taskIds: string[];
   handoffId: string | null; conflictId: string | null; finalStatus: 'PENDING' | 'COMPLETED' | 'IN_PROGRESS' | 'CANCELLED' | null;
   taskRevision?: number;
   note: string | null; prompt: string; version: string; expiresAt: number; ready: boolean };
@@ -32,7 +34,7 @@ type State = { dataSource?: VoiceSource; revision: number; nurse: Nurse | null; 
   messages: Message[]; speech: string };
 export type VoiceInput = { session_id: string; utterance: string; expected_revision: number; idempotency_key: string };
 export const voiceIntentSchema = z.object({
-  intent: z.enum(['IDENTIFY','TASKS','TASK','PATIENT','STATUS','CONFLICTS','RESOLVE','ESCALATE','DRAFT','HANDOFF','ACCEPT','FINALIZE','END','SYNC_EPIC','READ_EPIC']),
+  intent: z.enum(['IDENTIFY','TASKS','TASK','PATIENT','STATUS','CONFLICTS','RESOLVE','ESCALATE','DRAFT','HANDOFF','ACCEPT','FINALIZE','END','SYNC_EPIC','READ_EPIC','AVAILABLE_TASKS','ASSIGN_SELF']),
   nurse_name: z.string().trim().min(1).max(150).optional(),
   recipient_name: z.string().trim().min(1).max(150).optional(),
   source_nurse_name: z.string().trim().min(1).max(150).optional().describe('HANDOFF only: the nurse whose saved handoff is requested, distinct from the current speaker'),
@@ -51,7 +53,7 @@ export type VoiceIntent = z.infer<typeof voiceIntentSchema>;
 const greeting = 'Before I look up your records, what name should I look for?';
 const spokenStatus = (status: string) => status === 'FLAGGED_CONFLICT' ? 'waiting for a discrepancy review' : status.toLowerCase().replaceAll('_', ' ');
 const firstName = (name: string) => name.replace(/,\s*RN$/i, '').split(/\s+/)[0];
-const initial = (dataSource:VoiceSource = !staffAuthRequired() && hospitalEnabled() ? 'hospital' : 'existing'): State => ({ dataSource, revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
+const initial = (dataSource:VoiceSource = sourceRealm()==='epic'?'epic':!staffAuthRequired() && hospitalEnabled() ? 'hospital' : 'existing'): State => ({ dataSource, revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
   selectedPatientId: null, handoffSourceNurseId: null,
   selectedHandoffId: null, focus: 'tasks', messages: [], speech: staffAuthRequired() && currentStaff()
     ? `Signed in as ${currentStaff()!.name}. Ready for your question.` : 'Ready for your question.' });
@@ -64,6 +66,7 @@ export class VoiceService {
   private static load(id: string): State {
     if (staffAuthRequired()) StaffAuthService.bindVoiceSession(id);
     let state = (CheckpointService.getLatestCheckpoint(runId(id))?.statePayload.voice as State | undefined) || initial();
+    if(sourceRealm()==='epic'&&state.dataSource==='hospital')throw new Error('Saved session belongs to the preview source');
     if(staffAuthRequired()&&state.nurse&&state.nurse.id!==currentStaff()?.id)state={...initial(),revision:state.revision};
     // Clear expired confirmations on load so the display is never stale
     if (state.pending && state.pending.expiresAt < Date.now()) {
@@ -78,14 +81,14 @@ export class VoiceService {
       ni.full_name AS incomingName, no.full_name AS outgoingName, h.status, h.summary_markdown AS summary,
       h.data_snapshot AS snapshot, h.shift_id AS shiftId FROM handoffs h
       JOIN nurses ni ON ni.id = h.incoming_nurse_id JOIN nurses no ON no.id = h.outgoing_nurse_id
-      WHERE h.shift_id = ? AND (h.incoming_nurse_id = ? OR h.outgoing_nurse_id = ?) ORDER BY h.rowid DESC`)
+      WHERE h.shift_id = ? AND (h.incoming_nurse_id = ? OR h.outgoing_nurse_id = ?) AND ${handoffScope('h')} ORDER BY h.rowid DESC`)
       .all(state.shift.id, state.nurse.id, state.nurse.id) as Handoff[];
   }
 
   private static records(state: State) {
-    if (!state.nurse || !state.shift) return { tasks: [] as Task[], candidates: [] as Task[], handoffs: [] as Handoff[], conflicts: [] as ConflictRecord[], epicRecords: [] as ReturnType<typeof EpicWorkflowService.recordsForPatients> };
+    if (!state.nurse || !state.shift) return { tasks: [] as Task[], candidates: [] as Task[], availableTasks: [] as Task[], handoffs: [] as Handoff[], conflicts: [] as ConflictRecord[], epicRecords: [] as ReturnType<typeof EpicWorkflowService.recordsForPatients> };
     const all = db.prepare(`SELECT t.id, t.patient_id AS patientId, p.full_name AS patientName, p.room_number AS roomNumber, t.title,
-      t.status, t.priority, t.source_system AS source FROM tasks t JOIN patients p ON p.id = t.patient_id`).all() as Task[];
+      t.status, t.priority, t.source_system AS source FROM tasks t JOIN patients p ON p.id = t.patient_id WHERE ${taskScope('t')}`).all() as Task[];
     const assigned = db.prepare(`SELECT task_id AS id FROM task_assignments WHERE nurse_id = ? AND shift_id = ?
       AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`).all(state.nurse.id, state.shift.id) as Array<{ id: string }>;
     const tasks = all.filter(t => assigned.some(a => a.id === t.id));
@@ -96,7 +99,7 @@ export class VoiceService {
           AND transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')`).get(id, h.outgoingId, h.shiftId))));
     const candidates = all.filter(t => candidateIds.has(t.id) && !tasks.some(own => own.id === t.id));
     const visible = new Set([...tasks, ...candidates].map(t => t.id));
-    return { tasks, candidates, handoffs, conflicts: ConflictService.getUnresolvedConflicts().filter(c => visible.has(c.taskId)),
+    return { tasks, candidates, availableTasks:state.dataSource==='hospital'?HospitalService.availableTasks(state.nurse.id,state.shift.id):[] as Task[], handoffs, conflicts: ConflictService.getUnresolvedConflicts().filter(c => visible.has(c.taskId)),
       epicRecords: state.dataSource === 'hospital' ? HospitalService.recordsForPatients([...tasks, ...candidates].map(t => t.patientId)) : EpicWorkflowService.recordsForPatients([...tasks, ...candidates].map(t => t.patientId)) };
   }
 
@@ -119,13 +122,14 @@ export class VoiceService {
       pending: state.pending ? { prompt: state.pending.prompt, ready: state.pending.ready,
         expiresAt: state.pending.expiresAt } : null,
       messages: state.messages, ...records,
-      source: state.dataSource === 'hospital' ? 'Synthetic hospital · FHIR R4 records + saved nursing workflow' : records.epicRecords.length ? 'Epic sandbox source records + local nursing coordination' : 'Local synthetic demo records', identityMode: staffAuthRequired() ? 'AUTHENTICATED_OPERATIONAL_SANDBOX' : 'DEMO_NAME_SELECTION',
+      source: state.dataSource === 'hospital' ? 'Synthetic hospital · FHIR R4 records + saved nursing workflow' : state.dataSource === 'epic' ? 'Configured Epic source + saved nursing coordination' : 'Local synthetic demo records', identityMode: staffAuthRequired() ? 'AUTHENTICATED_OPERATIONAL_SANDBOX' : 'DEMO_NAME_SELECTION',
       updatedAt: new Date().toISOString() };
   }
 
   static read(sessionId: string) { return this.display(this.load(sessionId)); }
 
   static selectSource(input:{session_id:string;source:VoiceSource;expected_revision:number;idempotency_key:string}) {
+    if(sourceRealm()==='preview'&&input.source!=='hospital'||sourceRealm()==='epic'&&input.source==='hospital')throw new Error('Source changes require a new scoped dashboard connection');
     if(staffAuthRequired())throw new Error('Source selection is unavailable in the authenticated staff workspace');
     if(input.source==='hospital'&&(!hospitalEnabled()||!HospitalService.provisioned()))throw new Error('Simulation hospital is not provisioned');
     return MutationService.execute('VOICE_SOURCE',`voice-source:${input.idempotency_key}`,input,'voice-demo',()=>{
@@ -156,7 +160,7 @@ export class VoiceService {
     const state = this.load(sessionId);
     const staff = currentStaff();
     const directory = staffAuthRequired() && staff ? [{name:staff.name}] :
-      db.prepare("SELECT full_name AS name FROM nurses WHERE role IN ('STAFF_NURSE','CHARGE_NURSE') AND (CASE WHEN ?='hospital' THEN id LIKE 'hospital:%' ELSE id NOT LIKE 'hospital:%' END) ORDER BY full_name").all(state.dataSource || 'existing');
+      db.prepare(`SELECT full_name AS name FROM nurses n WHERE ${nurseScope('n')} AND role IN ('STAFF_NURSE','CHARGE_NURSE') AND (CASE WHEN ?='hospital' THEN id LIKE 'hospital:%' ELSE id NOT LIKE 'hospital:%' END) ORDER BY full_name`).all(state.dataSource || 'existing');
     return {dataSource:state.dataSource,revision:state.revision,nurse:state.nurse,shift:state.shift,selectedTaskId:state.selectedTaskId,
       selectedPatientId:state.selectedPatientId,selectedHandoffId:state.selectedHandoffId,handoffSourceNurseId:state.handoffSourceNurseId,pending:state.pending,
       directory,messages:state.messages};
@@ -173,7 +177,7 @@ export class VoiceService {
   static commandForIntent(input: VoiceInput, value: unknown) {
     const intent = voiceIntentSchema.parse(value);
     const state = this.load(input.session_id);
-    const readIntent=['TASKS','TASK','PATIENT','HANDOFF','CONFLICTS','READ_EPIC'].includes(intent.intent);
+    const readIntent=['TASKS','TASK','PATIENT','HANDOFF','CONFLICTS','READ_EPIC','AVAILABLE_TASKS'].includes(intent.intent);
     const request=normal(input.utterance.split(/\b(?:because|note is)\b/i)[0]!);
     if(!readIntent&&/\b(?:dont|do not|not yet|never)\b/.test(request)) throw new Error('No changes were made. Could you clarify what you want me to do?');
     if (intent.intent === 'END') return 'End my session';
@@ -194,7 +198,7 @@ export class VoiceService {
     }
     if (!state.nurse) return 'Show my tasks'; // Existing identity gate; never expose records before selection.
     if (!state.shift) return 'Show my tasks';
-    const records = this.records(state), visible = [...records.tasks,...records.candidates];
+    const records = this.records(state), visible = [...records.tasks,...records.candidates,...(intent.intent==='ASSIGN_SELF'?records.availableTasks:[])];
     const requestedTask = intent.task_id || (!state.pending?.ready ? state.pending?.taskIds[0] : undefined) || state.selectedTaskId;
     const task = requestedTask ? visible.find(t => t.id === requestedTask) : visible.length === 1 ? visible[0] : undefined;
     if (intent.task_id && !task) throw new Error('That task is outside your current view. Which assigned task do you mean?');
@@ -219,6 +223,8 @@ export class VoiceService {
         if(!intent.epic_patient_id || !records.epicRecords.some(r=>r.epicPatientId===intent.epic_patient_id)) throw new Error('I couldn’t find that patient in your current view. Which patient do you mean?');
         return `Read Epic patient ${intent.epic_patient_id}`;
       }
+      case 'AVAILABLE_TASKS': return 'Show available tasks';
+      case 'ASSIGN_SELF': { if(state.dataSource!=='hospital')throw new Error('Self-assignment is supported only for available simulation hospital tasks.'); return task?`Assign task ${task.id} to me`:'Assign an available task to me'; }
       case 'TASKS': return `Show my ${intent.status === 'UNFINISHED' ? 'unfinished' : status} tasks${patient}`;
       case 'TASK': return `${intent.detail === 'DETAILS' ? 'Explain' : 'Show status of'} ${requireTask()}`;
       case 'CONFLICTS': return intent.task_id ? `Explain discrepancy for ${requireTask()}` : 'Show discrepancies';
@@ -378,7 +384,7 @@ export class VoiceService {
   }
 
   private static resolveNurse(claimed: string, state?:State): Nurse[] {
-    const nurses = db.prepare('SELECT id, full_name AS name, department, badge_number AS badge FROM nurses')
+    const nurses = db.prepare(`SELECT id, full_name AS name, department, badge_number AS badge FROM nurses n WHERE ${nurseScope('n')}`)
       .all() as Array<Nurse & { badge: string }>;
     return nurses.filter(n => {
       if (state?.dataSource === 'hospital' ? !n.id.startsWith('hospital:') : n.id.startsWith('hospital:')) return false;
@@ -501,6 +507,10 @@ export class VoiceService {
         // One transaction for multi-task acceptance; failure cannot leave a partially accepted batch.
         return db.transaction(() => {
           const nurseId = state.nurse!.id;
+          if(pending.kind==='CLAIM') {
+            const result=HospitalService.claimTask({nurse_id:nurseId,shift_id:state.shift!.id,task_id:pending.taskIds[0]!,human_confirmed:true,idempotency_key:`${key}:claim`});
+            return `You are now assigned to ${result.title}. Its status is still ${spokenStatus(result.status)}.`;
+          }
           if (pending.kind === 'STATUS') {
             const taskId = pending.taskIds[0]!;
             if (!this.records(state).tasks.some(t => t.id === taskId)) throw new Error('Only your assigned tasks can be updated');
@@ -549,6 +559,16 @@ export class VoiceService {
       !/\b(task|tasks|resolve|verify|accept|escalate|mark|set|assign|handoff)\b/.test(text) &&
       (!/\bupdate\b/.test(text) || /\b(latest|update on|update about)\b/.test(text));
     if (patientQuery && !collecting) { state.focus = 'tasks'; return this.patientSpeech(state, raw, visibleTasks); }
+    if(state.dataSource==='hospital'&&(/\b(?:available|unassigned) tasks?\b/.test(text)||/\b(?:assign|claim|pick up|take on)\b/.test(text)&&/\b(?:me|myself)\b/.test(text))) {
+      const pool=r.availableTasks;
+      const picked=this.selectTask(state,raw,pool);
+      const wantsAssignment=/\b(?:assign|claim|pick up|take on)\b/.test(text)&&/\b(?:me|myself)\b/.test(text);
+      if(!pool.length)return 'There are no available unassigned tasks in this simulation hospital. Another nurse’s tasks require a reviewed handoff.';
+      if(!wantsAssignment)return 'Available tasks: '+pool.map(t=>`${t.title} for ${t.patientName}, ${t.roomNumber}.`).join(' ');
+      if(!picked)return 'Which available task would you like? '+pool.map(t=>`${t.title} for ${t.patientName}.`).join(' ');
+      return this.stage(state,{kind:'CLAIM',taskIds:[picked.id],handoffId:null,conflictId:null,finalStatus:null,note:null,
+        prompt:`Assign ${picked.title} for ${picked.patientName} to you? Say “confirm” or “cancel”.`,version:'',expiresAt:0,ready:true});
+    }
     const listQuery = /\b(tasks|pending|unfinished|remaining|next)\b/.test(text) && !/\b(this|that|it)\b/.test(text);
     if (/\broom\s+\d+/.test(text) && !selected && !listQuery) {
       return 'That room did not identify exactly one task in your current view. Please specify the patient and full task title shown on screen.';

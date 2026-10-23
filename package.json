@@ -49,7 +49,9 @@
     "test:hospital": "tsx scripts/verify-hospital.ts",
     "hospital:start": "tsx scripts/start-hospital.ts",
     "hospital:prepare": "tsx scripts/start-hospital.ts --prepare-only",
-    "test:mcp-independent": "tsx scripts/verify-mcp-independent.ts"
+    "test:mcp-independent": "tsx scripts/verify-mcp-independent.ts",
+    "hospital:coverage": "tsx scripts/report-hospital-coverage.ts",
+    "test:source-isolation": "tsx scripts/verify-source-isolation.ts"
   },
   "repository": {
     "type": "git",

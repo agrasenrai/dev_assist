@@ -23,6 +23,7 @@ import { ShiftWeaveOrchestrator } from "./agent/orchestrator.js";
 import { VoiceService } from "./services/voice.service.js";
 import { host, allowedOrigins } from './runtime-config.js';
 import { MCPClientBridge } from './agent/mcp-client-bridge.js';
+import { BedrockLLMProvider } from './agent/llm-provider.js';
 import { runVoiceTurn } from './services/voice-agent.service.js';
 import { readEpicContext } from './services/epic-context.service.js';
 import { EpicWorkflowService } from './services/epic-workflow.service.js';
@@ -33,6 +34,8 @@ import { staffMiddleware, authorizeMcpTool } from './services/staff-http.js';
 import { currentStaff, staffAuthRequired } from './services/staff-context.js';
 import { hospitalSchema, hospitalEnabled, HospitalService } from './services/hospital.service.js';
 import { hospitalResourceSchema } from './providers/hospital-store.js';
+import { sourceContext, sourceRealm, trustedSource, type SourceRealm } from './services/source-context.js';
+import { sourceSchema, scopeToolArguments, scopedIdentifier, scopedWorkflow, taskScope, handoffScope } from './services/source-policy.js';
 
 const voiceInput = z.object({
   session_id: z.string().uuid(),
@@ -48,6 +51,7 @@ if(process.env.SIMULATION_MODE==='true')assertSimulationDatabase();
 initializeDatabase();
 db.exec(hospitalSchema);
 db.exec(hospitalResourceSchema);
+db.exec(sourceSchema);
 if(hospitalEnabled()&&!HospitalService.provisioned())throw new Error('Simulation hospital is enabled but not populated. Run npm run hospital:prepare with the configured database first.');
 // Receipts must survive restarts and delayed retries; never prune independently of workflows.
 
@@ -55,12 +59,25 @@ if(hospitalEnabled()&&!HospitalService.provisioned())throw new Error('Simulation
  * Factory function to create a fully configured ShiftWeave MCP Server
  * with all 9 standardized tools registered.
  */
-export function createShiftWeaveServer(): McpServer {
+export function createShiftWeaveServer(realm:SourceRealm='epic',internal=false): McpServer {
   const server = new McpServer({
     name: "shiftweave-mcp-server",
     version: "1.0.0"
-  }, {instructions:'ShiftWeave coordinates nursing tasks and handoffs. No dashboard is required. Start with get_voice_display using a new session UUID; the synthetic hospital includes availableNurses from the database. Send the human question verbatim to voice_turn with that session_id, latest expected_revision and a new UUID idempotency_key. Reuse the exact request/key after a network failure. Return its speech to the user; never claim an action succeeded beyond the tool result. Keep the session UUID for follow-up questions. Human confirmation must come from the user. Name selection identifies synthetic demo records; it is not staff authentication. Epic and synthetic hospital sources remain distinct.'});
+  }, {instructions:'ShiftWeave coordinates nursing tasks and handoffs. No dashboard is required. Start with get_voice_display using a new session UUID; Epic mode is the external default; only configured Epic-linked records are available. Preview exists only for trusted dashboard sessions. The display lists source-scoped records. Send the human question verbatim to voice_turn with that session_id, latest expected_revision and a new UUID idempotency_key. Reuse the exact request/key after a network failure. Return its speech to the user; never claim an action succeeded beyond the tool result. Keep the session UUID for follow-up questions. Human confirmation must come from the user. Name selection is not staff authentication. Epic and synthetic hospital sources remain distinct.'});
 
+  // Each transport has an immutable source realm. Client-supplied mode strings
+  // cannot grant preview access. Every callback restores its own realm explicitly.
+  const register=server.tool.bind(server) as any;
+  (server as any).tool=(...args:any[])=>{
+    const name=args[0] as string;
+    const previewOnly=['claim_hospital_task','refresh_hospital_records','review_simulation'];
+    const epicOnly=['get_epic_patient_context','sync_epic_workspace','preview_epic_handoff_note','publish_reviewed_handoff_note'];
+    if(realm==='epic'&&(previewOnly.includes(name)||name==='operational_sandbox'||name==='select_voice_source'&&!internal))return;
+    if(realm==='preview'&&(epicOnly.includes(name)||name==='operational_sandbox'))return;
+    const handler=args.at(-1);
+    args[args.length-1]=(input:any,extra:any)=>sourceContext.run(realm,async()=>handler(scopeToolArguments(name,input),extra));
+    return register(...args);
+  };
   // =========================================================================
   // REGISTER THE 9 STANDARDIZED SHIFTWEAVE MCP TOOLS
   // =========================================================================
@@ -413,6 +430,9 @@ export function createShiftWeaveServer(): McpServer {
       content: [{ type: 'text', text: JSON.stringify(VoiceService.read(args.session_id)) }]
     }));
   if(hospitalEnabled()) {
+    server.tool('claim_hospital_task','Assign an available unowned synthetic coordination task to the requesting simulation nurse. Explicit human confirmation required; never takes another nurse’s task or changes Epic.',
+      {nurse_id:z.string().startsWith('hospital:'),shift_id:z.string(),task_id:z.string().startsWith('hospital:'),human_confirmed:z.literal(true),idempotency_key:z.string().uuid()},
+      async args=>({content:[{type:'text',text:JSON.stringify(HospitalService.claimTask(args))}]}));
     server.tool('select_voice_source','Select the synthetic hospital or existing Epic workspace for a voice session. Clears identity, pending confirmations and conversation; keeps saved workflow records.',
       {session_id:z.string().uuid(),source:z.enum(['hospital','epic','existing']),expected_revision:z.number().int().nonnegative(),idempotency_key:z.string().uuid()},
       async args=>({content:[{type:'text',text:JSON.stringify(VoiceService.selectSource(args))}]}));
@@ -472,6 +492,8 @@ export function createShiftWeaveServer(): McpServer {
 // =========================================================================
 
 interface SessionRecord {
+  realm:SourceRealm;
+  internal:boolean;
   staffId?: string | undefined;
   transport: StreamableHTTPServerTransport;
   server: McpServer;
@@ -526,6 +548,27 @@ app.get('/readyz', (_req, res) => {
 });
 // Demo basic auth removed
 app.use(staffMiddleware);
+app.use('/api',(req,_res,next)=>{
+  let realm:SourceRealm='legacy';
+  if(!staffAuthRequired()&&hospitalEnabled()) {
+    const id=req.body?.session_id||req.path.match(/^\/voice\/([^/]+)$/)?.[1];
+    const selected=id?db.prepare('SELECT realm FROM dashboard_voice_sources WHERE session_id=?').get(id) as {realm:SourceRealm}|undefined:undefined;
+    realm=selected?.realm||'preview';
+  }
+  if(realm==='epic'&&process.env.NODE_ENV==='production'&&!currentStaff()){
+    _res.status(403).json({error:'Public preview cannot restore an Epic session. Use the authorized Epic MCP endpoint.'});return;
+  }
+  if(process.env.NODE_ENV==='production'&&!staffAuthRequired()&&!hospitalEnabled()&&
+    !['/staff/config','/simulations','/tts/config'].includes(req.path)){
+    _res.status(403).json({error:'Epic data requires an authorized MCP client or the existing staff authentication.'});return;
+  }
+  sourceContext.run(realm,()=>next());
+});
+// Companion preview routes must not invoke Epic publication or change the shared provider.
+app.use('/api',(req,res,next)=>{
+  if(sourceRealm()==='preview'&&(req.path==='/provider/switch'||/\/handoffs\/[^/]+\/(?:epic-note-preview|publish-note)$/.test(req.path))){res.status(403).json({error:'This operation is unavailable in the synthetic preview.'});return;}
+  next();
+});
 app.get('/api/simulations', (_req,res)=>res.json({enabled:process.env.SIMULATION_MODE==='true'||hospitalEnabled()&&!staffAuthRequired(),hosted:hospitalEnabled()}));
 app.post('/api/simulations', async(req,res)=>{
   if(process.env.SIMULATION_MODE!=='true'&&!(hospitalEnabled()&&!staffAuthRequired())){res.status(404).json({error:'Synthetic review environment is not enabled'});return;}
@@ -585,6 +628,9 @@ app.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(
  * Compliant with MCP Spec 2025-11-25 over Streamable HTTP
  */
 app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
+  const trusted=trustedSource(req.headers);
+  const realm=trusted||'epic';
+  if(req.body&&Array.isArray(req.body)){res.status(400).json({error:'Batch MCP requests are not enabled'});return;}
   if(staffAuthRequired()){
     try{
       const existing=sessions.get(String(req.headers['mcp-session-id']||''));
@@ -604,6 +650,7 @@ app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
     const session = sessionId ? sessions.get(sessionId) : undefined;
 
     if (session) {
+      if(session.realm!==realm||session.internal!==Boolean(trusted)){res.status(403).json({error:'MCP session belongs to another source profile'});return;}
       session.lastActive = Date.now();
       await session.transport.handleRequest(req, res, req.body);
       return;
@@ -611,11 +658,11 @@ app.post("/mcp", async (req: Request, res: Response): Promise<void> => {
 
     if (!sessionId && isInitializeRequest(req.body)) {
       // Create new session-isolated server and transport
-      const newServer = createShiftWeaveServer();
+      const newServer = createShiftWeaveServer(realm,Boolean(trusted));
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sid: string) => {
-          sessions.set(sid, { transport, server: newServer, open: 0, lastActive: Date.now(),staffId:currentStaff()?.id });
+          sessions.set(sid, { transport, server: newServer, realm,internal:Boolean(trusted),open: 0, lastActive: Date.now(),staffId:currentStaff()?.id });
         }
       });
 
@@ -653,6 +700,7 @@ app.get("/mcp", async (req: Request, res: Response): Promise<void> => {
     return;
   }
   const session = sessions.get(sessionId);
+  if(session&&(session.realm!==(trustedSource(req.headers)||'epic')||session.internal!==Boolean(trustedSource(req.headers)))){res.status(403).json({error:'MCP session belongs to another source profile'});return;}
   if(staffAuthRequired()&&session?.staffId!==currentStaff()?.id){res.status(403).json({error:'MCP session belongs to another staff member'});return;}
   if (!session) {
     res.status(404).json({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null });
@@ -669,6 +717,7 @@ app.delete("/mcp", async (req: Request, res: Response): Promise<void> => {
     return;
   }
   const session = sessions.get(sessionId);
+  if(session&&(session.realm!==(trustedSource(req.headers)||'epic')||session.internal!==Boolean(trustedSource(req.headers)))){res.status(403).json({error:'MCP session belongs to another source profile'});return;}
   if(staffAuthRequired()&&session?.staffId!==currentStaff()?.id){res.status(403).json({error:'MCP session belongs to another staff member'});return;}
   if (!session) {
     res.status(404).json({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null });
@@ -694,18 +743,31 @@ app.post('/api/voice', async (req, res) => {
   } finally { await bridge.close(); }
 });
 app.get('/api/voice/:sessionId', (req, res) => {
-  res.json(VoiceService.read(z.string().uuid().parse(req.params.sessionId)));
+  res.json(VoiceService.read(scopedIdentifier('session_id',z.string().uuid().parse(req.params.sessionId))));
 });
 app.get('/api/voice-sources', (_req,res)=>res.json({enabled:hospitalEnabled()&&!staffAuthRequired(),provisioned:HospitalService.provisioned()}));
 app.post('/api/voice-source',async(req,res)=>{
   if(!hospitalEnabled()||staffAuthRequired()){res.status(404).json({error:'Voice source selection is not enabled'});return;}
-  const bridge=new MCPClientBridge(localMcpEndpoint());
-  try {
-    const args=z.object({session_id:z.string().uuid(),source:z.enum(['hospital','epic','existing']),expected_revision:z.number().int().nonnegative(),idempotency_key:z.string().uuid()}).parse(req.body);
-    await bridge.initialize();const result=await bridge.callTool('select_voice_source',args);
-    if(result.isError){res.status(409).json({error:result.content.map(c=>c.text).join(' ')});return;}
-    res.json(JSON.parse(result.content[0]!.text));
-  } finally {await bridge.close();}
+  const args=z.object({session_id:z.string().uuid(),source:z.enum(['hospital','epic','existing']),expected_revision:z.number().int().nonnegative(),idempotency_key:z.string().uuid()}).parse(req.body);
+  const current=VoiceService.read(scopedIdentifier('session_id',args.session_id));
+  if(current.revision!==args.expected_revision){res.status(409).json({error:'Voice session changed. Refresh before switching sources.'});return;}
+  const target:SourceRealm=args.source==='hospital'?'preview':'epic';
+  if(target==='epic'&&process.env.NODE_ENV==='production'&&!currentStaff()){res.status(403).json({error:'Public preview cannot access Epic records. Use the authorized Epic MCP endpoint.'});return;}
+  await sourceContext.run(target,async()=>{
+    const bridge=new MCPClientBridge(localMcpEndpoint());
+    try {
+      await bridge.initialize();
+      const display=await bridge.callTool('get_voice_display',{session_id:args.session_id});
+      if(display.isError)throw new Error('Target source display is unavailable');
+      const result=await bridge.callTool('select_voice_source',{...args,expected_revision:JSON.parse(display.content[0]!.text).revision});
+      if(result.isError){res.status(409).json({error:result.content.map(c=>c.text).join(' ')});return;}
+      const {MutationService}=await import('./services/mutation.service.js');
+      MutationService.execute('DASHBOARD_SOURCE',`dashboard-source:${scopedIdentifier('idempotency_key',args.idempotency_key)}`,{sessionId:args.session_id,target},'source-router',()=>{
+        db.prepare('INSERT INTO dashboard_voice_sources(session_id,realm) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET realm=excluded.realm').run(args.session_id,target);return {target};
+      });
+      res.json(JSON.parse(result.content[0]!.text));
+    }finally{await bridge.close();}
+  });
 });
 
 /** Text-to-Speech endpoint (ElevenLabs with automatic browser fallback) */
@@ -908,7 +970,7 @@ app.get("/api/tasks", (_req, res) => {
     JOIN patients p ON p.id = t.patient_id
     LEFT JOIN task_assignments ta ON ta.task_id = t.id AND ta.transfer_status IN ('ACTIVE', 'CARRIED_FORWARD')
     LEFT JOIN nurses n ON n.id = ta.nurse_id
-    ORDER BY t.scheduled_time ASC
+    WHERE ${taskScope('t')} ORDER BY t.scheduled_time ASC
   `).all();
   res.json({ count: tasks.length, tasks });
 });
@@ -925,7 +987,7 @@ app.get("/api/handoffs", (_req, res) => {
     FROM handoffs h
     LEFT JOIN nurses n1 ON n1.id = h.outgoing_nurse_id
     LEFT JOIN nurses n2 ON n2.id = h.incoming_nurse_id
-    ORDER BY h.created_at DESC
+    WHERE ${handoffScope('h')} ORDER BY h.created_at DESC
   `).all();
   res.json({ count: handoffs.length, handoffs });
 });
@@ -1000,10 +1062,12 @@ app.post("/api/chat", async (req, res) => {
 });
 
 app.get('/api/conversations/:id', (req, res) => {
-  const run = db.prepare('SELECT initiated_by FROM workflow_runs WHERE id = ?').get(req.params.id) as { initiated_by: string } | undefined;
+  let workflowId:string;
+  try {workflowId=scopedWorkflow(String(req.params.id));}catch{res.status(403).json({error:'Conversation belongs to another data source'});return;}
+  const run = db.prepare('SELECT initiated_by FROM workflow_runs WHERE id = ?').get(workflowId) as { initiated_by: string } | undefined;
   if (!run) { res.json({ messages: [] }); return; }
   if (run.initiated_by !== req.query.nurseId) { res.status(403).json({ error: 'Conversation belongs to another nurse' }); return; }
-  res.json({ messages: CheckpointService.getLatestCheckpoint(String(req.params.id))?.statePayload.messages || [] });
+  res.json({ messages: CheckpointService.getLatestCheckpoint(workflowId)?.statePayload.messages || [] });
 });
 
 /** Explicit local task acceptance/escalation; not medication administration. */
@@ -1032,7 +1096,7 @@ app.post('/api/chaos/simulate', async (req, res) => {
   const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), 'mock', runId);
   try {
     await orchestrator.initialize();
-    const activeNurse = (db.prepare("SELECT id FROM nurses WHERE role = 'STAFF_NURSE' ORDER BY id ASC LIMIT 1").get() as any)?.id;
+    const activeNurse = (db.prepare(`SELECT n.id FROM nurses n WHERE n.role = 'STAFF_NURSE' AND ${sourceRealm()==='preview'?"n.id LIKE 'hospital:%'":"1=1"} ORDER BY n.id ASC LIMIT 1`).get() as any)?.id;
     if (!activeNurse) throw new Error('No configured nurse is available for this simulation');
     const result = await orchestrator.processUtterance(activeNurse, input.action === 'crash'
       ? 'Prepare my shift handoff' : 'Resume my handoff', input.action === 'crash' ? { simulateInterruptionAtStep: 3 } : {});
@@ -1088,6 +1152,7 @@ appServer.on('close', () => {
   clearInterval(sessionCleanupTimer);
   for (const session of sessions.values()) void session.server.close();
   sessions.clear();
+  BedrockLLMProvider.closeClients();
 });
 export default app;
 

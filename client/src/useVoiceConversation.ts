@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const sentencePauseMs=1400, restartDelayMs=100;
+const sentencePauseMs=1500, restartDelayMs=100;
 const words=(text:string)=>text.toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 const playbackControl=/^(?:(?:hey )?(?:medi|alexa)[, ]*)?(?:stop|stop speaking|be quiet|quiet|listen|listen to me|wait|hold on)[.! ]*$/i;
 

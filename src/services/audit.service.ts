@@ -1,5 +1,6 @@
 import { db } from "../db/connection.js";
 import { randomUUID } from "crypto";
+import { sourceRealm } from './source-context.js';
 
 export interface AuditEntry {
   actorType: 'NURSE' | 'AGENT' | 'MCP_SERVER' | 'SYSTEM';
@@ -14,7 +15,8 @@ export interface AuditEntry {
 export class AuditService {
   static log(entry: AuditEntry): string {
     const id = `aud_${randomUUID().slice(0, 8)}`;
-    const detailsStr = typeof entry.details === "object" ? JSON.stringify(entry.details) : entry.details || null;
+    const details = sourceRealm()==='legacy' ? entry.details : { ...(entry.details && typeof entry.details==='object' ? entry.details : {message:entry.details}), _sourceRealm:sourceRealm() };
+    const detailsStr = typeof details === "object" ? JSON.stringify(details) : details || null;
 
     db.prepare(`
       INSERT INTO audit_log (id, actor_type, actor_id, action, target_resource, outcome, details, latency_ms)
@@ -47,9 +49,10 @@ export class AuditService {
     return db.prepare(`
       SELECT id, actor_type, actor_id, action, target_resource, outcome, details, latency_ms, timestamp
       FROM audit_log
+      WHERE (?='legacy' OR CASE WHEN json_valid(details) THEN json_extract(details,'$._sourceRealm') END=?)
       ORDER BY timestamp DESC
       LIMIT ?
-    `).all(limit) as Array<{
+    `).all(sourceRealm(),sourceRealm(),limit) as Array<{
       id: string;
       actor_type: string;
       actor_id: string;

@@ -9,13 +9,14 @@ import { hospitalCapability, hospitalFetch, hospitalConfig } from '../src/provid
 if (!process.env.SQLITE_DB_PATH || !fs.existsSync(process.env.SQLITE_DB_PATH)) throw new Error('Set SQLITE_DB_PATH to the existing application database');
 const bundle=JSON.parse(fs.readFileSync('data/hospital/fhir-r4.json','utf8'));
 const fixture=z.object({version:z.number(),nurses:z.array(z.object({id:z.string().startsWith('hospital:'),name:z.string(),badge:z.string()})),
-  tasks:z.array(z.object({id:z.string(),patient:z.string(),nurse:z.string().startsWith('hospital:'),title:z.string(),status:z.enum(['PENDING','IN_PROGRESS','COMPLETED']),category:z.enum(['DISCHARGE_PREP','CONSULT'])}))}).parse(JSON.parse(fs.readFileSync('data/hospital/workflow.json','utf8')));
+  tasks:z.array(z.object({id:z.string(),patient:z.string(),nurse:z.string().startsWith('hospital:').optional(),pool_custodian:z.string().startsWith('hospital:').optional(),title:z.string(),status:z.enum(['PENDING','IN_PROGRESS','COMPLETED']),category:z.enum(['DISCHARGE_PREP','CONSULT'])})),conflicts:z.array(z.object({task:z.string(),firstSource:z.string(),firstValue:z.string(),secondSource:z.string(),secondValue:z.string()})).default([])}).parse(JSON.parse(fs.readFileSync('data/hospital/workflow.json','utf8')));
 await hospitalCapability();
 const {db}=await import('../src/db/connection.js');
 const {initializeDatabase}=await import('../src/db/schema.js');
 const {hospitalSchema,HospitalService}=await import('../src/services/hospital.service.js');
 const {hospitalResourceSchema}=await import('../src/providers/hospital-store.js');
 const {MutationService}=await import('../src/services/mutation.service.js');
+const {ConflictService}=await import('../src/services/conflict.service.js');
 const {HandoffService}=await import('../src/services/handoff.service.js');
 const {simulationSchema,migrateSimulationRuns}=await import('../src/services/simulation.service.js');
 try {
@@ -33,23 +34,24 @@ try {
       throw new Error('FHIR transaction was not confirmed; workflow provisioning stopped');
     MutationService.execute('HOSPITAL_FHIR_UPLOAD',key,{digest,endpoint:hospitalConfig().base},'hospital-setup',()=>({confirmed:true,resources:result.entry.length}));
   }
-  MutationService.execute('HOSPITAL_SEED','hospital-seed-v1',{version:fixture.version},'hospital-setup',()=>{
-    for(const n of fixture.nurses)db.prepare('INSERT INTO nurses(id,badge_number,full_name,email,department) VALUES(?,?,?,?,?)').run(n.id,n.badge,n.name,`${n.badge}@example.invalid`,'SYNTHETIC-HOSPITAL');
+  MutationService.execute('HOSPITAL_SEED',`hospital-seed-v${fixture.version}`,{version:fixture.version},'hospital-setup',()=>{
+    for(const n of fixture.nurses)db.prepare('INSERT INTO nurses(id,badge_number,full_name,email,department) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING').run(n.id,n.badge,n.name,`${n.badge}@example.invalid`,'SYNTHETIC-HOSPITAL');
     const now=new Date().toISOString();
-    db.prepare("INSERT INTO shifts(id,unit_id,shift_type,start_time,end_time,status) VALUES('hospital:shift','SYNTHETIC-HOSPITAL','DAY',?,?,'ACTIVE')").run(now,new Date(Date.now()+43200000).toISOString());
+    db.prepare("INSERT INTO shifts(id,unit_id,shift_type,start_time,end_time,status) VALUES('hospital:shift','SYNTHETIC-HOSPITAL','DAY',?,?,'ACTIVE') ON CONFLICT(id) DO NOTHING").run(now,new Date(Date.now()+43200000).toISOString());
     for(const entry of bundle.entry.filter((e:any)=>e.resource.resourceType==='Patient')) {
       const p=entry.resource;
-      db.prepare('INSERT INTO patients(id,mrn,full_name,room_number,admission_date,primary_diagnosis) VALUES(?,?,?,?,?,?)')
+      db.prepare('INSERT INTO patients(id,mrn,full_name,room_number,admission_date,primary_diagnosis) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING')
         .run(`hospital:${p.id}`,`SIM-${p.id}`,[...p.name[0].given,p.name[0].family].join(' '),'Awaiting source',now,'Awaiting FHIR record');
-      db.prepare('INSERT INTO hospital_patients(patient_id,fhir_id) VALUES(?,?)').run(`hospital:${p.id}`,p.id);
+      db.prepare('INSERT INTO hospital_patients(patient_id,fhir_id) VALUES(?,?) ON CONFLICT(patient_id) DO NOTHING').run(`hospital:${p.id}`,p.id);
     }
     for(const t of fixture.tasks) {
-      db.prepare('INSERT INTO tasks(id,patient_id,title,description,category,status,priority,scheduled_time,source_system) VALUES(?,?,?,?,?,?,?, ?,?)')
+      db.prepare('INSERT INTO tasks(id,patient_id,title,description,category,status,priority,scheduled_time,source_system) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(id) DO NOTHING')
         .run(`hospital:task:${t.id}`,`hospital:${t.patient}`,t.title,'Synthetic nursing coordination task; not a clinical order',t.category,t.status,'ROUTINE',now,'SYNTHETIC_HOSPITAL_WORKFLOW');
-      db.prepare("INSERT INTO task_assignments(id,task_id,nurse_id,shift_id,assigned_by) VALUES(?,?,?,'hospital:shift','hospital-setup')").run(`hospital:assignment:${t.id}`,`hospital:task:${t.id}`,t.nurse);
+      if((t.nurse||t.pool_custodian)&&!db.prepare('SELECT id FROM task_assignments WHERE task_id=? AND shift_id=?').get(`hospital:task:${t.id}`,'hospital:shift'))db.prepare("INSERT INTO task_assignments(id,task_id,nurse_id,shift_id,assigned_by,transfer_status) VALUES(?,?,?,'hospital:shift','hospital-setup',?)").run(`hospital:assignment:${t.id}`,`hospital:task:${t.id}`,t.nurse||t.pool_custodian,t.nurse?'ACTIVE':'UNASSIGNED');
     }
     return {patients:bundle.entry.filter((e:any)=>e.resource.resourceType==='Patient').length,tasks:fixture.tasks.length,synthetic:true};
   });
+  for(const c of fixture.conflicts)ConflictService.flagConflict(`hospital:task:${c.task}`,'STATUS_MISMATCH',c.firstSource,c.firstValue,c.secondSource,c.secondValue,undefined,`hospital-conflict-v2:${c.task}`);
   process.env.HOSPITAL_SIMULATION_ENABLED='true';
   const refreshKey=`setup-${Date.now()}`;
   for(const n of fixture.nurses) {

@@ -3,6 +3,8 @@ import { db } from '../db/connection.js';
 import { MutationService } from './mutation.service.js';
 import { hospitalConfig, hospitalFetch, hospitalSearch } from '../providers/hospital-fhir.js';
 import type { EpicRecord } from './epic-workflow.service.js';
+import { staffAuthRequired } from './staff-context.js';
+import { sourceRealm } from './source-context.js';
 
 export const hospitalSchema = `
 CREATE TABLE IF NOT EXISTS hospital_patients (
@@ -11,6 +13,30 @@ CREATE TABLE IF NOT EXISTS hospital_patients (
 `;
 export const hospitalEnabled = () => process.env.HOSPITAL_SIMULATION_ENABLED === 'true';
 export class HospitalService {
+  static availableTasks(nurseId:string,shiftId:string) {
+    if(sourceRealm()==='epic'||!hospitalEnabled()||staffAuthRequired()||!nurseId.startsWith('hospital:'))return [];
+    if(!db.prepare(`SELECT n.id FROM nurses n JOIN shifts s ON n.department=s.unit_id WHERE n.id=? AND s.id=? AND s.status IN ('ACTIVE','HANDOFF_IN_PROGRESS')`).get(nurseId,shiftId))throw new Error('Simulation nurse and active shift do not match');
+    return db.prepare(`SELECT t.id,t.patient_id AS patientId,p.full_name AS patientName,p.room_number AS roomNumber,t.title,t.status,t.priority,t.source_system AS source
+      FROM tasks t JOIN patients p ON p.id=t.patient_id JOIN hospital_patients h ON h.patient_id=p.id
+      WHERE t.id LIKE 'hospital:%' AND t.status IN ('PENDING','IN_PROGRESS')
+      AND EXISTS(SELECT 1 FROM task_assignments pool WHERE pool.task_id=t.id AND pool.shift_id=? AND pool.transfer_status='UNASSIGNED')
+      AND NOT EXISTS(SELECT 1 FROM task_assignments a WHERE a.task_id=t.id AND a.transfer_status IN ('ACTIVE','CARRIED_FORWARD'))
+      AND NOT EXISTS(SELECT 1 FROM conflicts c WHERE c.task_id=t.id AND c.status='UNRESOLVED') ORDER BY t.scheduled_time,t.id`).all(shiftId) as Array<{id:string;patientId:string;patientName:string;roomNumber:string;title:string;status:string;priority:string;source:string}>;
+  }
+  static claimTask(input:{nurse_id:string;shift_id:string;task_id:string;human_confirmed:boolean;idempotency_key:string}) {
+    if(sourceRealm()==='epic'||staffAuthRequired()||!hospitalEnabled())throw new Error('Synthetic task claims are available only in the simulation hospital');
+    if(input.human_confirmed!==true)throw new Error('Explicit human confirmation is required');
+    return MutationService.execute('HOSPITAL_TASK_CLAIM',`hospital-claim:${input.idempotency_key}`,input,input.nurse_id,()=>{
+      const task=this.availableTasks(input.nurse_id,input.shift_id).find(t=>t.id===input.task_id);
+      if(!task)throw new Error('This task is no longer available. Review the current unassigned tasks.');
+      db.prepare("UPDATE task_assignments SET transfer_status='TRANSFERRED' WHERE task_id=? AND shift_id=? AND transfer_status='UNASSIGNED'").run(task.id,input.shift_id);
+      db.prepare("INSERT INTO task_assignments(id,task_id,nurse_id,shift_id,transfer_status,assigned_by) VALUES(?,?,?,?,'ACTIVE',?)")
+        .run(`hospital:claim:${input.idempotency_key}`,task.id,input.nurse_id,input.shift_id,input.nurse_id);
+      db.prepare("INSERT INTO task_events(id,task_id,event_type,previous_value,new_value,source,actor_id,idempotency_key,metadata) VALUES(?,?,'REASSIGNMENT','UNASSIGNED',?,'SYNTHETIC_HOSPITAL_WORKFLOW',?,?,?)")
+        .run(`hospital:event:${input.idempotency_key}`,task.id,input.nurse_id,input.nurse_id,`hospital-claim-event:${input.idempotency_key}`,JSON.stringify({humanConfirmed:true,shiftId:input.shift_id}));
+      return {success:true,taskId:task.id,nurseId:input.nurse_id,status:task.status,title:task.title};
+    });
+  }
   static provisioned() {
     return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE name='hospital_patients'").get()
       && db.prepare('SELECT patient_id FROM hospital_patients LIMIT 1').get());
@@ -23,7 +49,7 @@ export class HospitalService {
         status:r.status,error:r.status==='FAILED'?'Simulation hospital refresh failed; saved records may be stale':null,snapshot:JSON.parse(r.snapshot_json)}));
   }
   static async refresh(nurseId:string, shiftId:string, key:string) {
-    if (!hospitalEnabled() || !nurseId.startsWith('hospital:')) throw new Error('Select a simulation hospital nurse first');
+    if (sourceRealm()==='epic'||!hospitalEnabled() || !nurseId.startsWith('hospital:')) throw new Error('Select a simulation hospital nurse first');
     if(!db.prepare(`SELECT n.id FROM nurses n JOIN shifts s ON s.unit_id=n.department WHERE n.id=? AND s.id=? AND s.status IN ('ACTIVE','HANDOFF_IN_PROGRESS')`).get(nurseId,shiftId))
       throw new Error('Simulation nurse and active shift do not match');
     const request = {nurseId,shiftId,endpoint:hospitalConfig().base};

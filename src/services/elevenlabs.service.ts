@@ -63,7 +63,8 @@ export class ElevenLabsService {
 
     const voiceId = options.voiceId || this.defaultVoiceId;
     const modelId = options.modelId || this.defaultModelId;
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`;
+    const latencyTier = process.env.ELEVENLABS_STREAMING_LATENCY || '3';
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?optimize_streaming_latency=${encodeURIComponent(latencyTier)}`;
 
     const response = await fetch(url, {
       method: 'POST',
