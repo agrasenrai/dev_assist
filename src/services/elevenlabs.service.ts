@@ -8,6 +8,20 @@ export interface TTSOptions {
   modelId?: string | undefined;
 }
 
+// Never retain provider response bodies: they may echo input or account details.
+export class TTSProviderError extends Error {
+  constructor(readonly status: number) {
+    super('Speech provider request failed');
+    this.name = 'TTSProviderError';
+  }
+}
+
+export function ttsFailureDiagnostics(error: unknown) {
+  return error instanceof TTSProviderError
+    ? { provider: 'elevenlabs', category: 'provider_http', status: error.status }
+    : { provider: 'elevenlabs', category: 'speech_failure' };
+}
+
 export class ElevenLabsService {
   // Default Voice: 'EXAVITQu4vr4xnSDxMaL' (Sarah - mature, reassuring, confident clinical assistant)
   private static defaultVoiceId = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
@@ -86,8 +100,8 @@ export class ElevenLabsService {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`ElevenLabs TTS stream failed (HTTP ${response.status}): ${errorText}`);
+      await response.body?.cancel().catch(() => {});
+      throw new TTSProviderError(response.status);
     }
 
     if (!response.body) {
@@ -134,8 +148,8 @@ export class ElevenLabsService {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`ElevenLabs TTS failed (HTTP ${response.status}): ${errorText}`);
+      await response.body?.cancel().catch(() => {});
+      throw new TTSProviderError(response.status);
     }
 
     const arrayBuffer = await response.arrayBuffer();

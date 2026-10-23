@@ -29,7 +29,7 @@ import { readEpicContext } from './services/epic-context.service.js';
 import { EpicWorkflowService } from './services/epic-workflow.service.js';
 import { operationalDispatch } from './services/operational-dispatch.js';
 import { StaffAuthService } from './services/staff-auth.service.js';
-import { ElevenLabsService } from './services/elevenlabs.service.js';
+import { ElevenLabsService, ttsFailureDiagnostics } from './services/elevenlabs.service.js';
 import { staffMiddleware, authorizeMcpTool } from './services/staff-http.js';
 import { currentStaff, staffAuthRequired } from './services/staff-context.js';
 import { hospitalSchema, hospitalEnabled, HospitalService } from './services/hospital.service.js';
@@ -782,6 +782,7 @@ app.post('/api/voice-source',async(req,res)=>{
 });
 
 /** Text-to-Speech endpoint (ElevenLabs with automatic browser fallback) */
+const ttsFailureResponse = { error: 'Speech is temporarily unavailable. Please try again.', fallback: true };
 app.get('/api/tts/config', (_req,res)=>res.json({enabled:ElevenLabsService.isConfigured()}));
 app.post('/api/tts', async (req, res) => {
   try {
@@ -807,8 +808,8 @@ app.post('/api/tts', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.send(result.audioBuffer);
   } catch (error) {
-    console.error('ElevenLabs TTS synthesis error:', error);
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error), fallback: true });
+    console.error('TTS synthesis failed', ttsFailureDiagnostics(error));
+    res.status(502).json(ttsFailureResponse);
   }
 });
 
@@ -839,6 +840,16 @@ app.all('/api/tts/stream', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('X-Accel-Buffering', 'no');
 
+    result.stream.once('error', (error: unknown) => {
+      console.error('TTS audio stream failed', ttsFailureDiagnostics(error));
+      if (!res.headersSent) {
+        res.removeHeader('Content-Type');
+        res.status(502).json(ttsFailureResponse);
+      } else {
+        // Audio headers/bytes have already been sent; terminate without exposing details.
+        res.destroy();
+      }
+    });
     result.stream.pipe(res);
     res.on('close', () => {
       if ('destroy' in result.stream && typeof (result.stream as any).destroy === 'function') {
@@ -846,9 +857,9 @@ app.all('/api/tts/stream', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('ElevenLabs TTS streaming error:', error);
+    console.error('TTS streaming failed', ttsFailureDiagnostics(error));
     if (!res.headersSent) {
-      res.status(502).json({ error: error instanceof Error ? error.message : String(error), fallback: true });
+      res.status(502).json(ttsFailureResponse);
     }
   }
 });
