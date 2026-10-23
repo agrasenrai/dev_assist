@@ -22,12 +22,12 @@ const replyTool: MCPToolDefinition = {name:'reply_to_nurse',description:
   inputSchema:z.toJSONSchema(replySchema) as MCPToolDefinition['inputSchema']};
 type Display = ReturnType<typeof VoiceService.read>;
 type SemanticState = {requestHash:string;messages:AgentMessage[];pendingTool?:{name:string;args:Record<string,unknown>;id:string;command?:string};
-  action?:{display:Display;intent:string};identificationRevision?:number;version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number};
+  action?:{display:Display;intent:string};identificationRevision?:number;prefetchedRevision?:number;version:string;read:boolean;speech?:string;status?:'SUCCESS'|'FAILED';failureCode?:string;replyRepairs?:number;intentRepairs?:number};
 const replyErrors=new Set(['Model cannot claim a workflow action','Clinical advice is outside the voice workflow','Record answer lacks matching source evidence',
   'Record claims must be contained in source evidence','Record answer introduced an unsupported number','Record answer introduced an unsupported status',
   'Record answer omitted source uncertainty','Record claims require a current backend result','Read operation required before a record answer']);
-function sourceFacts(source: string) {return source.split(/(?<=[.!?])\s+/).filter(Boolean).map((text,index)=>({id:`fact:${index}`,text}));}
-function composeRecordReply(speech:string,ids:string[],source:string) {
+function sourceFacts(source: string) {return source.split(/(?<=[!?])\s+|(?<!\b(?:Dr|Mr|Mrs|Ms|Prof|Sr|Jr)\.)(?<=\.)\s+/).filter(Boolean).map((text,index)=>({id:`fact:${index}`,text}));}
+export function composeRecordReply(speech:string,ids:string[],source:string) {
   const facts=sourceFacts(source), selected=ids.map(id=>facts.find(f=>f.id===id));
   if(selected.some(f=>!f)||!selected.length)throw new Error('Record answer lacks matching source evidence');
   if(ids.some(id=>!speech.includes(`{{${id}}}`)))throw new Error('Record answer lacks matching source evidence');
@@ -35,9 +35,13 @@ function composeRecordReply(speech:string,ids:string[],source:string) {
     const fact=selected.find(f=>f?.id===id);if(!fact)throw new Error('Record answer lacks matching source evidence');return fact.text;
   });
   if(/\{\{|\}\}/.test(resolved))throw new Error('Record answer lacks matching source evidence');
+  // A grouping heading is an exact source quotation too. It cannot authorize
+  // a new patient name or an assertion outside the fact placeholders.
+  const headings=[...speech.matchAll(/\bFor ([\p{L}\p{N}'’ .-]{1,150}):/gu)].map(match=>match[1]!.trim());
+  if(headings.some(label=>!source.includes(label)))throw new Error('Record answer lacks matching source evidence');
   const warnings=facts.filter(f=>/failed|stale|unavailable|not verified|not inferred|negative allergy history|no .*records|don’t have/i.test(f.text));
   const missing=warnings.filter(f=>!resolved.includes(f.text));
-  return{speech:resolved+(missing.length?' '+missing.map(f=>f.text).join(' '):''),evidence:[...selected.map(f=>f!.text),...missing.map(f=>f.text)]};
+  return{speech:resolved+(missing.length?' '+missing.map(f=>f.text).join(' '):''),evidence:[...new Set([...selected.map(f=>f!.text),...missing.map(f=>f.text),...headings])]};
 }
 
 function recordContext(display: Display) {
@@ -76,15 +80,16 @@ export function validateReply(speech: string, evidence: string[], source?: strin
   }
   if (source) {
     const connective=evidence.reduce((text,quote)=>text.split(quote).join(''),speech);
+    const neutralConnective=connective.replace(/’/g,"'").replace(/\bhere(?:'s| is) the breakdown\b|\band one more thing\b/gi,'');
     const neutral=new Set("a about also an and another are as at be bit brief briefly can catch check detail details else for found from got happy have he help her here here's heres hers hi him his how i i've ive i'm im if important in information is it it's its just know latest left let let's lets like look looking me more my no note noted noting nothing now of okay on or our over question questions quick read reading change changes regarding related relevant right said says see share shift snapshot so some something stand stands sure take that that's thats the their theirs them then there's theres these they things this those to up update us useful want was we we've weve well what what's whats when where which with worth would yes you your you're youre yours".split(' '));
-    if((connective.toLowerCase().replace(/’/g,"'").match(/[a-z']+/g)||[]).some(word=>!neutral.has(word))||/\d/.test(connective))
+    if((neutralConnective.toLowerCase().replace(/’/g,"'").match(/[a-z']+/g)||[]).some(word=>!neutral.has(word))||/\d/.test(neutralConnective))
       throw new Error('Record claims must be contained in source evidence');
     const numbers = speech.match(/\b\d+(?:\.\d+)?\b/g) || [], sourceNumbers=new Set(source.match(/\b\d+(?:\.\d+)?\b/g)||[]);
     if(numbers.some(number=>!sourceNumbers.has(number))) throw new Error('Record answer introduced an unsupported number');
     for(const status of ['completed','in progress','pending','cancelled']) {
       if(new RegExp(`\\b${status}\\b`,'i').test(speech)&&!new RegExp(`\\b${status}\\b`,'i').test(source)) throw new Error('Record answer introduced an unsupported status');
     }
-    const warnings=source.split(/(?<=[.!?])\s+/).filter(sentence=>/failed|stale|unavailable|not verified|not inferred|negative allergy history|no .*records|don’t have/i.test(sentence));
+    const warnings=sourceFacts(source).map(f=>f.text).filter(sentence=>/failed|stale|unavailable|not verified|not inferred|negative allergy history|no .*records|don’t have/i.test(sentence));
     if(warnings.some(warning=>!speech.includes(warning))) throw new Error('Record answer omitted source uncertainty');
   } else if (evidence.length || /\b(?:you have \d|your (?:task|patient|handoff) (?:is|has|was)|the task is (?:completed|pending|in progress))\b/i.test(speech)) {
     throw new Error('Record claims require a current backend result');
@@ -130,6 +135,20 @@ async function runConversation(input: VoiceInput, endpoint: string) {
         if(Date.now()-started>65000) throw new Error('Voice model time budget reached');
         if(!current.pendingTool) {
           const {messages,...scope} = VoiceService.agentContext(input.session_id);
+          // The host can perform this read safely without asking the model to
+          // spend an inference turn choosing it. The actual MCP result and tool
+          // IDs are still checkpointed; only interpret_voice_request can ground
+          // an answer or stage an operation.
+          if(scope.nurse&&!current.action&&current.prefetchedRevision!==scope.revision){
+            const result=await bridge.callTool('get_voice_display',{session_id:input.session_id});
+            if(result.isError)throw new Error('Current voice records unavailable');
+            const display=JSON.parse(result.content[0]!.text) as Display;
+            const id=`${key}:context:${scope.revision}`;
+            current.messages.push({role:'assistant',content:'',toolCall:{toolName:'read_voice_context',arguments:{}},toolCallId:id},
+              {role:'tool',toolName:'read_voice_context',toolCallId:id,content:JSON.stringify(recordContext(display))});
+            current.prefetchedRevision=scope.revision;current.version=VoiceService.agentVersion(input.session_id);
+            persist('VOICE_CONTEXT_PREFETCHED');
+          }
           const result = await provider.decideNextStep(current.messages,tools,{voiceWorkflow:true,voiceReplyOnly:Boolean(current.action),scope:{...scope,currentUtterance:input.utterance,identityResolved:current.identificationRevision!==undefined}});
 
           if(result.toolCall) {
@@ -143,7 +162,13 @@ async function runConversation(input: VoiceInput, endpoint: string) {
               catch(error) {
                 if(error instanceof z.ZodError) throw error;
                 const message=error instanceof Error?error.message:'';
-                if(/^(?:Please give|That task is outside|Which task|I couldn’t find that patient|That handoff is outside|What should I write|No changes were made)/.test(message)) {
+                if(message.startsWith('Please give') && !current.intentRepairs){
+                  current.intentRepairs=1;
+                  const id=result.toolCallId||`${key}:repair:${step}`;
+                  current.messages.push({role:'assistant',content:'',toolCall:call,toolCallId:id},{role:'tool',toolName:call.toolName,toolCallId:id,content:JSON.stringify({error:'NURSE_REFERENCE_INVALID',instruction:'Recheck scope.currentUtterance. The speaker and the nurse who left are different roles. For an existing handoff use HANDOFF.source_nurse_name; never DRAFT unless creation was explicitly requested. Use the current name or surname from the speaker, not an old name from history. If unclear ask one concise question about which role the name refers to.'})});
+                  persist('VOICE_INTENT_REJECTED');continue;
+                }
+                if(/^(?:Please give|More than one nurse|I couldn’t find that nurse|That task is outside|Which task|I couldn’t find that patient|That handoff is outside|What should I write|No changes were made)/.test(message)) {
                   current.speech=message;current.status='SUCCESS';break;
                 }
                 throw new Error('Voice request could not be validated');
@@ -198,7 +223,8 @@ async function runConversation(input: VoiceInput, endpoint: string) {
             output={identificationComplete:true,requestPending:true,instruction:'Read the newly identified nurse context and fulfill the remaining request in scope.currentUtterance. Do not identify again or stop at a greeting.',...recordContext(display)};
           } else {
             current.action={display,intent:intent.intent};
-            if(!['TASKS','TASK','PATIENT','HANDOFF','CONFLICTS'].includes(intent.intent)||display.pending||!display.nurse) {
+            if(!['TASKS','TASK','PATIENT','HANDOFF','CONFLICTS'].includes(intent.intent)||display.pending||!display.nurse||
+              (intent.intent==='HANDOFF'&&!display.selectedHandoffId)) {
               // Human proposals, identity gates and confirmed outcomes stay exactly as validated by the backend.
               current.speech=display.speech;current.status='SUCCESS';
             }
@@ -272,6 +298,31 @@ export async function runVoiceTurn(input: VoiceInput, endpoint: string) {
       return JSON.parse(receipt.response_json);
     }
     const command = VoiceService.commandText(input.utterance);
+    const sourceDisplay=VoiceService.read(input.session_id);
+    if(sourceDisplay.dataSource==='hospital') {
+      if(/\bepic\b/i.test(command)) {
+        succeeded=true;return VoiceService.saveAssistantTurn(input,'You are using the synthetic hospital. Select Epic sandbox to use Epic records.');
+      }
+      // Refresh remote clinical context outside SQLite transactions, through MCP.
+      // Reconcile before a confirmation too. The version check excludes only refresh
+      // timestamps, so actual changed records still invalidate the proposed action.
+      const passive=(!command&&/\bmedi\b/i.test(input.utterance))||/^(?:cancel|no|stop|never mind|no cancel)[.! ]*$/i.test(command);
+      if(sourceDisplay.nurse&&sourceDisplay.shift&&!passive) {
+        const bridge=new MCPClientBridge(endpoint);
+        try {
+          await bridge.initialize();
+          const r=await bridge.callTool('refresh_hospital_records',{nurse_id:sourceDisplay.nurse.id,shift_id:sourceDisplay.shift.id,idempotency_key:input.idempotency_key});
+          if(r.isError||JSON.parse(r.content[0]!.text).status==='FAILED') {
+            succeeded=true;return VoiceService.saveAssistantTurn(input,'I couldn’t refresh the simulation hospital records. No requested changes were made. Please retry when the connection is available.');
+          }
+          if(/^(?:refresh|sync) hospital(?: records| patients)?[.!]?$/i.test(command)) {
+            succeeded=true;return VoiceService.saveAssistantTurn(input,'The simulation hospital records have been refreshed. Your saved task assignments are unchanged.');
+          }
+        } finally {await bridge.close();}
+      }
+    }
+    const handoffFollowup=VoiceService.handoffNameFollowup(input);
+    if(handoffFollowup){succeeded=true;return handoffFollowup;}
     if((process.env.LLM_PROVIDER||'mock').toLowerCase()!=='mock') {
       // Confirmation/cancellation are human control messages, never model-generated decisions.
       const control=(!command&&/\bmedi\b/i.test(input.utterance)) || /^(?:yes|confirm|yes confirm|confirm it|yes please|cancel|no|stop|never mind|no cancel)[.! ]*$/i.test(command);

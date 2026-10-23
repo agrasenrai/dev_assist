@@ -121,7 +121,7 @@ export class MCPClientBridge {
     const response = await this.sendRequest("tools/call", {
       name,
       arguments: args
-    }, ['voice_turn', 'sync_epic_workspace'].includes(name) ? 95_000 : 30_000);
+    }, ['voice_turn', 'sync_epic_workspace','review_simulation'].includes(name) ? 120_000 : 30_000);
 
     if (response.error) {
       return {

@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import type { MCPToolDefinition } from './mcp-client-bridge.js';
 import type { Task } from '../providers/types.js';
 import type { Message, Tool } from '@aws-sdk/client-bedrock-runtime';
@@ -60,8 +60,11 @@ read_voice_context retrieves current scoped records through MCP,
 interpret_voice_request maps your structured interpretation to the existing validated backend, and reply_to_nurse delivers a grounded spoken answer.
 Use the shared saved history and selected references in scope for follow-ups. A feeling ("I'm confused", "I'm done talking") is not a nurse introduction or task update.
 For self-introductions call IDENTIFY with the name the speaker actually gave. A bare registered name can be an introduction. Never select a nurse by guessing.
+When the current nurse is already identified and the discussion is about a colleague leaving or a missing handoff, a bare surname/full name supplied in reply refers to that colleague, not an identity switch. Use HANDOFF.source_nurse_name. Switch the speaker only when they explicitly introduce themselves or request a switch. A unique surname is supported; ambiguous names require clarification.
+"Where did she leave off", "Reema left in between", and "continue from Patel" request an existing HANDOFF. They never authorize DRAFT creation, acceptance or custody transfer. Use source_nurse_name for the colleague when known. If no saved handoff exists, the backend returns an honest explanation and available assigned-task counts; do not invent a handoff or rewrite that missing-record response.
 If the SAME utterance introduces the speaker AND asks about tasks, patients or another workflow, set IDENTIFY.continue_request=true. After identificationComplete, read_voice_context again and handle the remaining original request; do not stop at a greeting or ask how to help when they already told you. If scope.identityResolved is true, never identify again in this turn. A different nurse mentioned as leaving a shift is not the speaker and does not imply custody transfer. For an introduction alone omit continue_request.
 Before answering ANY workflow/patient question, read_voice_context, then call interpret_voice_request with an appropriate reading intent.
+The host supplies read_voice_context automatically for an identified nurse. If its result is already present for the current turn, use that result directly and do not call read_voice_context again. General conversation still needs no workflow operation. Context alone never authorizes factual answers; use interpret_voice_request before a RECORDS reply.
 "What should I focus on?" asks for UNFINISHED TASKS, not clinical triage. "Did that get done?" asks for TASK status using the selected ID.
 "I'm finished with that checklist" requests STATUS COMPLETED and must only stage a proposal. Never call a confirmation tool; none is available.
 STATUS is a local coordination update, not a clinical note or medication administration record. It does NOT require a note, vitals, neuro findings, observations or a description of care. If the selected task is clear and the user says it is finished, call STATUS with COMPLETED immediately to stage human confirmation. Do not invent extra prerequisites.
@@ -73,6 +76,7 @@ For TASKS/TASK/PATIENT/HANDOFF reads, use the returned authoritativeAnswer to an
 The operation returns facts with IDs fact:0, fact:1, etc. In reply_to_nurse speech use {{fact:0}} placeholders for the relevant facts, and list the matching IDs in evidence.
 For example speech can be "Here's what I found. {{fact:1}}" with evidence ["fact:1"]. Do NOT copy or paraphrase source facts; the server fills the placeholders exactly.
 Choose relevant facts and their order; use brief neutral conversational connective text outside the placeholders. Never add record numbers, statuses, names, diagnoses or clinical advice outside facts.
+You may group facts using a heading "For <label>:" only when <label> is copied exactly from authoritativeAnswer. Do not shorten or invent names. Safe transitions include "Here is what I found.", "Here's the breakdown." and "And one more thing". Avoid additional headings or commentary.
 For record replies keep connective text very brief, such as "Here is what I found." All substantive information must be supplied by fact placeholders. Do not infer which clinical work is urgent or recommend a care priority.
 CONVERSATION, CLARIFICATION, UNSUPPORTED and REFUSAL are not evidence: never put patient/task facts into them, even from earlier messages or a context-only read. Read through interpret_voice_request and use RECORDS with fact placeholders instead. General replies may acknowledge feelings, ask which patient/task the nurse means, or state an explicit refusal such as "I cannot recommend treatment." Do not attach clinical advice to a refusal.
 You can omit irrelevant details but preserve any missing-data or failed/stale-source warnings. Do not replace facts with unsupported "stable", "fine" or "nothing to worry about".
@@ -157,11 +161,17 @@ ${detail.activeConflict ? 'Conflicting documentation requires human review.' : '
 }
 
 export function toBedrockMessages(messages: AgentMessage[]): Message[] {
+  // Claude's underlying tool_use.id contract is stricter than Converse's
+  // transport schema. Normalize host-generated IDs identically on both sides.
+  const toolId=(value:string|undefined)=>{
+    if(!value)throw new Error('Model tool call ID is required');
+    return /^[a-zA-Z0-9_-]{1,64}$/.test(value)?value:`tool_${createHash('sha256').update(value).digest('hex').slice(0,56)}`;
+  };
   return messages.filter(m => m.role !== 'system').map(m => {
     if (m.role === 'tool') return { role: 'user', content: [{ toolResult: {
-      toolUseId: m.toolCallId!, content: [{ text: m.content }], status: 'success' } }] };
+      toolUseId: toolId(m.toolCallId), content: [{ text: m.content }], status: 'success' } }] };
     if (m.toolCall) return { role: 'assistant', content: [{ toolUse: {
-      toolUseId: m.toolCallId!, name: m.toolCall.toolName, input: m.toolCall.arguments as never } }] };
+      toolUseId: toolId(m.toolCallId), name: m.toolCall.toolName, input: m.toolCall.arguments as never } }] };
     return { role: m.role as 'user' | 'assistant', content: [{ text: m.content }] };
   });
 }

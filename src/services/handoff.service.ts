@@ -4,6 +4,7 @@ import { MutationService } from './mutation.service.js';
 import type { EpicClinicalContext } from '../providers/epic-mapping.service.js';
 import { FieldAuthorityService, FIELD_AUTHORITY_MATRIX } from './field-authority.service.js';
 import { EpicWorkflowService } from './epic-workflow.service.js';
+import { HospitalService } from './hospital.service.js';
 import { currentStaff, staffAuthRequired, requireStaff } from './staff-context.js';
 
 export interface HandoffDraftInput {
@@ -89,7 +90,7 @@ export class HandoffService {
 
         const operationalNotes=staffAuthRequired()?db.prepare('SELECT o.*,n.full_name AS author_name FROM operational_notes o JOIN nurses n ON n.id=o.author_id WHERE o.shift_id=? ORDER BY o.created_at').all(args.shift_id).filter((n:any)=>tasks.some(t=>t.patient_id===n.patient_id)):[];
         if(operationalNotes.length)summary+='\n\n## Recorded operational sandbox notes\n'+operationalNotes.map((n:any)=>`Source ${n.id}; patient ${n.patient_id}; author ${n.author_name}; recorded ${n.created_at}: ${n.text}`).join('\n');
-        const epicRecords = EpicWorkflowService.recordsForPatients(tasks.map(t => t.patient_id));
+        const epicRecords = [...EpicWorkflowService.recordsForPatients(tasks.map(t => t.patient_id)),...HospitalService.recordsForPatients(tasks.map(t => t.patient_id))];
         summary += EpicWorkflowService.narrative(epicRecords);
         const snapshotData = {
           ...(staffAuthRequired()?{operationalNotes}:{}),

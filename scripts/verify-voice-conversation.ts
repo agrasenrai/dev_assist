@@ -4,7 +4,7 @@ import { BedrockLLMProvider, type AgentMessage } from '../src/agent/llm-provider
 import { db } from '../src/db/connection.js';
 import { CheckpointService } from '../src/services/checkpoint.service.js';
 import { VoiceService, type VoiceIntent } from '../src/services/voice.service.js';
-import { validateReply } from '../src/services/voice-agent.service.js';
+import { composeRecordReply, validateReply } from '../src/services/voice-agent.service.js';
 
 /** Adapter fixtures exercise real HTTP/MCP and durable services; live inference is checked separately. */
 export async function verifyVoiceConversation(base:string,check:(name:string,action:()=>unknown)=>void) {
@@ -13,6 +13,7 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
   const session=randomUUID();let revision=0,calls=0;let lastMessages:AgentMessage[]=[];
   let intent:VoiceIntent|undefined;
   let continuationIntent:VoiceIntent|undefined;
+  let invalidNameOnce=false;
   let generatedReply:{speech:string;kind:string;viaTool:boolean;readFirst?:boolean}|undefined;
   let mode:'chat'|'intent'|'failure'|'tool'|'fabricate'|'source-change'|'false-confirm'='chat';
   const taskId='voice_task';
@@ -24,7 +25,8 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     if(mode==='tool')return{toolCall:{toolName:'acknowledge_task',arguments:{human_confirmed:true}}};
     if(mode==='false-confirm')return{toolCall:{toolName:'interpret_voice_request',arguments:{intent:'CONFIRM'}}};
     const userIndex=messages.findLastIndex(m=>m.role==='user'),utterance=messages[userIndex]!.content;
-    const steps=messages.slice(userIndex+1).filter(m=>m.role==='tool');
+    const steps=messages.slice(userIndex+1).filter(m=>m.role==='tool'&&!m.content.includes('NURSE_REFERENCE_INVALID'));
+    if(invalidNameOnce){invalidNameOnce=false;return{toolCall:{toolName:'interpret_voice_request',arguments:{intent:'IDENTIFY',nurse_name:'Someone Else'}}};}
     if(generatedReply) {
       if(generatedReply.readFirst&&!steps.some(m=>m.toolName==='read_voice_context'))return{toolCall:{toolName:'read_voice_context',arguments:{}}};
       return generatedReply.viaTool
@@ -58,6 +60,11 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     mode='intent';intent={intent:'IDENTIFY',nurse_name:'Maya'};
     const introduced=await say('Maya here, ready to get started');
     check('semantic introduction validates the existing nurse without an I-am keyword',()=>assert.equal(introduced.nurse.id,'voice_maya'));
+    check('speaker validation accepts a nurse title and does not select the departing colleague',()=>{
+      const input={session_id:session,utterance:'I am nurse Maya and Nora has left',expected_revision:revision,idempotency_key:randomUUID()};
+      assert.equal(VoiceService.commandForIntent(input,{intent:'IDENTIFY',nurse_name:'Maya Test'}),'I am Maya Test');
+      assert.throws(()=>VoiceService.commandForIntent(input,{intent:'IDENTIFY',nurse_name:'Nora Test'}),/Please give/);
+    });
     mode='chat';const feeling=await say('I am confused');
     check('feelings do not reset the selected nurse',()=>{assert.equal(feeling.nurse.id,'voice_maya');assert.match(feeling.speech,/one step/);});
     mode='intent';intent={intent:'DRAFT',recipient_name:'Nora Test'};
@@ -158,6 +165,18 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
       assert.throws(()=>validateReply(`${fact} I cannot see the chart. Increase the medication dose.`,[fact],fact),/Clinical advice/);
       assert.throws(()=>validateReply('Do not increase the medication dose.',[]),/Clinical advice/);
     });
+    check('source-backed patient headings and neutral Bedrock transitions pass without weakening fact validation',()=>{
+      const source='You have 1 assigned task. Review transport for Dr. Rowan Demo is pending. Location not verified.';
+      const reply=composeRecordReply("Here's the breakdown. For Dr. Rowan Demo: {{fact:1}} And one more thing — {{fact:0}}",['fact:1','fact:0'],source);
+      assert.match(reply.speech,/Review transport for Dr\. Rowan Demo is pending\./);
+      assert.match(reply.speech,/Location not verified/);
+      assert.doesNotThrow(()=>validateReply(reply.speech,reply.evidence,source));
+      assert.throws(()=>composeRecordReply('For Invented Patient: {{fact:1}}',['fact:1'],source),/matching source evidence/);
+      for(const addition of [' The patient has a latex allergy.',' The task is completed.',' Here is the breakdown: increase the medication dose.',' You have 9 tasks.']){
+        const unsafe=composeRecordReply(`{{fact:1}}${addition}`,['fact:1'],source);
+        assert.throws(()=>validateReply(unsafe.speech,unsafe.evidence,source));
+      }
+    });
     generatedReply=undefined;mode='intent';
     const compoundInput={session_id:randomUUID(),utterance:'Hii I am Maya and Nora left off so I want to know about my tasks',expected_revision:0,idempotency_key:randomUUID()};
     intent={intent:'IDENTIFY',nurse_name:'Maya',continue_request:true};continuationIntent={intent:'TASKS',status:'ALL'};
@@ -200,6 +219,40 @@ export async function verifyVoiceConversation(base:string,check:(name:string,act
     check('combined introduction recovers its final answer without repeating identification or reads',()=>{
       assert.equal(recovered.status,200);assert.equal(calls,combinedCalls);assert.match(recovered.data.speech,/completed/);
       assert.equal(recovered.data.messages.filter((m:any)=>m.role==='nurse').length,1);
+    });
+    db.prepare("INSERT INTO nurses(id,badge_number,full_name,email,department) VALUES('voice_harper','VOICE-HARPER','Harper Lane','harper@example.test','VOICE')").run();
+    intent={intent:'HANDOFF',source_nurse_name:'Lane'};
+    const priorHandoffs=db.prepare('SELECT * FROM handoffs ORDER BY id').all();
+    const priorAssignments=db.prepare('SELECT * FROM task_assignments ORDER BY id').all();
+    const beforeMissingCalls=calls;
+    const missing=await say('Lane has left. Where did they leave off?');
+    check('missing handoff returns grounded guidance without a model rewrite or identity switch',()=>{
+      assert.equal(missing.nurse.id,'voice_maya');assert.match(missing.speech,/saved handoff from Harper Lane/);
+      assert.match(missing.speech,/assigned tasks/);assert.doesNotMatch(missing.speech,/couldn.t generate|say .prepare|Please give the nurse/i);
+      assert.equal(calls-beforeMissingCalls,1);assert.equal(modelStatus(),'SUCCESS');
+    });
+    const followed=await say('Harper Lane');
+    check('surname and full-name colleague follow-ups preserve the speaker and source reference',()=>{
+      assert.equal(followed.nurse.id,'voice_maya');assert.match(followed.speech,/Harper Lane/);
+      assert.equal(VoiceService.agentContext(session).handoffSourceNurseId,'voice_harper');
+    });
+    invalidNameOnce=true;
+    const repaired=await say('Harper Lane is the nurse who left');
+    check('invalid model name gets one durable repair instead of trapping the nurse in a name loop',()=>{
+      assert.equal(repaired.nurse.id,'voice_maya');assert.match(repaired.speech,/Harper Lane/);assert.equal(modelStatus(),'SUCCESS');
+    });
+    intent={intent:'HANDOFF',source_nurse_name:'Test'};
+    const ambiguous=await say('Test');
+    check('ambiguous colleague surname asks for clarification without guessing or transferring custody',()=>{
+      assert.match(ambiguous.speech,/More than one nurse/);assert.equal(ambiguous.nurse.id,'voice_maya');
+      assert.deepEqual(db.prepare('SELECT * FROM handoffs ORDER BY id').all(),priorHandoffs);
+      assert.deepEqual(db.prepare('SELECT * FROM task_assignments ORDER BY id').all(),priorAssignments);
+    });
+    const availableHandoff=VoiceService.read(session).handoffs[0];assert(availableHandoff);
+    intent={intent:'HANDOFF',handoff_id:availableHandoff.id};
+    const explicitHandoff=await say(`Review handoff ${availableHandoff.id}`);
+    check('explicit scoped handoff selection replaces a previous missing-source filter',()=>{
+      assert.equal(explicitHandoff.selectedHandoffId,availableHandoff.id);assert.match(explicitHandoff.speech,/Handoff from/);
     });
   }finally{BedrockLLMProvider.prototype.decideNextStep=original;if(originalProvider===undefined)delete process.env.LLM_PROVIDER;else process.env.LLM_PROVIDER=originalProvider;}
 }

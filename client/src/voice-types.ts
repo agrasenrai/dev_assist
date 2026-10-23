@@ -2,6 +2,7 @@ export interface VoiceTask {
   id: string; patientName: string; roomNumber: string; title: string; status: string; priority: string; source: string;
 }
 export interface VoiceDisplay {
+  dataSource?: 'existing'|'hospital'|'epic';
   revision: number;
   nurse: { id: string; name: string; department: string } | null;
   shift: { id: string; unit: string; type: string; start: string; end: string } | null;

@@ -9,6 +9,7 @@ backups/
 .sandbox/
 data/workflow-sandbox-*.db
 data/epic-demo-*.db
+data/reviewer-simulations*.db
 # SQLite transient WAL sidecars
 data/*.db-wal
 data/*.db-shm

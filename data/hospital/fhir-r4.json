@@ -1,0 +1,419 @@
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Patient/sw-rowan",
+      "resource": {
+        "resourceType": "Patient",
+        "id": "sw-rowan",
+        "active": true,
+        "identifier": [
+          {
+            "system": "urn:shiftweave:synthetic-mrn",
+            "value": "SW-ROWAN"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "given": [
+              "Rowan"
+            ],
+            "family": "Morgan"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Patient/sw-rowan"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Encounter/sw-rowan-stay",
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "sw-rowan-stay",
+        "status": "in-progress",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP"
+        },
+        "subject": {
+          "reference": "Patient/sw-rowan"
+        },
+        "period": {
+          "start": "2026-10-22T08:00:00Z"
+        },
+        "location": [
+          {
+            "status": "active",
+            "location": {
+              "reference": "Location/ward-701",
+              "display": "Room 701"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Encounter/sw-rowan-stay"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Location/ward-701",
+      "resource": {
+        "resourceType": "Location",
+        "id": "ward-701",
+        "status": "active",
+        "name": "Room 701"
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Location/ward-701"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Condition/sw-rowan-condition",
+      "resource": {
+        "resourceType": "Condition",
+        "id": "sw-rowan-condition",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "code": {
+          "text": "Observation after a recent procedure"
+        },
+        "subject": {
+          "reference": "Patient/sw-rowan"
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Condition/sw-rowan-condition"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/DocumentReference/sw-rowan-note",
+      "resource": {
+        "resourceType": "DocumentReference",
+        "id": "sw-rowan-note",
+        "status": "current",
+        "subject": {
+          "reference": "Patient/sw-rowan"
+        },
+        "date": "2026-10-23T06:00:00Z",
+        "description": "Synthetic shift coordination note",
+        "content": [
+          {
+            "attachment": {
+              "contentType": "text/plain",
+              "data": "U3ludGhldGljIHNjZW5hcmlvLiBDb25maXJtIG91dHN0YW5kaW5nIHBhcGVyd29yayBhbmQgdHJhbnNwb3J0IGFycmFuZ2VtZW50cyBmb3IgUm93YW4uIENsaW5pY2FsIGNhcmUgZGVjaXNpb25zIHJlbWFpbiB3aXRoIHRoZSBjYXJlIHRlYW0u"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "DocumentReference/sw-rowan-note"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/AllergyIntolerance/sw-rowan-allergy",
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "sw-rowan-allergy",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "code": {
+          "text": "Latex"
+        },
+        "patient": {
+          "reference": "Patient/sw-rowan"
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "url": "AllergyIntolerance/sw-rowan-allergy"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Patient/sw-taylor",
+      "resource": {
+        "resourceType": "Patient",
+        "id": "sw-taylor",
+        "active": true,
+        "identifier": [
+          {
+            "system": "urn:shiftweave:synthetic-mrn",
+            "value": "SW-TAYLOR"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "given": [
+              "Taylor"
+            ],
+            "family": "Brooks"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Patient/sw-taylor"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Encounter/sw-taylor-stay",
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "sw-taylor-stay",
+        "status": "in-progress",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP"
+        },
+        "subject": {
+          "reference": "Patient/sw-taylor"
+        },
+        "period": {
+          "start": "2026-10-22T08:00:00Z"
+        },
+        "location": [
+          {
+            "status": "active",
+            "location": {
+              "reference": "Location/ward-702",
+              "display": "Room 702"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Encounter/sw-taylor-stay"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Location/ward-702",
+      "resource": {
+        "resourceType": "Location",
+        "id": "ward-702",
+        "status": "active",
+        "name": "Room 702"
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Location/ward-702"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Condition/sw-taylor-condition",
+      "resource": {
+        "resourceType": "Condition",
+        "id": "sw-taylor-condition",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "code": {
+          "text": "Observation following a fall"
+        },
+        "subject": {
+          "reference": "Patient/sw-taylor"
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Condition/sw-taylor-condition"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/DocumentReference/sw-taylor-note",
+      "resource": {
+        "resourceType": "DocumentReference",
+        "id": "sw-taylor-note",
+        "status": "current",
+        "subject": {
+          "reference": "Patient/sw-taylor"
+        },
+        "date": "2026-10-23T06:00:00Z",
+        "description": "Synthetic shift coordination note",
+        "content": [
+          {
+            "attachment": {
+              "contentType": "text/plain",
+              "data": "U3ludGhldGljIHNjZW5hcmlvLiBDb25maXJtIG91dHN0YW5kaW5nIHBhcGVyd29yayBhbmQgdHJhbnNwb3J0IGFycmFuZ2VtZW50cyBmb3IgVGF5bG9yLiBDbGluaWNhbCBjYXJlIGRlY2lzaW9ucyByZW1haW4gd2l0aCB0aGUgY2FyZSB0ZWFtLg=="
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "DocumentReference/sw-taylor-note"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Patient/sw-casey",
+      "resource": {
+        "resourceType": "Patient",
+        "id": "sw-casey",
+        "active": true,
+        "identifier": [
+          {
+            "system": "urn:shiftweave:synthetic-mrn",
+            "value": "SW-CASEY"
+          }
+        ],
+        "name": [
+          {
+            "use": "official",
+            "given": [
+              "Casey"
+            ],
+            "family": "Shah"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Patient/sw-casey"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Encounter/sw-casey-stay",
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "sw-casey-stay",
+        "status": "in-progress",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "IMP"
+        },
+        "subject": {
+          "reference": "Patient/sw-casey"
+        },
+        "period": {
+          "start": "2026-10-22T08:00:00Z"
+        },
+        "location": [
+          {
+            "status": "active",
+            "location": {
+              "reference": "Location/ward-703",
+              "display": "Room 703"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Encounter/sw-casey-stay"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Location/ward-703",
+      "resource": {
+        "resourceType": "Location",
+        "id": "ward-703",
+        "status": "active",
+        "name": "Room 703"
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Location/ward-703"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/Condition/sw-casey-condition",
+      "resource": {
+        "resourceType": "Condition",
+        "id": "sw-casey-condition",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "code": {
+          "text": "Discharge planning"
+        },
+        "subject": {
+          "reference": "Patient/sw-casey"
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "url": "Condition/sw-casey-condition"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/DocumentReference/sw-casey-note",
+      "resource": {
+        "resourceType": "DocumentReference",
+        "id": "sw-casey-note",
+        "status": "current",
+        "subject": {
+          "reference": "Patient/sw-casey"
+        },
+        "date": "2026-10-23T06:00:00Z",
+        "description": "Synthetic shift coordination note",
+        "content": [
+          {
+            "attachment": {
+              "contentType": "text/plain",
+              "data": "U3ludGhldGljIHNjZW5hcmlvLiBDb25maXJtIG91dHN0YW5kaW5nIHBhcGVyd29yayBhbmQgdHJhbnNwb3J0IGFycmFuZ2VtZW50cyBmb3IgQ2FzZXkuIENsaW5pY2FsIGNhcmUgZGVjaXNpb25zIHJlbWFpbiB3aXRoIHRoZSBjYXJlIHRlYW0u"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "url": "DocumentReference/sw-casey-note"
+      }
+    },
+    {
+      "fullUrl": "https://shiftweave.invalid/fhir/AllergyIntolerance/sw-casey-allergy",
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "sw-casey-allergy",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "code": {
+          "text": "Penicillin"
+        },
+        "patient": {
+          "reference": "Patient/sw-casey"
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "url": "AllergyIntolerance/sw-casey-allergy"
+      }
+    }
+  ]
+}

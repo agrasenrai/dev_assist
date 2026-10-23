@@ -3,6 +3,7 @@ import { OneThreadWorkspace } from './components/OneThreadWorkspace.js';
 import { WorkspaceEntry } from './components/OperationalWorkspace.js';
 import { staffRequest, type Staff } from './operational-api.js';
 import { startFreshVoiceSession } from './voice-api.js';
+import { SimulationWorkspace } from './components/SimulationWorkspace.js';
 
 function VoiceEntry() {
   const [ready, setReady] = useState(false);
@@ -32,6 +33,9 @@ function VoiceEntry() {
 }
 
 export function App() {
+  const [simulation,setSimulation]=useState(false);
+  useEffect(()=>{if(window.location.pathname!=='/staff')void fetch('/api/simulations').then(r=>r.ok?r.json():{}).then((c:{enabled?:boolean;hosted?:boolean})=>setSimulation(c.enabled===true&&(!c.hosted||new URLSearchParams(window.location.search).get('workspace')==='simulations'))).catch(()=>{});},[]);
+  if(simulation && new URLSearchParams(window.location.search).get('workspace')!=='voice')return <SimulationWorkspace/>;
   return window.location.pathname === '/staff' ? <WorkspaceEntry/> : <VoiceEntry/>;
 }
 export default App;

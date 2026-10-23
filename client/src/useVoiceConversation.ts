@@ -1,225 +1,152 @@
 import { useEffect, useRef, useState } from 'react';
 
-// Responsive 600ms pause for snappy speech-to-speech interaction
-const sentencePauseMs = 600;
+const sentencePauseMs=1400, restartDelayMs=100;
+const words=(text:string)=>text.toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+const playbackControl=/^(?:(?:hey )?(?:medi|alexa)[, ]*)?(?:stop|stop speaking|be quiet|quiet|listen|listen to me|wait|hold on)[.! ]*$/i;
 
-// Browser recognition is a demo adapter. The MCP voice_turn tool also accepts transcripts from a voice host.
-export function useVoiceConversation(onTranscript: (text: string) => Promise<string>) {
-  const [enabled, setEnabled] = useState(false);
-  const [status, setStatus] = useState('Ready');
-  const [error, setError] = useState('');
-  const [transcript, setTranscript] = useState('');
-  const callback = useRef(onTranscript); callback.current = onTranscript;
-  const control = useRef({ enabled: false, processing: false, disposed: false, recognition: null as any,
-    timer: 0, speechTimer: 0, sentenceTimer: 0, finalTranscript: '', interimTranscript: '',
-    generation: 0, finishSpeech: null as (() => void) | null });
-  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-  const supported = Boolean(SpeechRecognition);
-  const listenRef = useRef<() => void>(() => {});
-
-  const stop = () => {
-    const c = control.current; c.enabled = false; c.generation++;
-    window.clearTimeout(c.timer);
-    window.clearTimeout(c.sentenceTimer); c.sentenceTimer = 0; c.finalTranscript = ''; c.interimTranscript = '';
-    c.recognition?.abort(); c.recognition = null;
-    window.speechSynthesis?.cancel(); c.finishSpeech?.();
-    setEnabled(false); setStatus('Paused');
+// Keep capture alive during playback. A new utterance waits for an in-flight
+// backend operation to commit; interrupting audio never retries or cancels writes.
+export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>){
+  const [enabled,setEnabled]=useState(false),[status,setStatus]=useState('Ready');
+  const [error,setError]=useState(''),[transcript,setTranscript]=useState('');
+  const callback=useRef(onTranscript);callback.current=onTranscript;
+  const control=useRef({enabled:false,processing:false,disposed:false,speaking:false,suppressAnswer:false,
+    recognition:null as any,stream:null as MediaStream|null,timer:0,sentenceTimer:0,speechTimer:0,startupTimer:0,
+    finalTranscript:'',interimTranscript:'',queuedText:'',spokenText:'',ignoreEchoUntil:0,generation:0,turn:0,
+    playback:0,finishSpeech:null as (()=>void)|null,ttsEnabled:false});
+  const Recognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;
+  const supported=Boolean(Recognition);
+  const listenRef=useRef<()=>void>(()=>{}),submitRef=useRef<(text:string)=>Promise<void>>(async()=>{});
+  const cancelSpeech=()=>{
+    const c=control.current;c.playback++;c.speaking=false;
+    window.clearTimeout(c.speechTimer);window.clearTimeout(c.startupTimer);
+    const finish=c.finishSpeech;c.finishSpeech=null;finish?.();window.speechSynthesis?.cancel();
+    c.ignoreEchoUntil=performance.now()+350;
   };
-  const speakWithBrowser = (text: string, finish: () => void, generation: number) => {
-    if (!window.speechSynthesis) { setError('Speech playback is unavailable. The response is displayed on screen.'); finish(); return; }
-    const c = control.current;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US'; utterance.rate = 1;
-    utterance.onend = finish;
-    utterance.onerror = () => { if (!c.disposed && c.generation === generation) setError('Speech playback stopped. The response remains on screen.'); finish(); };
-    c.speechTimer = window.setTimeout(() => {
-      if (!c.disposed) setError('Speech playback timed out. The response remains on screen.');
-      window.speechSynthesis.cancel(); finish();
-    }, 120000);
-    try { window.speechSynthesis.speak(utterance); }
-    catch { setError('Speech playback is unavailable. The response remains on screen.'); finish(); }
+  const stop=()=>{
+    const c=control.current;c.enabled=false;c.generation++;c.suppressAnswer=true;
+    window.clearTimeout(c.timer);window.clearTimeout(c.sentenceTimer);
+    c.finalTranscript='';c.interimTranscript='';c.queuedText='';
+    const recognition=c.recognition;c.recognition=null;recognition?.abort();
+    c.stream?.getTracks().forEach(track=>track.stop());c.stream=null;
+    cancelSpeech();setEnabled(false);setStatus('Paused');
   };
-  const speak = (text: string) => new Promise<void>(async (resolve) => {
-    const c = control.current;
-    const generation = c.generation;
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true; window.clearTimeout(c.speechTimer); c.finishSpeech = null; resolve();
+  const interrupt=()=>{
+    const c=control.current;c.suppressAnswer=true;cancelSpeech();
+    if(c.enabled){setStatus('Listening');listenRef.current();}else void start();
+  };
+  const speak=(text:string)=>new Promise<void>(resolve=>{
+    const c=control.current;cancelSpeech();const playback=c.playback,generation=c.generation;
+    let finished=false,browserStarted=false,audio:HTMLAudioElement|undefined;
+    const current=()=>!finished&&!c.disposed&&c.playback===playback&&c.generation===generation;
+    const releaseAudio=()=>{if(!audio)return;audio.onplay=null;audio.onended=null;audio.onerror=null;audio.pause();audio.removeAttribute('src');audio.load();audio=undefined;};
+    const finish=()=>{if(finished)return;finished=true;releaseAudio();window.clearTimeout(c.speechTimer);window.clearTimeout(c.startupTimer);
+      if(c.playback===playback){c.finishSpeech=null;c.speaking=false;c.ignoreEchoUntil=performance.now()+350;}resolve();};
+    c.finishSpeech=finish;c.speaking=true;c.spokenText=text;c.ignoreEchoUntil=0;setStatus('Speaking');
+    c.speechTimer=window.setTimeout(()=>{if(current()){setError('Speech playback timed out. The response remains on screen.');window.speechSynthesis?.cancel();finish();}},120000);
+    const browser=()=>{
+      if(!current()||browserStarted)return;browserStarted=true;releaseAudio();window.clearTimeout(c.startupTimer);
+      if(!window.speechSynthesis){setError('Speech playback is unavailable. The response is displayed on screen.');finish();return;}
+      const utterance=new SpeechSynthesisUtterance(text);utterance.lang=navigator.language||'en-US';utterance.rate=1;
+      utterance.onend=finish;utterance.onerror=()=>{if(current())setError('Speech playback stopped. The response remains on screen.');finish();};
+      try{window.speechSynthesis.speak(utterance);}catch{setError('Speech playback is unavailable. The response remains on screen.');finish();}
     };
-    c.finishSpeech = finish;
-
-    // 1. Ultra-fast ElevenLabs chunked streaming TTS for immediate playback
-    try {
-      const streamUrl = `/api/tts/stream?text=${encodeURIComponent(text)}`;
-      const audio = new Audio(streamUrl);
-      let started = false;
-
-      c.finishSpeech = () => {
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
-        finish();
-      };
-      audio.onplay = () => {
-        started = true;
-      };
-      audio.onended = () => {
-        audio.removeAttribute('src');
-        audio.load();
-        finish();
-      };
-      audio.onerror = () => {
-        if (!started) {
-          audio.removeAttribute('src');
-          audio.load();
-          speakWithBrowser(text, finish, generation);
-        } else {
-          finish();
-        }
-      };
-      c.speechTimer = window.setTimeout(() => {
-        if (!c.disposed) setError('Speech playback timed out. The response remains on screen.');
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
-        finish();
-      }, 120000);
-      await audio.play();
-      return;
-    } catch {
-      // Gracefully fall back to browser synthesis
-    }
-
-    // 2. Local browser Web Speech API fallback
-    speakWithBrowser(text, finish, generation);
+    if(!c.ttsEnabled){browser();return;}
+    audio=new Audio(`/api/tts/stream?text=${encodeURIComponent(text)}`);
+    audio.onplay=()=>{if(current())window.clearTimeout(c.startupTimer);};audio.onended=finish;
+    audio.onerror=()=>{if(current()){setError('Cloud speech is unavailable; using browser speech.');browser();}};
+    c.startupTimer=window.setTimeout(()=>{if(current()){setError('Cloud speech is taking too long; using browser speech.');browser();}},1800);
+    void audio.play().catch(()=>{if(current())browser();});
   });
-  const submit = async (text: string) => {
-    const c = control.current;
-    if (c.processing) return;
-    window.clearTimeout(c.sentenceTimer); c.sentenceTimer = 0; c.finalTranscript = ''; c.interimTranscript = '';
-    setTranscript(text);
-    const generation = c.generation;
-    c.processing = true;
-    c.recognition?.abort(); c.recognition = null;
-    setStatus('Working'); setError('');
-    try {
-      const answer = await callback.current(text);
-      if (!c.disposed && c.generation === generation) {
-        setStatus('Speaking');
-        await speak(answer);
-      }
-    } catch (e) {
-      if (!c.disposed && c.generation === generation) {
-        setError(e instanceof Error ? e.message : String(e));
-        setStatus('Speaking');
-        await speak('I could not complete that request. Please retry the last request before starting another action.');
-      }
-    }
-    finally {
-      c.processing = false;
-      if (!c.disposed) {
-        setStatus(c.enabled ? 'Listening' : 'Ready');
-        if (c.enabled) c.timer = window.setTimeout(() => listenRef.current(), 450);
-      }
+  const resetCapture=()=>{
+    const c=control.current;const recognition=c.recognition;c.recognition=null;recognition?.abort();
+    c.finalTranscript='';c.interimTranscript='';if(c.enabled)listenRef.current();
+  };
+  const submit=async(raw:string)=>{
+    const text=raw.trim();if(!text)return;const c=control.current;
+    if(c.processing){c.queuedText=[c.queuedText,text].filter(Boolean).join(' ');c.suppressAnswer=true;resetCapture();return;}
+    cancelSpeech();window.clearTimeout(c.sentenceTimer);c.finalTranscript='';c.interimTranscript='';c.queuedText='';c.suppressAnswer=false;
+    const generation=c.generation,turn=++c.turn;c.processing=true;setTranscript(text);setStatus('Working');setError('');
+    resetCapture();
+    try{
+      const answer=await callback.current(text);c.processing=false;
+      if(!c.disposed&&c.generation===generation&&!c.suppressAnswer&&!c.queuedText)await speak(answer);
+    }catch(e){c.processing=false;if(!c.disposed&&c.generation===generation&&!c.suppressAnswer){
+      setError(e instanceof Error?e.message:String(e));await speak('I could not complete that request. Please retry the last request before starting another action.');
+    }}finally{
+      if(c.turn!==turn)return;c.processing=false;
+      if(!c.disposed){if(c.enabled&&c.queuedText){const queued=c.queuedText;c.queuedText='';void submitRef.current(queued);}
+        else{setStatus(c.enabled?'Listening':'Ready');if(c.enabled)listenRef.current();}}
     }
   };
-  const waitForSentence = () => {
-    const c = control.current;
-    window.clearTimeout(c.sentenceTimer);
-    c.sentenceTimer = 0;
-    if (!c.finalTranscript || c.interimTranscript || !c.enabled || c.disposed || c.processing) return;
-    c.sentenceTimer = window.setTimeout(() => {
-      c.sentenceTimer = 0;
-      if (c.enabled && !c.processing && !c.disposed && !c.interimTranscript && c.finalTranscript) void submit(c.finalTranscript);
-    }, sentencePauseMs);
+  submitRef.current=submit;
+  const waitForSentence=()=>{
+    const c=control.current;window.clearTimeout(c.sentenceTimer);c.sentenceTimer=0;
+    if(!c.finalTranscript||c.interimTranscript||!c.enabled||c.disposed||c.speaking)return;
+    const delay=/^(?:confirm|yes confirm|cancel|no cancel)[.! ]*$/i.test(c.finalTranscript)?450:sentencePauseMs;
+    c.sentenceTimer=window.setTimeout(()=>{c.sentenceTimer=0;if(c.enabled&&!c.disposed&&!c.interimTranscript&&c.finalTranscript){
+      const text=c.finalTranscript;c.finalTranscript='';void submitRef.current(text);
+    }},delay);
   };
-  listenRef.current = () => {
-    const c = control.current;
-    window.clearTimeout(c.timer);
-    if (!c.enabled || c.processing || c.disposed || c.recognition || !SpeechRecognition) return;
-    const recognition = new SpeechRecognition();
-    const prefix = c.finalTranscript;
-    c.recognition = recognition;
-    recognition.lang = navigator.language || 'en-US'; recognition.continuous = true; recognition.interimResults = true;
-    recognition.onstart = () => setStatus('Listening');
-    recognition.onspeechstart = () => {
-      if (c.recognition === recognition) {
-        window.clearTimeout(c.sentenceTimer);
-        c.sentenceTimer = 0;
-        // Instant Barge-In: if assistant is speaking when user speaks, cancel immediately
-        if (c.finishSpeech) {
-          c.finishSpeech();
-          c.finishSpeech = null;
-          window.speechSynthesis?.cancel();
-        }
+  listenRef.current=()=>{
+    const c=control.current;window.clearTimeout(c.timer);if(!c.enabled||c.disposed||c.recognition||!Recognition)return;
+    const recognition=new Recognition();c.recognition=recognition;const prefix=c.finalTranscript;let discarded=0,inputStartedDuringPlayback=false;
+    recognition.lang=navigator.language||'en-US';recognition.continuous=true;recognition.interimResults=true;
+    recognition.onstart=()=>{if(c.recognition===recognition&&!c.speaking&&!c.processing)setStatus('Listening');};
+    recognition.onspeechstart=()=>{if(c.recognition===recognition){window.clearTimeout(c.sentenceTimer);inputStartedDuringPlayback=c.speaking;}};
+    recognition.onspeechend=()=>{if(c.recognition===recognition)waitForSentence();};
+    recognition.onresult=(event:any)=>{
+      if(!c.enabled||c.disposed||c.recognition!==recognition)return;
+      const all=Array.from(event.results||[]) as Array<{isFinal:boolean;[index:number]:{transcript:string}}>;
+      const results=all.slice(discarded),heard=results.map(result=>result[0]?.transcript||'').join(' ').trim();if(!heard)return;
+      const echo=words(heard),spoken=words(c.spokenText);
+      if((c.speaking||(inputStartedDuringPlayback&&performance.now()<c.ignoreEchoUntil))&&!playbackControl.test(heard)&&echo&&spoken.includes(echo)){
+        discarded=all.filter(result=>result.isFinal).length;c.finalTranscript='';c.interimTranscript='';return;
       }
-    };
-    recognition.onspeechend = () => { if (c.recognition === recognition) waitForSentence(); };
-    recognition.onresult = (event: any) => {
-      if (!c.enabled || c.recognition !== recognition || c.disposed || c.processing) return;
-      const results = Array.from(event.results || []) as Array<{ isFinal: boolean; [index: number]: { transcript: string } }>;
+      const wasSpeaking=c.speaking,wasProcessing=c.processing;
+      if(wasSpeaking||c.processing){c.suppressAnswer=true;cancelSpeech();setStatus('Listening');}
+      if((wasSpeaking||wasProcessing)&&playbackControl.test(heard)){
+        discarded=all.length;c.finalTranscript='';c.interimTranscript='';setTranscript(heard);return;
+      }
       window.clearTimeout(c.sentenceTimer);
-      c.finalTranscript = [prefix, ...results.filter(result => result.isFinal).map(result => result[0]?.transcript || '')].filter(Boolean).join(' ').trim();
-      c.interimTranscript = results.filter(result => !result.isFinal).map(result => result[0]?.transcript || '').join(' ').trim();
-      const heard = [c.finalTranscript,c.interimTranscript].filter(Boolean).join(' ');
-      if (heard) { setTranscript(heard); setError(''); }
-      waitForSentence();
+      c.finalTranscript=[prefix,...results.filter(result=>result.isFinal).map(result=>result[0]?.transcript||'')].filter(Boolean).join(' ').trim();
+      c.interimTranscript=results.filter(result=>!result.isFinal).map(result=>result[0]?.transcript||'').join(' ').trim();
+      setTranscript([c.finalTranscript,c.interimTranscript].filter(Boolean).join(' '));setError('');waitForSentence();
     };
-    recognition.onend = () => {
-      if (c.recognition !== recognition) return;
-      c.recognition = null;
-      // Some engines end a run after a short pause; retain finalized text across the restart.
-      if (!c.sentenceTimer) waitForSentence();
-      if (c.enabled && !c.processing && !c.disposed) c.timer = window.setTimeout(() => listenRef.current(), 450);
+    recognition.onend=()=>{if(c.recognition!==recognition)return;c.recognition=null;if(!c.sentenceTimer)waitForSentence();
+      if(c.enabled&&!c.disposed)c.timer=window.setTimeout(()=>listenRef.current(),restartDelayMs);};
+    recognition.onerror=(event:any)=>{
+      if(c.recognition!==recognition||c.disposed||!c.enabled||event.error==='aborted'||event.error==='no-speech')return;
+      stop();const errors:Record<string,string>={
+        'not-allowed':'Microphone permission is blocked. Allow the microphone in this browser’s site settings, then try again.',
+        'service-not-allowed':'Speech recognition is blocked in this browser. Open the voice workspace in Chrome or Edge.',
+        'audio-capture':'No microphone is available. Connect a microphone and check your system input settings.',
+        network:'The browser’s speech recognition service could not connect. Check your connection and try again.'};
+      setError(errors[event.error]||`Speech recognition stopped: ${event.error}. Try the microphone again.`);
     };
-    recognition.onerror = (event: any) => {
-      if (c.recognition !== recognition || c.disposed || !c.enabled) return;
-      if (event.error === 'aborted') return;
-      if (event.error === 'no-speech') { setError('No speech detected. Check your microphone; still listening.'); return; }
-      stop();
-      const errors: Record<string,string> = {
-        'not-allowed': 'Microphone permission is blocked. Allow the microphone in this browser’s site settings, then try again.',
-        'service-not-allowed': 'Speech recognition is blocked in this browser. Open the voice workspace in Chrome or Edge.',
-        'audio-capture': 'No microphone is available. Connect a microphone and check your system input settings.',
-        network: 'The browser’s speech recognition service could not connect. Check your connection and try again.'
-      };
-      setError(errors[event.error] || `Speech recognition stopped: ${event.error}. Try the microphone again.`);
-    };
-    try { recognition.start(); } catch (e) { stop(); setError(String(e)); }
+    try{const track=c.stream?.getAudioTracks?.()[0];try{track?recognition.start(track):recognition.start();}
+      catch(e){if(track&&e instanceof Error&&['TypeError','NotSupportedError'].includes(e.name))recognition.start();else throw e;}
+    }catch(e){stop();setError(e instanceof Error?e.message:String(e));}
   };
-  const start = async () => {
-    if (!window.isSecureContext) { setError('Microphone access requires HTTPS or localhost. On this computer, open http://localhost:3000.'); return; }
-    if (!supported) { setError('This browser does not support speech recognition. Open the voice workspace in Chrome or Edge.'); return; }
-    if (!navigator.mediaDevices?.getUserMedia) { setError('Microphone capture is unavailable in this browser. Open the voice workspace in Chrome or Edge.'); return; }
-    const c = control.current;
-    if (c.enabled || c.processing || c.disposed) return;
-    const generation = c.generation;
-    c.enabled = true; setEnabled(true); setError(''); setTranscript(''); setStatus('Requesting microphone');
-    c.finalTranscript = ''; c.interimTranscript = '';
-    try {
-      // Request permission explicitly and release the probe stream; recognition owns its own microphone capture.
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-      if (c.generation !== generation || c.disposed || !c.enabled) return;
-      listenRef.current();
-    } catch (error) {
-      if (c.generation !== generation || c.disposed) return;
-      stop();
-      const name = error instanceof Error ? error.name : '';
-      setError(name === 'NotAllowedError' ? 'Microphone permission is blocked. Allow the microphone in this browser’s site settings, then try again.'
-        : name === 'NotFoundError' ? 'No microphone was found. Connect a microphone and try again.'
-        : 'The microphone could not start. Check your browser permission and system input settings.');
-    }
+  const start=async()=>{
+    if(!window.isSecureContext){setError('Microphone access requires HTTPS or localhost.');return;}
+    if(!supported||!navigator.mediaDevices?.getUserMedia){setError('Speech recognition is unavailable. Open the voice workspace in Chrome or Edge.');return;}
+    const c=control.current;if(c.enabled||c.disposed)return;const generation=c.generation;
+    c.enabled=true;setEnabled(true);setError('');setTranscript('');setStatus('Requesting microphone');c.finalTranscript='';c.interimTranscript='';
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+      if(c.generation!==generation||c.disposed||!c.enabled){stream.getTracks().forEach(track=>track.stop());return;}
+      c.stream=stream;listenRef.current();
+    }catch(e){if(c.generation!==generation||c.disposed)return;stop();const name=e instanceof Error?e.name:'';
+      setError(name==='NotAllowedError'?'Microphone permission is blocked. Allow the microphone in this browser’s site settings, then try again.'
+        :name==='NotFoundError'?'No microphone was found. Connect a microphone and try again.'
+        :'The microphone could not start. Check your browser permission and system input settings.');}
   };
-  useEffect(() => {
-    control.current.disposed = false;
-    return () => {
-      const c = control.current; c.disposed = true; c.enabled = false;
-      window.clearTimeout(c.timer); window.clearTimeout(c.speechTimer); window.clearTimeout(c.sentenceTimer);
-      c.recognition?.abort(); c.recognition = null;
-      window.speechSynthesis?.cancel(); c.finishSpeech?.();
-    };
-  }, []);
-  return { enabled, status, error, transcript, supported, start, stop, submit };
+  useEffect(()=>{
+    const c=control.current;c.disposed=false;const abort=new AbortController();
+    void fetch('/api/tts/config',{signal:abort.signal}).then(r=>r.ok?r.json():{enabled:false}).then(config=>{if(!c.disposed)c.ttsEnabled=config.enabled===true;}).catch(()=>{});
+    return()=>{abort.abort();c.disposed=true;c.enabled=false;c.generation++;window.clearTimeout(c.timer);window.clearTimeout(c.sentenceTimer);
+      const recognition=c.recognition;c.recognition=null;recognition?.abort();c.stream?.getTracks().forEach(track=>track.stop());c.stream=null;cancelSpeech();};
+  },[]);
+  return {enabled,status,error,transcript,supported,start,stop,interrupt,submit};
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { readVoiceDisplay, sendVoiceTurn, pendingVoiceRequest } from '../voice-api.js';
+import { readVoiceDisplay, sendVoiceTurn, pendingVoiceRequest, selectVoiceSource } from '../voice-api.js';
 import { fetchExecutionTrace } from '../api.js';
 import { useVoiceConversation } from '../useVoiceConversation.js';
 import type { VoiceDisplay, VoiceTask } from '../voice-types.js';
@@ -56,6 +56,8 @@ function Thread({ display, onTask, onHandoff }: { display: VoiceDisplay | null; 
 
 export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id:string;name:string}|undefined}={}) {
   const [display, setDisplay] = useState<VoiceDisplay | null>(null);
+  const [sourceOptions,setSourceOptions]=useState({enabled:false,provisioned:false});
+  useEffect(()=>{if(!authenticatedStaff)void fetch('/api/voice-sources').then(r=>r.ok?r.json():{enabled:false,provisioned:false}).then(setSourceOptions).catch(()=>{});},[authenticatedStaff]);
   const [error, setError] = useState(''); const [traceError, setTraceError] = useState('');
   const [busy, setBusy] = useState(false); const busyRef = useRef(false);
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
@@ -74,8 +76,8 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
       const current = await readVoiceDisplay();
       const text = /^retry last request[.! ]*$/i.test(utterance) ? pendingVoiceRequest() : utterance;
       if (!text) { setDisplay(current); return 'There is no uncertain request to retry.'; }
-      const result = await sendVoiceTurn(text, current.revision); const latest = await readVoiceDisplay();
-      setDisplay(latest); void refreshTrace(); return latest.revision === result.revision ? result.speech : latest.speech;
+      const result = await sendVoiceTurn(text, current.revision);
+      setDisplay(result); void refreshTrace(); return result.speech;
     } catch (e) { const msg = e instanceof Error ? e.message : String(e); setError(msg); setDisplay(null); return `I could not complete that request. ${msg}`; }
     finally { busyRef.current = false; setBusy(false); }
   }, [refreshTrace]);
@@ -87,7 +89,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
     return () => { clearInterval(a); clearInterval(b); window.removeEventListener('resize', resize); };
   }, [refresh, refreshTrace]);
   useEffect(() => { const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDrawer(null); setTools(false); setTrace(false); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, []);
-  const submit = (text: string) => { if (!text.trim() || busy) return; voice.stop(); setTools(false); if (mute) void turn(text); else void voice.submit(text); };
+  const submit = (text: string) => { if (!text.trim() || busy) return; if(voice.enabled)voice.interrupt();else voice.stop(); setTools(false); if (mute) void turn(text); else void voice.submit(text); };
   const handoff = display?.handoffs.find(h => h.id === display.selectedHandoffId) || (display?.handoffs.length === 1 ? display.handoffs[0] : undefined);
   const tasks = [...(display?.tasks || []), ...(display?.candidates || [])];
   const selected = tasks.find(t => t.id === display?.selectedTaskId);
@@ -95,18 +97,24 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
   const incoming = handoff?.incomingName === display?.nurse?.name;
   const mode = busy ? 'processing' : voice.status === 'Listening' ? 'listening' : voice.status === 'Speaking' ? 'speaking' : 'idle';
   const scale = Math.min(size.w / 1920, size.h / 1080);
+  const hospital=display?.dataSource==='hospital';
+  const switchSource=async(source:'hospital'|'epic')=>{
+    if(busyRef.current)return;voice.stop();busyRef.current=true;setBusy(true);
+    try{const current=await readVoiceDisplay();const next=await selectVoiceSource(source,current.revision);setDisplay(next);setDrawer(null);setLastHeard('');setError('');}
+    catch(e){setError(e instanceof Error?e.message:String(e));}finally{busyRef.current=false;setBusy(false);}
+  };
   const speech = error || (display?.messages.length ? display.speech : '') || 'Ready for your question.';
   const title = display?.pending ? 'Human confirmation' : display?.focus === 'conflicts' ? 'Documentation review' : handoff ? 'Shift handoff' : 'Your shift context';
   const hasPanel = Boolean(display?.nurse || error);
   const inspect = (task: VoiceTask) => { submit(`Explain task ${task.id}`); };
   return <><main id="st" data-m={mode} data-np={!hasPanel ? '' : undefined} data-s={error ? 'int' : undefined} style={{ transform: `translate(${(size.w - 1920 * scale) / 2}px,${(size.h - 1080 * scale) / 2}px) scale(${scale})` }}>
     <header><div className="brand"><svg viewBox="0 0 40 34" fill="none" strokeWidth="3.5" strokeLinecap="round" aria-hidden="true"><path d="M3 9c10 0 10 16 17 16s9-16 17-16" stroke="#8EA0FF" /><path d="M3 25c10 0 10-16 17-16s9 16 17 16" stroke="#FFB86B" /></svg>ShiftWeave</div>
-      <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div><span className="pill">Medi · Voice simulation</span></header>
+      <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div>{sourceOptions.enabled?<label className="pill">Data source <select aria-label="Hospital data source" value={hospital?'hospital':'epic'} disabled={busy||voice.enabled} onChange={e=>void switchSource(e.target.value as 'hospital'|'epic')}><option value="hospital" disabled={!sourceOptions.provisioned}>Simulation hospital</option><option value="epic">Epic sandbox / existing records</option></select></label>:<span className="pill">Medi · Voice simulation</span>}</header>
     <div id="lm">{display?.nurse && <Thread display={display} onTask={inspect} onHandoff={() => setDrawer('handoffs')} />}</div>
     {hasPanel && <section id="pn" className="in" data-t={error || display?.conflicts.length ? 'ro' : handoff?.status === 'FINALIZED' ? 'ok' : 'dy'} aria-label="Current workflow context">
       <div className="t">{error ? 'Request unavailable' : title}</div>
       <h1 className="h">{error ? 'No success claimed' : display?.pending ? (display.pending.ready ? 'Review, then confirm' : 'Your verification is needed') : display?.focus === 'conflicts' ? (conflict ? `${conflict.patientName || 'Patient'} · records disagree` : 'No unresolved discrepancies') : handoff ? `${handoff.outgoingName} → ${handoff.incomingName}` : selected ? selected.patientName : `${display?.nurse?.name} · ${display?.shift?.unit || 'No active shift'}`}</h1>
-      <div className="m">{error || display?.pending?.prompt || (display?.focus === 'conflicts' && conflict ? `${conflict.systemAName}: ${conflict.systemAVal} / ${conflict.systemBName}: ${conflict.systemBVal}` : handoff ? `${handoff.status.replaceAll('_', ' ')} · ${display?.candidates.length || 0} incoming tasks awaiting acceptance` : selected ? `${selected.title} · ${selected.status}` : `${display?.tasks.length || 0} assigned tasks · ${display?.epicRecords?.length || 0} Epic patient snapshots`)}</div>
+      <div className="m">{error || display?.pending?.prompt || (display?.focus === 'conflicts' && conflict ? `${conflict.systemAName}: ${conflict.systemAVal} / ${conflict.systemBName}: ${conflict.systemBVal}` : handoff ? `${handoff.status.replaceAll('_', ' ')} · ${display?.candidates.length || 0} incoming tasks awaiting acceptance` : selected ? `${selected.title} · ${selected.status}` : `${display?.tasks.length || 0} assigned tasks · ${display?.epicRecords?.length || 0} ${hospital?'hospital':'Epic'} patient records`)}</div>
       <div className="bt">
         {display?.pending ? <><button className="btn p" disabled={busy || !display.pending.ready} onClick={() => submit('Confirm')}>Confirm reviewed action</button><button className="btn g" disabled={busy} onClick={() => submit('Cancel')}>Cancel</button>{!display.pending.ready && <button className="btn" onClick={() => { inputRef.current?.focus(); setDrawer('tasks'); }}>Enter verification</button>}</> : error ? <button className="btn" onClick={() => submit('Retry last request')}>Retry saved request</button> : <>
           <button className="btn" onClick={() => setDrawer(display?.focus === 'conflicts' ? 'tasks' : handoff ? 'handoffs' : 'tasks')}>{handoff ? 'Review handoff' : 'Inspect records'}</button>
@@ -120,11 +128,12 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
     </section>
     <aside id="tr" className={trace ? 'on' : ''} aria-label="MCP telemetry"><p>Live server audit records · Streamable HTTP MCP 2025-11-25 · {logs.length} recent events</p>{traceError && <p role="alert">Telemetry unavailable: {traceError}</p>}<div id="tl">{logs.slice(0, 12).reverse().map(log => <div className="ev" key={log.id} title={`${log.targetResource} · ${log.timestamp}`}><i>{log.actorType}</i><span>{log.action}</span><u className={log.outcome === 'FAILURE' ? 'F' : ''}>{log.outcome}</u></div>)}</div></aside>
     <nav id="tools" className={tools ? 'on' : ''} aria-label="Workspace tools">
+      {sourceOptions.enabled&&<a className="btn" href="/?workspace=simulations">Explore hospital simulations</a>}
       <button className="btn" disabled={busy || !display?.nurse} onClick={() => submit('Ask assistant, summarize my shift')}>Ask assistant</button>
-      <button className="btn" disabled={busy || !display?.nurse} onClick={() => submit('Sync Epic patients')}>Sync Epic patients</button>
+      <button className="btn" disabled={busy || !display?.nurse} onClick={() => submit(hospital?'Refresh hospital records':'Sync Epic patients')}>{hospital?'Refresh hospital records':'Sync Epic patients'}</button>
       <button className="btn" onClick={() => { setDrawer('tasks'); setTools(false); }}>Tasks & discrepancies</button>
       <button className="btn" onClick={() => { setDrawer('handoffs'); setTools(false); }}>Handoffs & note review</button>
-      <button className="btn" onClick={() => { setDrawer('records'); setTools(false); }}>Epic source records</button>
+      <button className="btn" onClick={() => { setDrawer('records'); setTools(false); }}>Patient source records</button>
       <button className="btn" onClick={() => { setDrawer('history'); setTools(false); }}>Conversation history</button>
       <button className="btn" onClick={() => { setDrawer('recovery'); setTools(false); }}>Recovery controls</button>
       <button className="btn" onClick={() => { voice.stop(); setMute(!mute); }}>{mute ? 'Enable voice replies' : 'Mute voice replies'}</button>
@@ -137,7 +146,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
       <button type="button" className="btn ic" aria-label="MCP Telemetry" aria-expanded={trace} onClick={() => { setTrace(!trace); setTools(false); }}>≡</button>
       <button type="button" className="btn ic" aria-label="Workspace tools" aria-expanded={tools} onClick={() => { setTools(!tools); setTrace(false); }}>⋯</button>
     </form>
-    <footer>{display?.epicRecords?.length ? 'Epic sandbox records + local workflow state' : 'Local workflow data'} · Medi voice simulation · {authenticatedStaff?'Signed-in sandbox staff':'Demo nurse identity'} · Human review required · {display ? `Saved turn ${display.revision}` : 'Connecting to saved session'}</footer>
+    <footer>{display?.source || 'Connecting to data source'} · Medi voice simulation · {authenticatedStaff?'Signed-in sandbox staff':'Demo nurse identity'} · Human review required · {display ? `Saved turn ${display.revision}` : 'Connecting to saved session'}</footer>
     {drawer && <div className="detail-scrim" onClick={() => setDrawer(null)}><section className="detail-sheet" role="dialog" aria-modal="true" aria-label={`${drawer} details`} onClick={e => e.stopPropagation()} onKeyDown={e => {
       if (e.key !== 'Tab') return;
       const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]'));
@@ -145,24 +154,24 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
     }}>
-      <div className="sheet-top"><h2>{({ records: 'Epic source records', tasks: 'Tasks & discrepancies', handoffs: 'Handoff review', history: 'Your conversation', recovery: 'Checkpoint recovery' })[drawer]}</h2><button className="btn g" autoFocus onClick={() => setDrawer(null)} aria-label="Close details">Close ×</button></div>
+      <div className="sheet-top"><h2>{({ records: 'Patient source records', tasks: 'Tasks & discrepancies', handoffs: 'Handoff review', history: 'Your conversation', recovery: 'Checkpoint recovery' })[drawer]}</h2><button className="btn g" autoFocus onClick={() => setDrawer(null)} aria-label="Close details">Close ×</button></div>
       {drawer === 'tasks' && <>{!tasks.length && <p>No tasks returned for the current nurse.</p>}{tasks.map(t => <article key={t.id}><h3>{t.patientName} · {t.roomNumber}</h3><p>{t.title}</p><p>{t.status} · {t.priority}{display?.candidates.some(c => c.id === t.id) ? ' · Awaiting custody acceptance' : ''}</p><small>Source: {t.source}</small><div className="bt"><button className="btn" disabled={busy} onClick={() => { inspect(t); setDrawer(null); }}>Explain task</button></div></article>)}
         {display?.conflicts.map(c => { const task = tasks.find(t => t.id === c.taskId); return <article key={c.id}><h3>{c.patientName} · documentation discrepancy</h3><p>{c.systemAName}: {c.systemAVal}</p><p>{c.systemBName}: {c.systemBVal}</p>
           <label>Human verification note<textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Enter what you actually verified; no note is prefilled" /></label>
           <div className="bt">{['in progress', 'completed', 'cancelled'].map(status => <button className="btn" key={status} disabled={busy || !note.trim() || !task} onClick={() => { submit(`Resolve discrepancy for task ${task!.id} ${status} because ${note}`); setDrawer(null); }}>Stage {status}</button>)}</div><small>Stages a proposal; explicit confirmation is still required.</small></article>; })}
         {Boolean(display?.candidates.length) && <button className="btn p" disabled={busy} onClick={() => { submit('Accept all handoff tasks'); setDrawer(null); }}>Review custody acceptance</button>}</>}
-      {drawer === 'records' && <>{!display?.epicRecords?.length && <p>No Epic snapshots returned for this view. Sync after introducing yourself.</p>}{display?.epicRecords?.map(r => <article key={r.patientId}><h3>{r.name} · {r.status}</h3><p>Patient/{r.epicPatientId} · Retrieved {r.retrievedAt}</p>{r.error && <p className="err">Refresh error: {r.error}. Retained data may be stale.</p>}
+      {drawer === 'records' && <>{!display?.epicRecords?.length && <p>No patient snapshots returned for this view. Refresh after introducing yourself.</p>}{display?.epicRecords?.map(r => <article key={r.patientId}><h3>{r.name} · {r.status}</h3><p>Patient/{r.epicPatientId} · Retrieved {r.retrievedAt}</p>{r.error && <p className="err">Refresh error: {r.error}. Retained data may be stale.</p>}
         {Object.entries(r.snapshot.sections).map(([name, section]) => <p key={name}>{name}: {section.status} · {section.resources.length} records {section.error || section.warnings.join('; ')}</p>)}
         {r.snapshot.documents.map((d, i) => <details key={`${d.id}:${i}`}><summary>{d.id} · {d.status}</summary><pre>{d.text || d.error || `Unsupported format: ${d.contentType}`}</pre></details>)}<small>Orders do not establish administration. Missing data is not a verified negative history.</small></article>)}</>}
-      {drawer === 'handoffs' && <>{!display?.handoffs.length && <p>No saved handoff in this view.</p>}{display?.handoffs.map(h => <article key={h.id}><h3>{h.outgoingName} → {h.incomingName}</h3><p>{h.status} · {h.id}</p><pre>{h.summary}</pre><div className="bt"><button className="btn" disabled={busy} onClick={() => { submit(`Review handoff ${h.id}`); setDrawer(null); }}>Select handoff</button>{h.status !== 'FINALIZED' && <button className="btn" disabled={busy} onClick={() => { submit(`Finalize handoff ${h.id}`); setDrawer(null); }}>Review finalization</button>}</div>{h.status === 'FINALIZED' && display.nurse && !authenticatedStaff && <EpicNoteReview key={`${h.id}:${display.nurse.id}`} handoffId={h.id} nurseId={display.nurse.id} />}</article>)}{display?.nurse && !authenticatedStaff && <button className="btn" disabled={busy} onClick={() => { submit('Prepare my handoff for Reema'); setDrawer(null); }}>Prepare handoff for Reema</button>}</>}
+      {drawer === 'handoffs' && <>{!display?.handoffs.length && <p>No saved handoff in this view.</p>}{display?.handoffs.map(h => <article key={h.id}><h3>{h.outgoingName} → {h.incomingName}</h3><p>{h.status} · {h.id}</p><pre>{h.summary}</pre><div className="bt"><button className="btn" disabled={busy} onClick={() => { submit(`Review handoff ${h.id}`); setDrawer(null); }}>Select handoff</button>{h.status !== 'FINALIZED' && <button className="btn" disabled={busy} onClick={() => { submit(`Finalize handoff ${h.id}`); setDrawer(null); }}>Review finalization</button>}</div>{h.status === 'FINALIZED' && display.nurse && !authenticatedStaff && !hospital && <EpicNoteReview key={`${h.id}:${display.nurse.id}`} handoffId={h.id} nurseId={display.nurse.id} />}</article>)}{display?.nurse && !authenticatedStaff && <button className="btn" disabled={busy} onClick={() => { submit('Prepare my handoff for Reema'); setDrawer(null); }}>Prepare handoff for Reema</button>}</>}
       {drawer === 'history' && <>{!display?.messages.length && <p>No conversation in this session.</p>}{display?.messages.map((m, i) => <article key={i}><small>{m.role === 'nurse' ? 'You' : 'Assistant'}</small><p>{m.text}</p></article>)}</>}
       {drawer === 'recovery' && (authenticatedStaff?<article><h3>Saved request recovery</h3><p>Your signed-in voice session is restored from durable checkpoints. For an uncertain voice response, type “Retry last request” to use the saved request key. The staff workspace Recovery panel shows your persisted workflow runs.</p><button className="btn" onClick={()=>{submit('Retry last request');setDrawer(null);}}>Retry saved voice request</button></article>:<ChaosControlBar onRefreshAll={async () => { await refresh(); await refreshTrace(); }} />)}
     </section></div>}
   </main><section className="voice-microphone" aria-label="Microphone controls">
-    <button type="button" aria-pressed={voice.enabled} disabled={busy && !voice.enabled}
-      onClick={() => voice.enabled || voice.status === 'Speaking' ? voice.stop() : void voice.start()}>
+    <button type="button" aria-pressed={voice.enabled}
+      onClick={() => voice.status === 'Speaking' ? voice.interrupt() : voice.enabled ? voice.stop() : void voice.start()}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0014 0v-2M12 19v3M8 22h8"/></svg>
-      {voice.enabled ? 'Stop microphone' : 'Start microphone'}
+      {voice.status === 'Speaking' ? 'Interrupt and listen' : voice.enabled ? 'Stop microphone' : 'Start microphone'}
     </button>
     <span role="status">{voice.status}</span>
     {voice.error && <p role="alert">{voice.error}</p>}

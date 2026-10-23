@@ -8,7 +8,7 @@ const root = realpathSync(tmpdir());
 const directory = mkdtempSync(path.join(root, 'shiftweave-tests-'));
 const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/verify-workflows.ts', process.argv[2] || 'all'], {
   stdio: 'inherit', env: { ...process.env, SQLITE_DB_PATH: path.join(directory, 'test.db'),
-    PORT: '0',HOST:'127.0.0.1',NODE_ENV:'test',MCP_AUTH_TOKEN:'',PUBLIC_ORIGIN:'', LLM_PROVIDER: 'mock', SHIFTWEAVE_TEST: '1',STAFF_AUTH_REQUIRED:'false',EPIC_CREATE_REVIEW_TASKS:'true' }
+    HOSPITAL_SIMULATION_ENABLED:'false', PORT: '0',HOST:'127.0.0.1',NODE_ENV:'test',MCP_AUTH_TOKEN:'',PUBLIC_ORIGIN:'', LLM_PROVIDER: 'mock', SHIFTWEAVE_TEST: '1',STAFF_AUTH_REQUIRED:'false',EPIC_CREATE_REVIEW_TASKS:'true' }
 });
 child.on('exit', code => {
   const resolved = realpathSync(directory);

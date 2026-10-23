@@ -7,6 +7,7 @@ import { ConflictService, type ConflictRecord } from './conflict.service.js';
 import { canonicalJson } from './canonical-json.js';
 import { getActiveProvider } from '../providers/index.js';
 import { EpicWorkflowService } from './epic-workflow.service.js';
+import { HospitalService, hospitalEnabled } from './hospital.service.js';
 import { StaffAuthService } from './staff-auth.service.js';
 import { currentStaff, staffAuthRequired } from './staff-context.js';
 import { SQLiteCacheProvider } from '../providers/sqlite-cache-provider.js';
@@ -23,8 +24,10 @@ type Pending = { kind: 'RESOLVE' | 'ACCEPT' | 'FINALIZE' | 'ESCALATE' | 'STATUS'
   taskRevision?: number;
   note: string | null; prompt: string; version: string; expiresAt: number; ready: boolean };
 type Message = { role: 'nurse' | 'assistant'; text: string };
-type State = { revision: number; nurse: Nurse | null; shift: Shift | null; pending: Pending | null;
+type VoiceSource = 'existing' | 'hospital' | 'epic';
+type State = { dataSource?: VoiceSource; revision: number; nurse: Nurse | null; shift: Shift | null; pending: Pending | null;
   selectedPatientId?: string | null;
+  handoffSourceNurseId?: string | null;
   selectedTaskId: string | null; selectedHandoffId: string | null; focus: 'tasks' | 'conflicts' | 'handoff';
   messages: Message[]; speech: string };
 export type VoiceInput = { session_id: string; utterance: string; expected_revision: number; idempotency_key: string };
@@ -32,6 +35,7 @@ export const voiceIntentSchema = z.object({
   intent: z.enum(['IDENTIFY','TASKS','TASK','PATIENT','STATUS','CONFLICTS','RESOLVE','ESCALATE','DRAFT','HANDOFF','ACCEPT','FINALIZE','END','SYNC_EPIC','READ_EPIC']),
   nurse_name: z.string().trim().min(1).max(150).optional(),
   recipient_name: z.string().trim().min(1).max(150).optional(),
+  source_nurse_name: z.string().trim().min(1).max(150).optional().describe('HANDOFF only: the nurse whose saved handoff is requested, distinct from the current speaker'),
   task_id: z.string().min(1).max(250).optional(),
   patient_id: z.string().min(1).max(250).optional(),
   handoff_id: z.string().min(1).max(250).optional(),
@@ -47,8 +51,8 @@ export type VoiceIntent = z.infer<typeof voiceIntentSchema>;
 const greeting = 'Before I look up your records, what name should I look for?';
 const spokenStatus = (status: string) => status === 'FLAGGED_CONFLICT' ? 'waiting for a discrepancy review' : status.toLowerCase().replaceAll('_', ' ');
 const firstName = (name: string) => name.replace(/,\s*RN$/i, '').split(/\s+/)[0];
-const initial = (): State => ({ revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
-  selectedPatientId: null,
+const initial = (dataSource:VoiceSource = !staffAuthRequired() && hospitalEnabled() ? 'hospital' : 'existing'): State => ({ dataSource, revision: 0, nurse: null, shift: null, pending: null, selectedTaskId: null,
+  selectedPatientId: null, handoffSourceNurseId: null,
   selectedHandoffId: null, focus: 'tasks', messages: [], speech: staffAuthRequired() && currentStaff()
     ? `Signed in as ${currentStaff()!.name}. Ready for your question.` : 'Ready for your question.' });
 const normal = (text: string) => text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -93,33 +97,68 @@ export class VoiceService {
     const candidates = all.filter(t => candidateIds.has(t.id) && !tasks.some(own => own.id === t.id));
     const visible = new Set([...tasks, ...candidates].map(t => t.id));
     return { tasks, candidates, handoffs, conflicts: ConflictService.getUnresolvedConflicts().filter(c => visible.has(c.taskId)),
-      epicRecords: EpicWorkflowService.recordsForPatients([...tasks, ...candidates].map(t => t.patientId)) };
+      epicRecords: state.dataSource === 'hospital' ? HospitalService.recordsForPatients([...tasks, ...candidates].map(t => t.patientId)) : EpicWorkflowService.recordsForPatients([...tasks, ...candidates].map(t => t.patientId)) };
   }
 
   private static version(state: State) {
-    return createHash('sha256').update(canonicalJson({records:this.records(state),notes:staffAuthRequired()?db.prepare('SELECT id,text,recorded_status FROM operational_notes WHERE shift_id=? ORDER BY id').all(state.shift?.id||''):[]})).digest('hex');
+    const records=this.records(state);
+    // A successful reread timestamp is not a clinical change. Preserve all actual
+    // resource values/versions and failure status for confirmation revalidation.
+    const versionRecords=state.dataSource==='hospital'?{...records,epicRecords:records.epicRecords.map(record=>({
+      ...record,retrievedAt:undefined,snapshot:{...record.snapshot,retrievedAt:undefined}}))}:records;
+    return createHash('sha256').update(canonicalJson({records:versionRecords,notes:staffAuthRequired()?db.prepare('SELECT id,text,recorded_status FROM operational_notes WHERE shift_id=? ORDER BY id').all(state.shift?.id||''):[]})).digest('hex');
   }
 
   private static display(state: State) {
     const records = this.records(state);
-    return { revision: state.revision, nurse: state.nurse, shift: state.shift, speech: state.speech,
+    return { dataSource:state.dataSource || 'existing', revision: state.revision, nurse: state.nurse, shift: state.shift, speech: state.speech,
+      availableNurses: !staffAuthRequired()&&state.dataSource==='hospital' ? db.prepare(`SELECT n.id,n.full_name AS name,n.badge_number AS badge,n.department AS unit,
+        (SELECT count(*) FROM task_assignments a WHERE a.nurse_id=n.id AND a.transfer_status IN ('ACTIVE','CARRIED_FORWARD')) AS assignedTasks
+        FROM nurses n WHERE n.id LIKE 'hospital:%' ORDER BY n.full_name`).all() : [],
       focus: state.focus, selectedTaskId: state.selectedTaskId, selectedHandoffId: state.selectedHandoffId,
       pending: state.pending ? { prompt: state.pending.prompt, ready: state.pending.ready,
         expiresAt: state.pending.expiresAt } : null,
       messages: state.messages, ...records,
-      source: records.epicRecords.length ? 'Epic sandbox source records + local nursing coordination' : 'Local synthetic demo records', identityMode: staffAuthRequired() ? 'AUTHENTICATED_OPERATIONAL_SANDBOX' : 'DEMO_NAME_SELECTION',
+      source: state.dataSource === 'hospital' ? 'Synthetic hospital · FHIR R4 records + saved nursing workflow' : records.epicRecords.length ? 'Epic sandbox source records + local nursing coordination' : 'Local synthetic demo records', identityMode: staffAuthRequired() ? 'AUTHENTICATED_OPERATIONAL_SANDBOX' : 'DEMO_NAME_SELECTION',
       updatedAt: new Date().toISOString() };
   }
 
   static read(sessionId: string) { return this.display(this.load(sessionId)); }
 
+  static selectSource(input:{session_id:string;source:VoiceSource;expected_revision:number;idempotency_key:string}) {
+    if(staffAuthRequired())throw new Error('Source selection is unavailable in the authenticated staff workspace');
+    if(input.source==='hospital'&&(!hospitalEnabled()||!HospitalService.provisioned()))throw new Error('Simulation hospital is not provisioned');
+    return MutationService.execute('VOICE_SOURCE',`voice-source:${input.idempotency_key}`,input,'voice-demo',()=>{
+      const old=this.load(input.session_id);
+      if(old.revision!==input.expected_revision)throw new Error('Voice session changed. Refresh before switching sources.');
+      const state=initial(input.source);state.revision=old.revision+1;
+      state.speech='Source selected. Ready for your question.';
+      db.prepare("INSERT OR IGNORE INTO workflow_runs(id,workflow_type,initiated_by,status) VALUES(?,'GENERATE_HANDOFF','voice-demo','IN_PROGRESS')").run(runId(input.session_id));
+      CheckpointService.saveCheckpoint(runId(input.session_id),state.revision,'VOICE_SOURCE_SELECTED',{voice:state},`voice-source-state:${input.idempotency_key}`);
+      return this.display(state);
+    });
+  }
+
+  /** A directory name supplied while reviewing a handoff refers to its source,
+   * not a new speaker. Resolve that follow-up against durable context, even if
+   * an earlier model reply repeatedly asked the wrong identification question. */
+  static handoffNameFollowup(input: VoiceInput) {
+    const state=this.load(input.session_id);
+    if(!state.nurse||state.focus!=='handoff')return undefined;
+    const claimed=normal(this.commandText(input.utterance).replace(/,\s*RN$/i,''));
+    const matches=this.resolveNurse(claimed,state);
+    if(!matches.length)return undefined;
+    if(matches.length>1)return this.saveAssistantTurn(input,'More than one nurse has that name. What’s their full name or badge number?');
+    return this.turn(input,`Review handoff from nurse ${matches[0]!.id}`);
+  }
+
   static agentContext(sessionId: string) {
     const state = this.load(sessionId);
     const staff = currentStaff();
     const directory = staffAuthRequired() && staff ? [{name:staff.name}] :
-      db.prepare("SELECT full_name AS name FROM nurses WHERE role IN ('STAFF_NURSE','CHARGE_NURSE') ORDER BY full_name").all();
-    return {revision:state.revision,nurse:state.nurse,shift:state.shift,selectedTaskId:state.selectedTaskId,
-      selectedPatientId:state.selectedPatientId,selectedHandoffId:state.selectedHandoffId,pending:state.pending,
+      db.prepare("SELECT full_name AS name FROM nurses WHERE role IN ('STAFF_NURSE','CHARGE_NURSE') AND (CASE WHEN ?='hospital' THEN id LIKE 'hospital:%' ELSE id NOT LIKE 'hospital:%' END) ORDER BY full_name").all(state.dataSource || 'existing');
+    return {dataSource:state.dataSource,revision:state.revision,nurse:state.nurse,shift:state.shift,selectedTaskId:state.selectedTaskId,
+      selectedPatientId:state.selectedPatientId,selectedHandoffId:state.selectedHandoffId,handoffSourceNurseId:state.handoffSourceNurseId,pending:state.pending,
       directory,messages:state.messages};
   }
 
@@ -144,7 +183,13 @@ export class VoiceService {
     };
     if (intent.intent === 'IDENTIFY') {
       const claimed=name(intent.nurse_name);
-      if(!hasPhrase(normal(input.utterance),claimed)&&!hasPhrase(normal(input.utterance),firstName(claimed)!)) throw new Error('Please give the nurse’s name or badge number.');
+      const spoken=normal(input.utterance);
+      const self=spoken.match(/\b(?:i am|im|my name is|this is|switch to) (.+)/)?.[1]?.replace(/^(?:registered )?nurse /,'');
+      const candidates=this.resolveNurse(normal(claimed),state);
+      const bareSurname=candidates.length===1&&spoken===normal(candidates[0]!.name.replace(/,\s*RN$/i,'')).split(' ').at(-1);
+      const matchesSelf=self ? [normal(claimed),normal(firstName(claimed)!)].some(value=>self===value||self.startsWith(`${value} `))
+        : hasPhrase(spoken,claimed)||hasPhrase(spoken,firstName(claimed)!)||bareSurname;
+      if(!matchesSelf) throw new Error('Please give the nurse’s name or badge number.');
       return `I am ${claimed}`;
     }
     if (!state.nurse) return 'Show my tasks'; // Existing identity gate; never expose records before selection.
@@ -168,8 +213,9 @@ export class VoiceService {
     if (intent.note && !normal(input.utterance).includes(normal(intent.note))) throw new Error('What should I write in the review note? I need your own words.');
     const note = intent.note ? ` because ${intent.note}` : '';
     switch (intent.intent) {
-      case 'SYNC_EPIC': return 'Sync Epic patients';
+      case 'SYNC_EPIC': { if(state.dataSource==='hospital')throw new Error('Use Refresh hospital records for this source. Epic remains separate.'); return 'Sync Epic patients'; }
       case 'READ_EPIC': {
+        if(state.dataSource==='hospital')throw new Error('These are synthetic hospital records, not Epic records. Ask about your patient instead.');
         if(!intent.epic_patient_id || !records.epicRecords.some(r=>r.epicPatientId===intent.epic_patient_id)) throw new Error('I couldn’t find that patient in your current view. Which patient do you mean?');
         return `Read Epic patient ${intent.epic_patient_id}`;
       }
@@ -181,7 +227,14 @@ export class VoiceService {
       case 'RESOLVE': return `Resolve discrepancy for ${requireTask()} ${status}${note}`;
       case 'ESCALATE': return `Escalate ${requireTask()}${note}`;
       case 'DRAFT': return `Prepare my handoff for ${name(intent.recipient_name)}`;
-      case 'HANDOFF': return `Review${handoff}`;
+      case 'HANDOFF': {
+        if(intent.source_nurse_name){
+          const sources=this.resolveNurse(normal(name(intent.source_nurse_name)),state);
+          if(sources.length!==1)throw new Error(sources.length?'More than one nurse has that name. What’s their full name or badge number?':'I couldn’t find that nurse. What’s their full name or badge number?');
+          return `Review${handoff} from nurse ${sources[0]!.id}`;
+        }
+        return `Review${handoff}`;
+      }
       case 'ACCEPT': return intent.all_tasks ? `Accept all${handoff} tasks` : `Accept ${requireTask()}${handoff}`;
       case 'FINALIZE': return `Finalize${handoff}`;
     }
@@ -196,7 +249,7 @@ export class VoiceService {
     if (explicit) return explicit;
     const casual = text.match(/^(?:(?:hi+|hello|hey)[,\s.!]+)?(?:i am|i['’]?m|this is)\s+(.+)/i);
     if (casual && !/^(?:just|not|feeling|really|very|so|a|an|the|doing|going|sorry|tired|unwell|sick|upset|sad|happy|fine|okay|ok|here|back|ready|worried|stressed|exhausted)\b/i.test(casual[1]!)) return casual;
-    return !state.nurse && this.resolveNurse(normal(text)).length ? [text,text] : null;
+    return !state.nurse && this.resolveNurse(normal(text),state).length ? [text,text] : null;
   }
 
   private static conversationText(state: State, text: string) {
@@ -252,9 +305,9 @@ export class VoiceService {
       }
       if (introduction) {
         // Never retain an old identity or confirmation after an unknown/ambiguous introduction.
-        Object.assign(state, initial(), { revision: state.revision });
+        Object.assign(state, initial(state.dataSource), { revision: state.revision });
         const claimed = normal(introduction[1]!.split(/[,.;!?]|\b(?:and|please|let me|show|tell|what|mere)\b/i)[0]!);
-        const matches = staffAuthRequired() && staff ? [{id:staff.id,name:staff.name,department:staff.unit}] : this.resolveNurse(claimed);
+        const matches = staffAuthRequired() && staff ? [{id:staff.id,name:staff.name,department:staff.unit}] : this.resolveNurse(claimed,state);
         if (matches.length !== 1) {
           speech = matches.length ? 'More than one nurse has that name. What’s your full name or badge number?'
             : 'I couldn’t find that name. What’s your full registered name or badge number?';
@@ -301,7 +354,7 @@ export class VoiceService {
         state.pending = null;
         speech = 'I can look up your existing patient and task records, track local workflow status, and help with reviewed handoffs. What would you like help with?';
       } else if (/^(?:medi )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
-        Object.assign(state, initial(), { revision: state.revision });
+        Object.assign(state, initial(state.dataSource), { revision: state.revision });
         speech = 'Take care. I’ve cleared this conversation from the screen.';
       } else if (this.conversationText(state,text)) {
         state.pending = null;
@@ -324,12 +377,13 @@ export class VoiceService {
     });
   }
 
-  private static resolveNurse(claimed: string): Nurse[] {
+  private static resolveNurse(claimed: string, state?:State): Nurse[] {
     const nurses = db.prepare('SELECT id, full_name AS name, department, badge_number AS badge FROM nurses')
       .all() as Array<Nurse & { badge: string }>;
     return nurses.filter(n => {
+      if (state?.dataSource === 'hospital' ? !n.id.startsWith('hospital:') : n.id.startsWith('hospital:')) return false;
       const name = normal(n.name.replace(/,\s*RN$/i, ''));
-      return claimed === name || claimed === name.split(' ')[0] || claimed === normal(n.badge);
+      return claimed === name || claimed === name.split(' ')[0] || claimed === name.split(' ').at(-1) || claimed === normal(n.badge);
     }).map(({ id, name, department }) => ({ id, name, department }));
   }
 
@@ -393,8 +447,8 @@ export class VoiceService {
     const own = tasks.filter(t => t.patientId === patient.patientId);
     const notes = staffAuthRequired() ? db.prepare('SELECT text,created_at FROM operational_notes WHERE patient_id=? AND shift_id=? ORDER BY created_at DESC LIMIT 3')
       .all(patient.patientId, state.shift!.id) as Array<{text:string;created_at:string}> : [];
-    const epic = EpicWorkflowService.recordsForPatients([patient.patientId]);
-    const freshness = epic.map(record => ` Epic snapshot retrieved at ${record.retrievedAt}.` +
+    const epic = state.dataSource === 'hospital' ? HospitalService.recordsForPatients([patient.patientId]) : EpicWorkflowService.recordsForPatients([patient.patientId]);
+    const freshness = epic.map(record => ` ${state.dataSource === 'hospital' ? 'Hospital record' : 'Epic snapshot'} retrieved at ${record.retrievedAt}.` +
       (record.error ? ' The latest refresh failed, so these records may be stale.' : '') +
       (record.status === 'PARTIAL' ? ' Some source information could not be retrieved.' : '')).join('');
     const allergies = row.allergies ? `The recorded allergy information is: ${row.allergies}.`
@@ -408,7 +462,7 @@ export class VoiceService {
     const source = epic.length ? epic.map(record => {
       const sections = record.snapshot.sections;
       const conditions = sections.Condition?.resources || [];
-      return `The Epic snapshot was retrieved at ${record.retrievedAt}. ` +
+      return `The ${state.dataSource === 'hospital' ? 'synthetic hospital record' : 'Epic snapshot'} was retrieved at ${record.retrievedAt}. ` +
         (record.error ? 'The latest refresh failed, so these records may be stale. ' : '') +
         (record.status === 'PARTIAL' ? 'Some source information could not be retrieved. ' : '') +
         conditions.slice(0,2).map(c => `A recorded condition is ${c.code?.text || c.code?.coding?.[0]?.display || 'unspecified'}. `).join('') +
@@ -549,7 +603,7 @@ export class VoiceService {
     }
     if (/\b(prepare|create|generate|draft)\b/.test(text) && /\bhandoff\b/.test(text)) {
       const target = raw.match(/\b(?:for|to)\s+(.+?)[.!?]*$/i)?.[1]?.trim();
-      const nurses = target ? this.resolveNurse(normal(target)) : [];
+      const nurses = target ? this.resolveNurse(normal(target),state) : [];
       if (nurses.length !== 1 || nurses[0]!.id === state.nurse!.id) return 'Who should receive the handoff? What’s the other nurse’s full name?';
       const receiver = nurses[0]!;
       if (receiver.department !== state.nurse!.department) return 'The receiving nurse must belong to this demo unit.';
@@ -578,11 +632,19 @@ export class VoiceService {
           : `Accept custody of ${taskIds.length} task(s) from ${handoff.outgoingName}: ${labels}? Say “confirm” or “cancel”.` });
     }
     if (/\b(handoff|draft)\b/.test(text)) {
-      const explicit = r.handoffs.filter(h => text.includes(normal(h.id)));
-      const handoff = explicit[0] || r.handoffs.find(h => h.id === state.selectedHandoffId) || (r.handoffs.length === 1 ? r.handoffs[0] : undefined);
+      const requested=r.handoffs.find(h=>text.includes(normal(h.id)));
+      const sourceId=raw.match(/\bfrom nurse ([\w:.-]+)$/i)?.[1] || requested?.outgoingId || state.handoffSourceNurseId;
+      if(sourceId)state.handoffSourceNurseId=sourceId;
+      const available=sourceId?r.handoffs.filter(h=>h.outgoingId===sourceId):r.handoffs;
+      const explicit = available.filter(h => text.includes(normal(h.id)));
+      const handoff = explicit[0] || available.find(h => h.id === state.selectedHandoffId) || (available.length === 1 ? available[0] : undefined);
       state.focus = 'handoff';
-      if (!handoff) return r.handoffs.length ? 'Several handoffs are displayed. Say “review handoff” followed by the full ID.'
-        : 'No handoff is available for your session. To create one, say “prepare my handoff for” and the receiving nurse’s name.';
+      if (!handoff) {
+        state.selectedHandoffId=null;
+        const source=sourceId?db.prepare('SELECT full_name AS name FROM nurses WHERE id=?').get(sourceId) as {name:string}|undefined:undefined;
+        return available.length ? 'There is more than one saved handoff. Which one would you like to review?'
+          : `I don’t have a saved handoff${source?` from ${source.name}`:''} for you. Someone leaving a shift does not create a handoff or transfer their tasks automatically. ${this.summary(state)} Would you like to review your assigned tasks?`;
+      }
       state.selectedHandoffId = handoff.id;
       return `Handoff from ${handoff.outgoingName} to ${handoff.incomingName} is ${handoff.status}. ${handoff.summary.replace(/#+/g, '').replace(/\n+/g, ' ')}`;
     }

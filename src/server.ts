@@ -9,6 +9,7 @@ import { z } from "zod";
 import dotenv from "dotenv";
 import { db } from "./db/connection.js";
 import { resolveNurseShift } from './services/shift-context.js';
+import { simulationDispatch, simulationInput, assertSimulationDatabase } from './services/simulation.service.js';
 import { initializeDatabase } from "./db/schema.js";
 import { getActiveProvider, setActiveProvider, listAvailableProviders } from "./providers/index.js";
 import { AuditService } from "./services/audit.service.js";
@@ -30,6 +31,8 @@ import { StaffAuthService } from './services/staff-auth.service.js';
 import { ElevenLabsService } from './services/elevenlabs.service.js';
 import { staffMiddleware, authorizeMcpTool } from './services/staff-http.js';
 import { currentStaff, staffAuthRequired } from './services/staff-context.js';
+import { hospitalSchema, hospitalEnabled, HospitalService } from './services/hospital.service.js';
+import { hospitalResourceSchema } from './providers/hospital-store.js';
 
 const voiceInput = z.object({
   session_id: z.string().uuid(),
@@ -41,7 +44,11 @@ const voiceInput = z.object({
 dotenv.config();
 
 // Ensure all database tables exist on server startup
+if(process.env.SIMULATION_MODE==='true')assertSimulationDatabase();
 initializeDatabase();
+db.exec(hospitalSchema);
+db.exec(hospitalResourceSchema);
+if(hospitalEnabled()&&!HospitalService.provisioned())throw new Error('Simulation hospital is enabled but not populated. Run npm run hospital:prepare with the configured database first.');
 // Receipts must survive restarts and delayed retries; never prune independently of workflows.
 
 /**
@@ -52,7 +59,7 @@ export function createShiftWeaveServer(): McpServer {
   const server = new McpServer({
     name: "shiftweave-mcp-server",
     version: "1.0.0"
-  });
+  }, {instructions:'ShiftWeave coordinates nursing tasks and handoffs. No dashboard is required. Start with get_voice_display using a new session UUID; the synthetic hospital includes availableNurses from the database. Send the human question verbatim to voice_turn with that session_id, latest expected_revision and a new UUID idempotency_key. Reuse the exact request/key after a network failure. Return its speech to the user; never claim an action succeeded beyond the tool result. Keep the session UUID for follow-up questions. Human confirmation must come from the user. Name selection identifies synthetic demo records; it is not staff authentication. Epic and synthetic hospital sources remain distinct.'});
 
   // =========================================================================
   // REGISTER THE 9 STANDARDIZED SHIFTWEAVE MCP TOOLS
@@ -246,7 +253,7 @@ export function createShiftWeaveServer(): McpServer {
               pending_tasks: pendingTasks,
               conflicted_tasks: conflictedTasks,
               active_conflicts: unresolvedConflicts
-              ,epic_source_summary: EpicWorkflowService.narrative(EpicWorkflowService.recordsForNurse(args.outgoing_nurse_id, args.shift_id))
+              ,epic_source_summary: EpicWorkflowService.narrative([...EpicWorkflowService.recordsForNurse(args.outgoing_nurse_id, args.shift_id),...HospitalService.recordsForPatients(tasks.map(t=>t.patientId))])
             }, null, 2)
           }
         ]
@@ -405,6 +412,14 @@ export function createShiftWeaveServer(): McpServer {
     { session_id: z.string().uuid() }, async args => ({
       content: [{ type: 'text', text: JSON.stringify(VoiceService.read(args.session_id)) }]
     }));
+  if(hospitalEnabled()) {
+    server.tool('select_voice_source','Select the synthetic hospital or existing Epic workspace for a voice session. Clears identity, pending confirmations and conversation; keeps saved workflow records.',
+      {session_id:z.string().uuid(),source:z.enum(['hospital','epic','existing']),expected_revision:z.number().int().nonnegative(),idempotency_key:z.string().uuid()},
+      async args=>({content:[{type:'text',text:JSON.stringify(VoiceService.selectSource(args))}]}));
+    server.tool('refresh_hospital_records','Read current synthetic FHIR R4 records for an assigned simulation nurse. Does not modify clinical orders or Epic.',
+      {nurse_id:z.string().startsWith('hospital:'),shift_id:z.string(),idempotency_key:z.string().min(1)},
+      async args=>({content:[{type:'text',text:JSON.stringify(await HospitalService.refresh(args.nurse_id,args.shift_id,args.idempotency_key))}]}));
+  }
   server.tool('preview_epic_handoff_note', 'Preview a finalized single-patient sandbox note with encounter-linked author and review hash. Does not write to Epic.',
     { handoff_id: z.string(), nurse_id: z.string() }, async args => ({ content: [{ type: 'text', text: JSON.stringify(EpicNoteService.preview(args.handoff_id, args.nurse_id)) }] }));
   server.tool(
@@ -447,6 +462,8 @@ export function createShiftWeaveServer(): McpServer {
     }));
   server.tool('operational_sandbox','Authenticated staff directory, roster, care-team assignments, coordination tasks, sourced notes and reviewed sandbox document publication. Clinical orders are never modified.',
     {action:z.string(),input:z.record(z.string(),z.unknown())},async args=>({content:[{type:'text',text:JSON.stringify(await operationalDispatch(args.action,args.input))}]}));
+  if (process.env.SIMULATION_MODE === 'true'||hospitalEnabled()&&!staffAuthRequired()) server.tool('review_simulation','Run database-backed synthetic review scenarios. Results are actual existing MCP tool outputs; expected outcomes are guidance only.',simulationInput.shape,
+    async args=>({content:[{type:'text',text:JSON.stringify(await simulationDispatch(args,localMcpEndpoint()))}]}));
   return server;
 }
 
@@ -520,6 +537,17 @@ app.get('/readyz', (_req, res) => {
 });
 // Demo basic auth removed
 app.use(staffMiddleware);
+app.get('/api/simulations', (_req,res)=>res.json({enabled:process.env.SIMULATION_MODE==='true'||hospitalEnabled()&&!staffAuthRequired(),hosted:hospitalEnabled()}));
+app.post('/api/simulations', async(req,res)=>{
+  if(process.env.SIMULATION_MODE!=='true'&&!(hospitalEnabled()&&!staffAuthRequired())){res.status(404).json({error:'Synthetic review environment is not enabled'});return;}
+  const bridge=new MCPClientBridge(localMcpEndpoint());
+  try {
+    const input=simulationInput.parse(req.body); await bridge.initialize();
+    const result=await bridge.callTool('review_simulation',input);
+    if(result.isError){res.status(409).json({error:result.content.map(c=>c.text).join(' ')});return;}
+    res.json(JSON.parse(result.content[0]!.text));
+  } finally {await bridge.close();}
+});
 // Enforce the existing service credential for every MCP method, including session deletion.
 app.use('/mcp', (req, res, next) => {
   const token = process.env.MCP_AUTH_TOKEN;
@@ -679,8 +707,20 @@ app.post('/api/voice', async (req, res) => {
 app.get('/api/voice/:sessionId', (req, res) => {
   res.json(VoiceService.read(z.string().uuid().parse(req.params.sessionId)));
 });
+app.get('/api/voice-sources', (_req,res)=>res.json({enabled:hospitalEnabled()&&!staffAuthRequired(),provisioned:HospitalService.provisioned()}));
+app.post('/api/voice-source',async(req,res)=>{
+  if(!hospitalEnabled()||staffAuthRequired()){res.status(404).json({error:'Voice source selection is not enabled'});return;}
+  const bridge=new MCPClientBridge(localMcpEndpoint());
+  try {
+    const args=z.object({session_id:z.string().uuid(),source:z.enum(['hospital','epic','existing']),expected_revision:z.number().int().nonnegative(),idempotency_key:z.string().uuid()}).parse(req.body);
+    await bridge.initialize();const result=await bridge.callTool('select_voice_source',args);
+    if(result.isError){res.status(409).json({error:result.content.map(c=>c.text).join(' ')});return;}
+    res.json(JSON.parse(result.content[0]!.text));
+  } finally {await bridge.close();}
+});
 
 /** Text-to-Speech endpoint (ElevenLabs with automatic browser fallback) */
+app.get('/api/tts/config', (_req,res)=>res.json({enabled:ElevenLabsService.isConfigured()}));
 app.post('/api/tts', async (req, res) => {
   try {
     const { text, voiceId, modelId } = req.body || {};

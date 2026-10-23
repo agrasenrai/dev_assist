@@ -5,6 +5,9 @@ export const host = process.env.HOST || '127.0.0.1';
 export const publicOrigin = process.env.PUBLIC_ORIGIN || '';
 const token = process.env.MCP_AUTH_TOKEN || '';
 const exposed = !['127.0.0.1', 'localhost', '::1'].includes(host);
+if(process.env.SIMULATION_MODE==='true' && (exposed || process.env.NODE_ENV==='production' || process.env.STAFF_AUTH_REQUIRED==='true' || process.env.EPIC_READS_ENABLED==='true' || process.env.EPIC_WRITES_ENABLED==='true')) {
+  throw new Error('Synthetic review mode requires loopback, non-production, no staff workspace and disabled Epic reads/writes');
+}
 if (process.env.NODE_ENV === 'production' && process.env.LLM_PROVIDER !== 'bedrock') {
   throw new Error('Production requires LLM_PROVIDER=bedrock; deterministic demo mode is local only');
 }

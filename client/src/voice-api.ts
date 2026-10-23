@@ -25,6 +25,12 @@ export async function readVoiceDisplay(): Promise<VoiceDisplay> {
   if (!response.ok) throw new Error(data.error || 'Display unavailable');
   return data;
 }
+export async function selectVoiceSource(source:'hospital'|'epic'|'existing', revision:number):Promise<VoiceDisplay> {
+  if(pendingVoiceRequest())throw new Error('Retry the uncertain request before switching sources.');
+  const response=await fetch('/api/voice-source',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({session_id:voiceSessionId(),source,expected_revision:revision,idempotency_key:safeUUID()}),signal:AbortSignal.timeout(15000)});
+  const data=await response.json();if(!response.ok)throw new Error(data.error||'Source selection failed');return data;
+}
 export async function sendVoiceTurn(utterance: string, revision: number): Promise<VoiceDisplay> {
   const key = `shiftweave:voice:pending:${voiceSessionId()}`;
   const existing = localStorage.getItem(key);

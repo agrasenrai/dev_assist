@@ -9,8 +9,8 @@ import { createRequire } from 'node:module';
 // this verifies wiring and recovery, not microphone acoustics or a remote recognition service.
 const directory = mkdtempSync(path.join(tmpdir(), 'shiftweave-voice-browser-'));
 Object.assign(process.env, { SQLITE_DB_PATH: path.join(directory, 'test.db'), PORT: '0', HOST: '127.0.0.1',
-  NODE_ENV: 'test', STAFF_AUTH_REQUIRED: 'false', LLM_PROVIDER: 'mock',
-  MCP_AUTH_TOKEN: '', PUBLIC_ORIGIN: '', SHIFTWEAVE_TEST: '1' });
+  HOSPITAL_SIMULATION_ENABLED:'false', NODE_ENV: 'test', STAFF_AUTH_REQUIRED: 'false', LLM_PROVIDER: 'mock',
+  MCP_AUTH_TOKEN: '', PUBLIC_ORIGIN: '', SHIFTWEAVE_TEST: '1',ELEVENLABS_API_KEY:'',SIMULATION_MODE:'false' });
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 const { appServer } = await import('../src/server.js');
@@ -27,6 +27,8 @@ try {
   browser = await chromium.launch({ channel: process.env.VOICE_TEST_BROWSER || 'msedge', headless: true });
   console.log('Browser launched');
   const page = await browser.newPage();
+  let cloudMode=false;
+  await page.route('**/api/tts/config',(route:any)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({enabled:cloudMode})}));
   page.setDefaultTimeout(15000);
   page.on('pageerror', (error: Error) => console.error('Browser error:', error.message));
   page.on('console', (message: any) => { if (message.type() === 'error') console.error('Browser console:', message.text()); });
@@ -35,8 +37,9 @@ try {
   await page.addInitScript('globalThis.__name = (target) => target');
   await page.addInitScript(() => {
     const w = window as any;
-    w.spoken = []; w.recognitionStarts = 0; w.probeStopped = 0;
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {value:async () => {
+    w.spoken = []; w.recognitionStarts = 0; w.probeStopped = 0;w.speechCancellations=0;w.cloudPlays=0;w.cloudPauses=0;
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {value:async (constraints:any) => {
+      w.captureConstraints=constraints;
       if(w.denyMicrophone) throw new DOMException('Blocked by test','NotAllowedError');
       return {getTracks:() => [{stop:() => {w.probeStopped++;}}]};
     }});
@@ -51,10 +54,17 @@ try {
     Object.defineProperty(window, 'speechSynthesis', { value: {
       speak(utterance: any) {
         w.spoken.push(utterance.text);
-        setTimeout(() => w.failSpeech ? utterance.onerror?.() : utterance.onend?.(), 10);
+        w.currentUtterance=utterance;
+        if(!w.holdSpeech)setTimeout(() => w.failSpeech ? utterance.onerror?.() : utterance.onend?.(), 10);
       },
-      cancel() {}
+      cancel() {w.speechCancellations++;}
     } });
+    w.Audio=class {
+      onplay:any;onended:any;onerror:any;
+      constructor(public src:string){w.cloudAudio=this;}
+      play(){w.cloudPlays++;if(w.hangCloud)return new Promise(()=>{});this.onplay?.();return Promise.resolve();}
+      pause(){w.cloudPauses++;}removeAttribute(){}load(){}
+    };
     w.say = (text: string, isFinal = true) => {
       const result: any = [{transcript:text}]; result.isFinal = isFinal;
       const results = w.recognition.results;
@@ -86,7 +96,8 @@ try {
   await page.evaluate(()=>{(window as any).denyMicrophone=false;});
   await page.getByRole('button', {name:'Start microphone', exact:true}).click();
   await page.waitForFunction(()=>(window as any).recognitionStarts===1);
-  assert.equal(await page.evaluate(()=>(window as any).probeStopped),1);
+  assert.equal(await page.evaluate(()=>(window as any).probeStopped),0,'The echo-cancelled capture track stays alive until pause');
+  assert.equal(await page.evaluate(()=>(window as any).captureConstraints.audio.echoCancellation),true);
   let voiceRequests=0;
   page.on('request',(request:any)=>{if(request.url()===base+'/api/voice' && request.method()==='POST')voiceRequests++;});
   await page.evaluate(()=>(window as any).say('Seema',false));
@@ -102,6 +113,7 @@ try {
     const speech = await page.evaluate(() => (window as any).spoken.at(-1));
     assert.match(speech, expected);
     await page.waitForFunction((starts: number) => (window as any).recognitionStarts > starts, starts);
+    if(!await page.evaluate(()=>(window as any).holdSpeech))await page.waitForFunction(()=>document.querySelector('#st')?.getAttribute('data-m')==='listening');
     console.log(`PASS transcript → HTTP/MCP → stored data → speech → listening: ${text}`);
   };
   await say('Medi', /Medi.*listening/);
@@ -145,6 +157,30 @@ try {
   await page.evaluate(() => (window as any).recognition.onend());
   await page.waitForFunction((starts: number) => (window as any).recognitionStarts > starts, starts);
   await say('What tasks are completed?', /completed/);
+  await page.evaluate(()=>{(window as any).holdSpeech=true;});
+  await say('Show my tasks',/assigned task/);
+  await page.getByRole('button',{name:'Interrupt and listen',exact:true}).waitFor();
+  const beforeBarge=voiceRequests;
+  const beforeCancel=await page.evaluate(()=>(window as any).speechCancellations);
+  await page.evaluate(()=>(window as any).say((window as any).spoken.at(-1)));
+  await page.waitForTimeout(200);
+  assert.equal(voiceRequests,beforeBarge,'Assistant echo must not create another turn');
+  assert.equal(await page.evaluate(()=>(window as any).speechCancellations),beforeCancel,'Assistant echo must not interrupt itself');
+  await page.evaluate(()=>(window as any).say('What tasks are pending',false));
+  await page.waitForFunction((n:number)=>(window as any).speechCancellations>n,beforeCancel);
+  assert.equal(voiceRequests,beforeBarge,'An interim interruption must not execute a task request');
+  await page.evaluate(()=>{(window as any).holdSpeech=false;});
+  await say('What tasks are pending?',/pending/);
+  await page.waitForTimeout(100);
+  assert.equal(voiceRequests,beforeBarge+1);
+  await page.evaluate(()=>{(window as any).holdSpeech=true;});
+  await say('Show my tasks',/assigned task/);
+  const beforeStopSpeech=voiceRequests;
+  await page.evaluate(()=>(window as any).say('Stop'));
+  await page.getByRole('button',{name:'Stop microphone',exact:true}).waitFor();
+  await page.waitForTimeout(1600);assert.equal(voiceRequests,beforeStopSpeech,'Stop during playback is local, not a backend mutation');
+  await page.evaluate(()=>{(window as any).holdSpeech=false;});
+  console.log('PASS browser barge-in, live capture during speech, echo rejection, interim safety and local stop');
   const beforeStoppedDraft = voiceRequests;
   await page.evaluate(() => (window as any).say('Set this task to pending'));
   await page.getByRole('button',{name:'Stop microphone',exact:true}).click();
@@ -197,6 +233,22 @@ try {
   console.log('PASS paused voice session does not play a late backend response');
   await page.unroute('**/api/voice');
   await page.getByRole('button',{name:'Start microphone',exact:true}).click();
+  let releaseQueued:()=>void=()=>{},gatedRequests=0;
+  const gate=new Promise<void>(resolve=>{releaseQueued=resolve;});
+  await page.route('**/api/voice',async(route:any)=>{if(++gatedRequests===1)await gate;await route.continue();});
+  const beforeQueued=voiceRequests,beforeQueuedSpeech=await page.evaluate(()=>(window as any).spoken.length);
+  await page.evaluate(()=>(window as any).say('Show my tasks'));
+  await page.waitForFunction(()=>document.querySelector('#st')?.getAttribute('data-m')==='processing');
+  await page.evaluate(()=>(window as any).say('What tasks are pending?'));
+  await page.waitForTimeout(1550);
+  assert.equal(voiceRequests,beforeQueued+1,'A follow-up must wait for the first operation to finish');
+  releaseQueued();
+  await page.waitForFunction((n:number)=>(window as any).spoken.length>n,beforeQueuedSpeech);
+  await page.waitForFunction(()=>document.querySelector('#st')?.getAttribute('data-m')==='listening');
+  assert.equal(voiceRequests,beforeQueued+2);assert.equal(await page.evaluate(()=>(window as any).spoken.length),beforeQueuedSpeech+1);
+  assert.match(await page.evaluate(()=>(window as any).spoken.at(-1)),/pending/);
+  await page.unroute('**/api/voice');
+  console.log('PASS speech during processing queues one follow-up and suppresses the superseded spoken answer');
   await say('What tasks are completed?', /completed/);
   const {BedrockLLMProvider}=await import('../src/agent/llm-provider.js');
   const originalDecision=BedrockLLMProvider.prototype.decideNextStep;
@@ -213,8 +265,25 @@ try {
   };
   try{
     await say('Give me a picture of where things stand',/Here’s where things stand.*assigned task/);
-    assert(semanticCalls>=3);console.log('PASS simulated speech → semantic Bedrock adapter → scoped MCP → grounded model reply → playback → listening');
+    assert.equal(semanticCalls,2);console.log('PASS simulated speech → semantic Bedrock adapter → scoped MCP → grounded model reply → playback → listening in two model calls');
   }finally{BedrockLLMProvider.prototype.decideNextStep=originalDecision;process.env.LLM_PROVIDER='mock';}
+  cloudMode=true;await page.reload();
+  await page.getByRole('button',{name:'Start microphone',exact:true}).click();
+  await page.waitForFunction(()=>(window as any).recognitionStarts>0);
+  await page.evaluate(()=>(window as any).say('Medi'));
+  await page.waitForFunction(()=>(window as any).cloudPlays>0);
+  const cloudRequests=voiceRequests;
+  await page.evaluate(()=>{const w=window as any;w.delayedCloudError=w.cloudAudio.onerror;});
+  await page.getByRole('button',{name:'Interrupt and listen',exact:true}).click();
+  assert((await page.evaluate(()=>(window as any).cloudPauses))>0);
+  await page.evaluate(()=>(window as any).delayedCloudError?.());
+  assert.equal(await page.evaluate(()=>(window as any).spoken.length),0,'A cancelled cloud stream must not start a late browser fallback');
+  assert.equal(voiceRequests,cloudRequests);
+  await page.evaluate(()=>{(window as any).hangCloud=true;});
+  await page.evaluate(()=>(window as any).say('Medi'));
+  await page.waitForFunction(()=>(window as any).spoken.length===1);
+  assert.match(await page.evaluate(()=>(window as any).spoken[0]),/Medi.*listening/);
+  console.log('PASS immediate manual cloud-audio interruption, stale-event suppression and bounded browser fallback');
 } finally {
   await browser?.close();
   appServer.closeAllConnections();
