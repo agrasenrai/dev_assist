@@ -1,1 +1,0 @@
-{"commands":["grep -A3 Caddyfile /mnt/shiftweave/compose.yaml","echo ---","mkdir -p /mnt/shiftweave/deploy","printf '{$DOMAIN} {\n  reverse_proxy app:3000 {\n    flush_interval -1\n  }\n  header {\n    X-Content-Type-Options nosniff\n    Referrer-Policy no-referrer\n  }\n}' | tee /mnt/shiftweave/Caddyfile /mnt/shiftweave/deploy/Caddyfile","echo DONE"]}
