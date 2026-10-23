@@ -1114,7 +1114,7 @@ app.post('/api/tasks/:id/acknowledge', (req, res) => {
 app.post('/api/chaos/simulate', async (req, res) => {
   const input = z.object({ action: z.enum(['crash', 'recover']), workflowRunId: z.string().optional() }).parse(req.body);
   if (input.action === 'recover' && !input.workflowRunId) { res.status(400).json({ error: 'workflowRunId is required for recovery' }); return; }
-  const runId = input.workflowRunId || `chaos_${randomUUID()}`;
+  const runId = scopedWorkflow(input.workflowRunId || `chaos_${randomUUID()}`);
   const orchestrator = new ShiftWeaveOrchestrator(localMcpEndpoint(), 'mock', runId);
   try {
     await orchestrator.initialize();
@@ -1129,7 +1129,7 @@ app.post('/api/chaos/simulate', async (req, res) => {
     const message = error instanceof Error ? error.message : String(error);
     if (input.action === 'crash' && message.includes('[CHAOS SIMULATION]') && checkpoint) {
       res.json({ status: 'INTERRUPTED', workflowRunId: runId, checkpointId: checkpoint.id,
-        message: `Simulated interruption; durable checkpoint ${checkpoint.id} saved.`, error: message });
+      message: 'Interruption demo paused. Your progress is saved. Select “Resume Saved Workflow” to continue.' });
     } else res.status(409).json({ error: message, workflowRunId: runId });
   } finally { await orchestrator.close(); }
 });

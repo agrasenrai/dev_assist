@@ -154,6 +154,25 @@ try {
   await call('refresh_hospital_records',{nurse_id:'hospital:jordan',shift_id:'hospital:shift',idempotency_key:randomUUID()});
   assert.deepEqual(tools.map((t:any)=>t.name).filter((name:string)=>!covered.has(name)),[]);
   pass(`all ${tools.length} discovered MCP tools executed: synthetic workflow successes and explicit Epic/auth boundary rejections`);
+  const chaos=async(body:Record<string,unknown>)=>{
+    const response=await fetch(`${base}/api/chaos/simulate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    return {status:response.status,data:await response.json() as any};
+  };
+  const interrupted=await chaos({action:'crash'});
+  assert.equal(interrupted.status,200,JSON.stringify(interrupted.data));
+  assert.equal(interrupted.data.status,'INTERRUPTED');
+  assert(interrupted.data.workflowRunId.startsWith('source:preview:'));
+  assert.equal((db.prepare('SELECT workflow_run_id FROM workflow_checkpoints WHERE id=?').get(interrupted.data.checkpointId) as any)?.workflow_run_id,interrupted.data.workflowRunId);
+  const recovered=await chaos({action:'recover',workflowRunId:interrupted.data.workflowRunId});
+  assert.equal(recovered.status,200,JSON.stringify(recovered.data));assert.equal(recovered.data.status,'RECOVERED');
+  assert.equal(recovered.data.workflowRunId,interrupted.data.workflowRunId);
+  assert.equal(recovered.data.result.avoidedDuplicateStepsCount,2);
+  const draftsAfterRecovery=(db.prepare('SELECT count(*) n FROM handoffs').get() as any).n;
+  const replayed=await chaos({action:'recover',workflowRunId:interrupted.data.workflowRunId});
+  assert.equal(replayed.status,200,JSON.stringify(replayed.data));
+  assert.equal((db.prepare('SELECT count(*) n FROM handoffs').get() as any).n,draftsAfterRecovery);
+  const rejected=await chaos({action:'recover',workflowRunId:'source:epic:not-a-preview-workflow'});
+  assert.equal(rejected.status,409);pass('preview recovery API returns its real scoped checkpoint, resumes committed reads, retries without another draft and rejects another realm');
   if(http&&!live) {
     const {HospitalService}=await import('../src/services/hospital.service.js');
     paginate=true;assert.equal((await HospitalService.refresh('hospital:reema','hospital:shift',randomUUID())).status,'READY');paginate=false;pass('FHIR pagination is followed');
