@@ -1,0 +1,43 @@
+# Private synthetic FHIR hospital. Use together with compose.yaml.
+# FHIR and PostgreSQL have no public port mappings.
+services:
+  app:
+    environment:
+      HOSPITAL_SIMULATION_ENABLED: 'true'
+      HOSPITAL_FHIR_BASE_URL: http://hospital-fhir:8080/fhir
+  hospital-fhir:
+    image: ${HAPI_FHIR_IMAGE:?Set HAPI_FHIR_IMAGE to a tested release or digest}
+    restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://hospital-postgres:5432/hospital
+      SPRING_DATASOURCE_USERNAME: hospital
+      SPRING_DATASOURCE_PASSWORD: ${HOSPITAL_POSTGRES_PASSWORD:?Set a unique database password}
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      HIBERNATE_DIALECT: ca.uhn.fhir.jpa.model.dialect.HapiFhirPostgresDialect
+      HAPI_FHIR_FHIR_VERSION: R4
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx1200m
+    depends_on:
+      hospital-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'java', '-cp', '/app', 'HealthCheck']
+      interval: 15s
+      timeout: 10s
+      start_period: 180s
+      retries: 20
+  hospital-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hospital
+      POSTGRES_USER: hospital
+      POSTGRES_PASSWORD: ${HOSPITAL_POSTGRES_PASSWORD:?Set a unique database password}
+    volumes:
+      - hospital-fhir-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U hospital -d hospital']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+volumes:
+  hospital-fhir-data:

@@ -99,7 +99,7 @@ export class EpicWorkflowService {
 
   static narrative(records: EpicRecord[]) {
     if (!records.length) return '';
-    return '\n\n## Epic source context (retrieved records, not clinical recommendations)\n' + records.map(record => {
+    return '\n\n## Patient source context (retrieved records, not clinical recommendations)\n' + records.map(record => {
       const s = record.snapshot;
       const lines = [`### ${record.name}`, `Source: ${s.source}; patient ${s.patientId}; retrieved ${s.retrievedAt}; sync ${record.status}.`];
       if (record.error) lines.push(`Latest refresh failed: ${record.error}. Retained snapshot may be stale.`);

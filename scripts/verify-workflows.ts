@@ -207,6 +207,14 @@ try {
       toolCallId: 'abc', toolCall: { toolName: 'get_assigned_tasks', arguments: {} } },
       { role: 'tool', toolName: 'get_assigned_tasks', toolCallId: 'abc', content: '{"tasks":[]}' }];
     check('Bedrock keeps matching toolUse/toolResult IDs', () => assert.equal(toBedrockMessages(messages)[2]?.content?.[0]?.toolResult?.toolUseId, 'abc'));
+    check('Bedrock host-generated tool IDs satisfy Claude constraints and stay paired without collisions',()=>{
+      const pair=(id:string)=>toBedrockMessages([{role:'assistant',content:'',toolCall:{toolName:'read_voice_context',arguments:{}},toolCallId:id},{role:'tool',content:'{}',toolName:'read_voice_context',toolCallId:id}]);
+      const mapped=pair('voice-model:request:context:0');
+      const id=mapped[0]!.content![0]!.toolUse!.toolUseId!;
+      assert.match(id,/^[a-zA-Z0-9_-]{1,64}$/);assert.equal(mapped[1]!.content![0]!.toolResult!.toolUseId,id);
+      assert.notEqual(pair('voice-model_request_context_0')[0]!.content![0]!.toolUse!.toolUseId,id);
+      assert.match(pair('x'.repeat(100))[0]!.content![0]!.toolUse!.toolUseId!,/^[a-zA-Z0-9_-]{1,64}$/);
+    });
     check('unknown LLM mode is not silently mocked', () => assert.throws(() => getLLMProvider('invalid'), /Unknown/));
     check('removed Gemini mode is rejected explicitly',()=>assert.throws(()=>getLLMProvider('gemini'),/Unknown/));
   }

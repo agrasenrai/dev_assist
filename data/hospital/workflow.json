@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "nurses": [
+    {
+      "id": "hospital:seema",
+      "name": "Seema Patel",
+      "badge": "SIM-101"
+    },
+    {
+      "id": "hospital:reema",
+      "name": "Reema Roy",
+      "badge": "SIM-102"
+    },
+    {
+      "id": "hospital:jordan",
+      "name": "Jordan Lee",
+      "badge": "SIM-103"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "paperwork",
+      "patient": "sw-rowan",
+      "nurse": "hospital:seema",
+      "title": "Check discharge paperwork",
+      "status": "PENDING",
+      "category": "DISCHARGE_PREP"
+    },
+    {
+      "id": "transport",
+      "patient": "sw-taylor",
+      "nurse": "hospital:seema",
+      "title": "Confirm transport arrangements",
+      "status": "IN_PROGRESS",
+      "category": "DISCHARGE_PREP"
+    },
+    {
+      "id": "family",
+      "patient": "sw-casey",
+      "nurse": "hospital:reema",
+      "title": "Record family contact details",
+      "status": "PENDING",
+      "category": "CONSULT"
+    },
+    {
+      "id": "checklist",
+      "patient": "sw-casey",
+      "nurse": "hospital:reema",
+      "title": "Review discharge checklist",
+      "status": "IN_PROGRESS",
+      "category": "DISCHARGE_PREP"
+    },
+    {
+      "id": "contact",
+      "patient": "sw-rowan",
+      "nurse": "hospital:seema",
+      "title": "Verify receiving team contact",
+      "status": "COMPLETED",
+      "category": "CONSULT"
+    }
+  ]
+}

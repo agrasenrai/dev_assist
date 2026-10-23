@@ -2,7 +2,7 @@ import { EpicOAuthService } from './epic-oauth.service.js';
 
 export type SourceSection = { status: 'AVAILABLE' | 'EMPTY' | 'ERROR'; resources: any[]; warnings: string[]; error?: string };
 export type EpicWorkflowSnapshot = {
-  source: 'EPIC_FHIR_R4'; endpoint: string; patientId: string; retrievedAt: string;
+  source: 'EPIC_FHIR_R4' | 'SYNTHETIC_FHIR_R4'; endpoint: string; patientId: string; retrievedAt: string;
   patient: any; sections: Record<string, SourceSection>;
   documents: Array<{ id: string; contentType: string; text?: string; status: 'AVAILABLE' | 'UNSUPPORTED' | 'ERROR'; error?: string }>;
 };

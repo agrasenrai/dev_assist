@@ -1,0 +1,10 @@
+import 'dotenv/config';
+import path from 'node:path';
+import fs from 'node:fs';
+if(!process.argv[2]&&!process.env.SQLITE_DB_PATH)throw new Error('Set SQLITE_DB_PATH or supply an explicit database path');
+const target=path.resolve(process.argv[2]||process.env.SQLITE_DB_PATH!);
+if(!fs.existsSync(target))throw new Error('Run npm run simulation:setup first');
+if(process.env.STAFF_AUTH_REQUIRED==='true')throw new Error('Use the normal application launcher for authenticated staff; review launcher cannot disable authentication');
+Object.assign(process.env,{SQLITE_DB_PATH:target,HOSPITAL_SIMULATION_ENABLED:'false',SIMULATION_MODE:'true',NODE_ENV:'development',HOST:'127.0.0.1',PORT:process.env.SIMULATION_PORT||'3001',EPIC_READS_ENABLED:'false',EPIC_WRITES_ENABLED:'false',LLM_PROVIDER:process.env.SIMULATION_LLM_PROVIDER||process.env.LLM_PROVIDER||'mock'});
+console.log(`Review backend database: ${target}; LLM: ${process.env.LLM_PROVIDER}. Epic network calls disabled for review scenarios.`);
+await import('../src/server.js');

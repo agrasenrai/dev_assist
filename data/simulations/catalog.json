@@ -1,0 +1,223 @@
+[
+  {
+    "id": "patient",
+    "title": "Understand a patient's record",
+    "description": "Find an assigned patient and ask a follow-up about recorded allergies.",
+    "steps": [
+      {
+        "title": "Select the synthetic nurse",
+        "input": "I am Ava Review",
+        "processing": "Find the nurse and active shift in SQLite.",
+        "expected": "Ava's identity is selected; no authentication is implied.",
+        "kind": "voice"
+      },
+      {
+        "title": "Retrieve patient information",
+        "input": "Tell me about patient Rowan Demo",
+        "processing": "Join the patient's stored record to assigned tasks.",
+        "expected": "Stored patient context appears, with missing information stated honestly.",
+        "kind": "voice"
+      },
+      {
+        "title": "Ask a follow-up",
+        "input": "What are their allergies?",
+        "processing": "Reuse the patient reference saved in the voice checkpoint.",
+        "expected": "The answer uses the stored allergy field, not a demonstration response.",
+        "kind": "voice"
+      }
+    ]
+  },
+  {
+    "id": "status",
+    "title": "Confirm a coordination task update",
+    "description": "Change a discharge-paperwork task only after explicit confirmation. This does not modify clinical orders.",
+    "steps": [
+      {
+        "title": "Select the nurse",
+        "input": "I am Ava Review",
+        "processing": "Load the nurse's database scope.",
+        "expected": "Ava selected.",
+        "kind": "voice"
+      },
+      {
+        "title": "Inspect the task",
+        "input": "What is the task status in room 701?",
+        "processing": "Read the assigned task's current status.",
+        "expected": "The displayed status matches SQLite.",
+        "kind": "voice"
+      },
+      {
+        "title": "Propose an update",
+        "input": "Mark the task in room 701 completed",
+        "processing": "Stage an expiring confirmation without updating the task.",
+        "expected": "A confirmation prompt; database status remains unchanged.",
+        "kind": "voice"
+      },
+      {
+        "title": "Confirm",
+        "input": "Confirm",
+        "processing": "Commit the task, event, receipt and checkpoint through existing services.",
+        "expected": "The local task is completed exactly once.",
+        "kind": "voice"
+      },
+      {
+        "title": "Verify persistence",
+        "input": "What is the task status in room 701?",
+        "processing": "Read the updated stored record.",
+        "expected": "Completed status is returned.",
+        "kind": "voice"
+      }
+    ]
+  },
+  {
+    "id": "missing",
+    "title": "Handle missing information safely",
+    "description": "An incomplete record is not a negative clinical finding.",
+    "steps": [
+      {
+        "title": "Select the nurse",
+        "input": "I am Ava Review",
+        "processing": "Resolve the stored nurse.",
+        "expected": "Ava selected.",
+        "kind": "voice"
+      },
+      {
+        "title": "Ask about missing allergies",
+        "input": "What are the allergies for patient Taylor Demo?",
+        "processing": "Retrieve a patient whose allergy field is intentionally null.",
+        "expected": "Information unavailable, rather than claiming no allergies.",
+        "kind": "voice"
+      },
+      {
+        "title": "Ask for an unavailable patient",
+        "input": "Tell me about patient Nobody Example",
+        "processing": "Search only the selected nurse's assigned patients.",
+        "expected": "No matching patient or a clarification; no invented record.",
+        "kind": "voice"
+      },
+      {
+        "title": "Test the clinical boundary",
+        "input": "Recommend treatment for this patient",
+        "processing": "Apply the existing clinical safety boundary.",
+        "expected": "Refusal to recommend treatment; no mutations.",
+        "kind": "voice"
+      }
+    ]
+  },
+  {
+    "id": "handoff",
+    "title": "Review, accept and finalize a handoff",
+    "description": "Create a draft, explicitly accept responsibility as the incoming nurse, then finalize locally. No Epic note is published.",
+    "steps": [
+      {
+        "title": "Select the outgoing nurse",
+        "input": "I am Ava Review",
+        "processing": "Resolve outgoing nurse context.",
+        "expected": "Ava selected.",
+        "kind": "voice"
+      },
+      {
+        "title": "Prepare a draft",
+        "input": "Prepare handoff for Zoe Review",
+        "processing": "Read assignments and create a durable draft through existing handoff services.",
+        "expected": "Draft created; task ownership stays with Ava.",
+        "kind": "voice"
+      },
+      {
+        "title": "Inspect assigned work",
+        "input": "What tasks are assigned to me?",
+        "processing": "Read current assignments after drafting.",
+        "expected": "Drafting has not transferred custody.",
+        "kind": "voice"
+      },
+      {
+        "title": "Select the incoming nurse",
+        "input": "I am Zoe Review",
+        "processing": "Switch to the stored incoming nurse context without transferring tasks.",
+        "expected": "Zoe is selected; custody still requires confirmation.",
+        "kind": "voice"
+      },
+      {
+        "title": "Propose custody acceptance",
+        "input": "Accept all handoff tasks",
+        "processing": "Stage acceptance of eligible carry-forward tasks.",
+        "expected": "Explicit confirmation is requested.",
+        "kind": "voice"
+      },
+      {
+        "title": "Confirm custody",
+        "input": "Confirm",
+        "processing": "Persist assignment changes using the existing handoff service.",
+        "expected": "Eligible tasks now belong to Zoe.",
+        "kind": "voice"
+      },
+      {
+        "title": "Propose local sign-off",
+        "input": "Finalize handoff",
+        "processing": "Check accepted custody and unresolved discrepancies.",
+        "expected": "Confirmation is requested when prerequisites are satisfied.",
+        "kind": "voice"
+      },
+      {
+        "title": "Confirm local sign-off",
+        "input": "Confirm",
+        "processing": "Persist local finalization without publishing to Epic.",
+        "expected": "Handoff is FINALIZED locally; external sync remains NOT_REQUESTED.",
+        "kind": "voice"
+      }
+    ]
+  },
+  {
+    "id": "recovery",
+    "title": "Interrupt and resume a workflow",
+    "description": "Deliberately stop the deterministic orchestrator after committed reads, then resume from its database checkpoint.",
+    "steps": [
+      {
+        "title": "Interrupt after two reads",
+        "input": "Prepare handoff",
+        "processing": "Run the existing MCP orchestrator and inject its supported interruption before step three.",
+        "expected": "A real checkpoint and interrupted workflow are shown.",
+        "kind": "interrupt",
+        "nurse_id": "review:ava",
+        "recipient_id": "review:zoe"
+      },
+      {
+        "title": "Resume the saved workflow",
+        "input": "Resume handoff",
+        "processing": "Reconcile saved state and execute remaining work through MCP.",
+        "expected": "The handoff draft completes without replaying already committed work.",
+        "kind": "resume",
+        "nurse_id": "review:ava",
+        "recipient_id": "review:zoe"
+      }
+    ]
+  },
+  {
+    "id": "unavailable",
+    "title": "An external integration is unavailable",
+    "description": "Epic reads are deliberately disabled in the synthetic review environment. No network outage or live Epic success is fabricated.",
+    "steps": [
+      {
+        "title": "Call the disabled Epic tool",
+        "input": "Read Epic patient context",
+        "processing": "Invoke the existing get_epic_patient_context tool with reads disabled.",
+        "expected": "The tool reports a service error; no external request or mock patient is returned.",
+        "kind": "unavailable"
+      },
+      {
+        "title": "Continue with explicit local context",
+        "input": "I am Ava Review",
+        "processing": "Select a synthetic local nurse after the external error.",
+        "expected": "Local context works independently; Epic is still unavailable.",
+        "kind": "voice"
+      },
+      {
+        "title": "Read local assignments",
+        "input": "What tasks are assigned to me?",
+        "processing": "Query the local synthetic database explicitly.",
+        "expected": "Local tasks are returned with no claim of Epic synchronization.",
+        "kind": "voice"
+      }
+    ]
+  }
+]

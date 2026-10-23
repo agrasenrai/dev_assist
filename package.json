@@ -13,6 +13,12 @@
     "import:data": "tsx src/db/ingest.ts",
     "test:mcp": "tsx scripts/run-tests.ts mcp",
     "test:mcp-configured": "tsx scripts/verify-configured-mcp.ts",
+    "simulation:setup": "tsx scripts/setup-simulations.ts",
+    "simulation:catalog": "tsx scripts/update-simulation-catalog.ts",
+    "simulation:verify-epic": "tsx scripts/verify-simulation-epic.ts",
+    "simulation:start": "tsx scripts/start-simulations.ts",
+    "test:simulations": "tsx scripts/verify-simulations.ts",
+    "test:shared-simulations": "tsx scripts/verify-shared-simulations.ts",
     "test:agent": "tsx scripts/run-tests.ts agent",
     "test:chaos": "tsx scripts/run-tests.ts chaos",
     "test": "tsx scripts/run-tests.ts all",
@@ -38,7 +44,12 @@
     "test:epic-workflow": "tsx scripts/verify-epic-workflow.ts",
     "test:epic-live": "tsx scripts/verify-epic-workflow.ts --live",
     "sandbox:setup": "tsx scripts/setup-operational-sandbox.ts",
-    "test:operations": "tsx scripts/verify-operational-sandbox.ts"
+    "test:operations": "tsx scripts/verify-operational-sandbox.ts",
+    "hospital:setup": "tsx scripts/setup-hospital.ts",
+    "test:hospital": "tsx scripts/verify-hospital.ts",
+    "hospital:start": "tsx scripts/start-hospital.ts",
+    "hospital:prepare": "tsx scripts/start-hospital.ts --prepare-only",
+    "test:mcp-independent": "tsx scripts/verify-mcp-independent.ts"
   },
   "repository": {
     "type": "git",

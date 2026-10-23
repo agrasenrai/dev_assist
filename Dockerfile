@@ -20,6 +20,8 @@ COPY --from=build --chown=node:node /app/build ./build
 COPY --from=build --chown=node:node /app/client/dist ./client/dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node data/incoming/sample_template.json ./data/incoming/sample_template.json
+COPY --chown=node:node data/hospital ./data/hospital
+COPY --chown=node:node data/simulations ./data/simulations
 RUN mkdir -p /app/storage /app/backups && chown -R node:node /app/storage /app/backups
 USER node
 EXPOSE 3000
