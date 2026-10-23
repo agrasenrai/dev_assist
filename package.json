@@ -38,6 +38,7 @@
     "smoke": "tsx scripts/smoke.ts",
     "test:alexa-mcp": "tsx scripts/verify-alexa-mcp-connection.ts",
     "test:elevenlabs": "tsx scripts/test-elevenlabs.ts",
+    "test:tts-errors": "tsx scripts/verify-tts-errors.ts",
     "test:deployment": "tsx scripts/verify-deployment.ts",
     "epic:connect": "tsx scripts/connect-epic.ts",
     "epic:probe": "tsx scripts/probe-epic.ts",
