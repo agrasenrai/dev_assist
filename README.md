@@ -12,7 +12,7 @@ Built for the **Amazon Developer Hackathon — Alexa+ track**, with **Amazon Bed
 
 | Resource | URL | What to expect |
 | --- | --- | --- |
-| **Live application** | **https://32.189.84.182.nip.io/** | Voice workspace and synthetic hospital preview |
+| **Live application** | [**https://32.189.84.182.nip.io/**](https://32.189.84.182.nip.io/) | Voice workspace and synthetic hospital preview. For the best voice-testing experience, open in Chrome and allow microphone access. |
 | **MCP server** | **https://32.189.84.182.nip.io/mcp** | Streamable HTTP endpoint for compatible MCP clients |
 | Source code | https://github.com/agrasenrai/dev_assist | Application, MCP implementation and executable checks |
 | Engineering friction log | [FRICTION_LOG.md](FRICTION_LOG.md) | Challenges, decisions, resolutions and remaining issues |
