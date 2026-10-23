@@ -84,6 +84,16 @@ footer{position:absolute;left:56px;right:56px;top:1044px;text-align:center;color
 #preview-guide button:hover{background:#30375f}#preview-guide button:focus-visible,#preview-guide summary:focus-visible{outline:3px solid var(--dy);outline-offset:2px}
 #preview-guide a{font-size:21px;color:#b9c4ff}
 
+/* Keep scrollable voice surfaces in the same indigo palette as the workspace. */
+#st{color-scheme:dark}
+#st *{scrollbar-width:thin;scrollbar-color:#6671a8 #14172c}
+#st ::-webkit-scrollbar{width:8px;height:8px}
+#st ::-webkit-scrollbar-track{background:#14172c;border-radius:12px}
+#st ::-webkit-scrollbar-thumb{background:#6671a8;border:2px solid #14172c;border-radius:12px}
+#st ::-webkit-scrollbar-thumb:hover{background:#8ea0ff}
+#st ::-webkit-scrollbar-button{display:none;width:0;height:0}
+#st ::-webkit-scrollbar-corner{background:transparent}
+
 /* One guide, two positions: open welcome space becomes the workflow companion. */
 #st[data-preview=true] #preview-guide{right:auto;left:1452px;transition:left .75s cubic-bezier(.65,.05,.2,1),width .75s cubic-bezier(.65,.05,.2,1),top .75s ease,background-color .75s ease,border-color .75s ease,padding .75s ease}
 #preview-guide .question-list{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}

@@ -46,7 +46,7 @@ export const voiceIntentSchema = z.object({
   epic_patient_id: z.string().regex(/^[A-Za-z0-9.-]+$/).max(250).optional(),
   status: z.enum(['PENDING','IN_PROGRESS','COMPLETED','CANCELLED','UNFINISHED','ALL']).optional(),
   note: z.string().trim().min(1).max(1000).optional(),
-  detail: z.enum(['SUMMARY','DETAILS','ALLERGIES','DIAGNOSIS','ADMISSION']).optional(),
+  detail: z.enum(['SUMMARY','DETAILS','ALLERGIES','DIAGNOSIS','ADMISSION','GUIDANCE','INCOMING_NURSE']).optional(),
   all_tasks: z.boolean().optional(),
   continue_request: z.boolean().optional().describe('IDENTIFY only: true when the SAME utterance also contains a workflow/patient request to handle after identification.')
 }).strict();
@@ -60,6 +60,7 @@ const initial = (dataSource:VoiceSource = sourceRealm()==='epic'?'epic':!staffAu
   selectedHandoffId: null, focus: 'tasks', messages: [], speech: staffAuthRequired() && currentStaff()
     ? `Signed in as ${currentStaff()!.name}. Ready for your question.` : 'Ready for your question.' });
 const normal = (text: string) => text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const statusOnlyNote=(text:string)=>/^(?:(?:i|we) )?(?:(?:have )?(?:verified|confirmed|checked) (?:that )?)?(?:(?:it|the task|task|status) (?:is |was )?)?(?:pending|in progress|completed|complete|cancelled|canceled)$/.test(normal(text));
 const hasPhrase = (text: string, value: string) => Boolean(normal(value)) && new RegExp(`(?:^| )${normal(value)}(?: |$)`).test(text);
 const runId = (id: string) => `voice:${id}`;
 
@@ -165,7 +166,7 @@ export class VoiceService {
     const staff = currentStaff();
     const directory = !includeDirectory ? [] : staffAuthRequired() && staff ? [{name:staff.name}] :
       db.prepare(`SELECT full_name AS name FROM nurses n WHERE ${nurseScope('n')} AND role IN ('STAFF_NURSE','CHARGE_NURSE') AND (CASE WHEN ?='hospital' THEN id LIKE 'hospital:%' ELSE id NOT LIKE 'hospital:%' END) ORDER BY full_name`).all(state.dataSource || 'existing');
-    return {dataSource:state.dataSource,revision:state.revision,nurse:state.nurse,shift:state.shift,selectedTaskId:state.selectedTaskId,
+    return {dataSource:state.dataSource,revision:state.revision,nurse:state.nurse,shift:state.shift,focus:state.focus,selectedTaskId:state.selectedTaskId,
       selectedPatientId:state.selectedPatientId,selectedHandoffId:state.selectedHandoffId,handoffSourceNurseId:state.handoffSourceNurseId,pending:state.pending,
       directory,messages:state.messages};
   }
@@ -214,7 +215,8 @@ export class VoiceService {
       if(matches.length!==1)throw new Error('I couldn’t find that patient uniquely in your current view. Which patient do you mean?');
       intent.patient_id=matches[0]!.patientId;
     }
-    const requestedTask = intent.task_id || (!state.pending?.ready ? state.pending?.taskIds[0] : undefined) || state.selectedTaskId;
+    const requestedTask = intent.task_id || (!state.pending?.ready ? state.pending?.taskIds[0] : undefined) || state.selectedTaskId ||
+      (['CONFLICTS','RESOLVE'].includes(intent.intent)&&records.conflicts.length===1?records.conflicts[0]!.taskId:undefined);
     const task = requestedTask ? visible.find(t => t.id === requestedTask) : visible.length === 1 ? visible[0] : undefined;
     if (intent.task_id && !task) throw new Error('That task is outside your current view. Which assigned task do you mean?');
     const requireTask = () => { if (!task) throw new Error('Which task do you mean? Please give the patient and task title.'); return `task ${task.id}`; };
@@ -229,7 +231,12 @@ export class VoiceService {
     if (intent.handoff_id && !records.handoffs.some(h => h.id === handoffId)) throw new Error('That handoff is outside your current view.');
     const handoff = handoffId ? ` handoff ${handoffId}` : ' handoff';
     const status = intent.status && !['ALL','UNFINISHED'].includes(intent.status) ? spokenStatus(intent.status) : '';
-    if (intent.note && !normal(input.utterance).includes(normal(intent.note))) throw new Error('What should I write in the review note? I need your own words.');
+    if(intent.intent==='RESOLVE'&&intent.note&&statusOnlyNote(intent.note))delete intent.note;
+    if (intent.note && !normal(input.utterance).includes(normal(intent.note))) {
+      const exactNote=intent.intent==='RESOLVE'&&state.pending?.kind==='RESOLVE'&&state.pending.finalStatus?this.reviewNote(this.commandText(input.utterance),state.pending):null;
+      if(!exactNote)throw new Error('What should I write in the review note? I need your own words.');
+      intent.note=exactNote;
+    }
     const note = intent.note ? ` because ${intent.note}` : '';
     switch (intent.intent) {
       case 'SYNC_EPIC': { if(state.dataSource==='hospital')throw new Error('Use Refresh hospital records for this source. Epic remains separate.'); return 'Sync Epic patients'; }
@@ -242,13 +249,14 @@ export class VoiceService {
       case 'ASSIGN_SELF': { if(state.dataSource!=='hospital')throw new Error('Self-assignment is supported only for available simulation hospital tasks.'); return task?`Assign task ${task.id} to me`:'Assign an available task to me'; }
       case 'TASKS': return `Show my ${intent.status === 'UNFINISHED' ? 'unfinished' : status} tasks${patient}`;
       case 'TASK': return `${intent.detail === 'DETAILS' ? 'Explain' : 'Show status of'} ${requireTask()}`;
-      case 'CONFLICTS': return intent.task_id ? `Explain discrepancy for ${requireTask()}` : 'Show discrepancies';
+      case 'CONFLICTS': return intent.detail==='GUIDANCE'?`Guide discrepancy review${task?` for task ${task.id}`:''}`:intent.task_id ? `Explain discrepancy for ${requireTask()}` : 'Show discrepancies';
       case 'PATIENT': return `${intent.detail === 'ALLERGIES' ? 'Show allergies for' : intent.detail === 'DIAGNOSIS' ? 'Show diagnosis for' : intent.detail === 'ADMISSION' ? 'Show admission for' : intent.detail === 'DETAILS' ? 'Show details for' : 'Show latest information about'}${patient || ' my patient'}`;
       case 'STATUS': return `Set ${requireTask()} ${status}${note}`;
       case 'RESOLVE': return `Resolve discrepancy for ${requireTask()} ${status}${note}`;
       case 'ESCALATE': return `Escalate ${requireTask()}${note}`;
       case 'DRAFT': return `Prepare my handoff for ${name(intent.recipient_name)}`;
       case 'HANDOFF': {
+        if(intent.detail==='INCOMING_NURSE')return 'Show receiving nurse';
         if(intent.source_nurse_name){
           const sources=this.resolveNurse(normal(name(intent.source_nurse_name)),state);
           if(sources.length!==1)throw new Error(sources.length?'More than one nurse has that name. What’s their full name or badge number?':'I couldn’t find that nurse. What’s their full name or badge number?');
@@ -276,6 +284,7 @@ export class VoiceService {
   private static conversationText(state: State, text: string) {
     const normalized = normal(text);
     if (!normalized || this.introduction(text,state)) return false;
+    if(normalized==='show receiving nurse')return false;
     if (/^(?:yes|confirm|yes confirm|confirm it|yes please|cancel|no|stop|never mind|no cancel|end (?:my )?session|sign out|log out|goodbye|bye)$/.test(normalized)) return false;
     if (state.pending && /\b(completed|in progress|cancelled|canceled|pending|because|note)\b/.test(normalized)) return false;
     if (this.reviewNote(text,state.pending)) return false;
@@ -285,6 +294,7 @@ export class VoiceService {
 
   private static reviewNote(text: string, pending: Pending | null) {
     if (!pending || pending.ready || !['RESOLVE','ESCALATE'].includes(pending.kind)) return null;
+    if(statusOnlyNote(text))return null;
     // A direct answer to a requested note need not use a scripted "because" prefix.
     if (/^(?:show|what|which|who|how|explain|tell|list|read|sync|prepare|create|accept|finalize|cancel|stop|no|yes|confirm)\b/i.test(text.trim())) return null;
     const note = text.replace(/^\s*(?:in progress|completed|cancelled|canceled)[\s,.:;-]*/i,'').trim();
@@ -377,7 +387,7 @@ export class VoiceService {
       } else if (/^(?:medi )?(?:end (?:my )?session|sign out|log out|goodbye|bye)[.! ]*$/.test(normalized)) {
         Object.assign(state, initial(state.dataSource), { revision: state.revision });
         speech = 'Take care. I’ve cleared this conversation from the screen.';
-      } else if (this.conversationText(state,text)) {
+      } else if (!interpretedCommand && this.conversationText(state,text)) {
         state.pending = null;
         speech = "I'm listening and glad to chat! As your ShiftWeave nursing companion, I'm ready whenever you want to check tasks, review handoffs, or look up patient updates. What would you like to do?";
       } else if (!state.nurse) {
@@ -565,6 +575,28 @@ export class VoiceService {
     const r = this.records(state);
     const visibleTasks = [...r.tasks, ...r.candidates];
     const selected = this.selectTask(state, raw, visibleTasks);
+    if(text==='show receiving nurse'){
+      state.focus='handoff';
+      const outgoing=r.handoffs.filter(h=>h.outgoingId===state.nurse!.id);
+      const handoff=outgoing.find(h=>h.id===state.selectedHandoffId)||(outgoing.length===1?outgoing[0]:undefined);
+      if(!handoff)return outgoing.length?'There is more than one outgoing handoff. Which handoff do you mean?':
+        'No receiving nurse is recorded in a saved handoff from you yet. I can’t tell who is taking over from the current records.';
+      state.selectedHandoffId=handoff.id;
+      return `The receiving nurse is ${handoff.incomingName}. The saved handoff is ${handoff.status.toLowerCase().replaceAll('_',' ')}.`;
+    }
+    if(/^guide discrepancy review\b/.test(text)){
+      state.focus='conflicts';
+      const conflict=(selected?r.conflicts.find(c=>c.taskId===selected.id):undefined)||
+        (!selected&&r.conflicts.length===1?r.conflicts[0]:undefined);
+      if(!conflict)return r.conflicts.length?'Which discrepancy would you like to review? Please give the task title.':'No unresolved discrepancy was returned for your current tasks.';
+      state.selectedTaskId=conflict.taskId;
+      const pending=state.pending?.kind==='RESOLVE'&&state.pending.conflictId===conflict.id?state.pending:null;
+      if(pending?.ready)return pending.prompt;
+      if(pending?.finalStatus&&!pending.note)return 'Tell me what you checked to verify that status. I’ll use your own words for the review note, then ask you to confirm.';
+      const status=(value:string)=>['PENDING','IN_PROGRESS','COMPLETED','CANCELLED'].includes(value)?spokenStatus(value):value;
+      return `${conflict.taskTitle} for ${conflict.patientName}: ${conflict.systemAName} says ${status(conflict.systemAVal)}, while ${conflict.systemBName} says ${status(conflict.systemBVal)}. `+
+        'Check which status is correct, then tell me that status and what you checked. I’ll ask you to confirm before saving the review.';
+    }
     const collecting = state.pending && !state.pending.ready ? state.pending : null;
     state.pending = null; // An unrelated turn invalidates a previous confirmation.
     if (/\b(dont|do not|not yet|never)\b/.test(text)) {
@@ -614,11 +646,12 @@ export class VoiceService {
       state.selectedTaskId = task.id; state.focus = 'conflicts';
       const conflict = r.conflicts.find(c => c.taskId === task.id);
       if (!conflict) return 'No unresolved discrepancy is available for that task.';
-      const answeringNote = collecting?.finalStatus && this.reviewNote(raw,collecting) &&
+      const naturalNote=semantic?null:this.reviewNote(raw,collecting);
+      const answeringNote = collecting?.finalStatus && naturalNote &&
         !/^\s*(?:in progress|completed|cancelled|canceled)\b/i.test(raw);
       const finalStatus = answeringNote ? collecting.finalStatus : /\bin progress\b/.test(text) ? 'IN_PROGRESS' : /\bcompleted\b/.test(text) ? 'COMPLETED'
         : /\bcancelled\b|\bcanceled\b/.test(text) ? 'CANCELLED' : collecting?.finalStatus || null;
-      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || this.reviewNote(raw,collecting) || collecting?.note || null;
+      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || naturalNote || collecting?.note || null;
       const ready = Boolean(finalStatus && note);
       return this.stage(state, { kind: 'RESOLVE', taskIds: [task.id], handoffId: null, conflictId: conflict.id,
         finalStatus, note, ready, version: '', expiresAt: 0,
@@ -630,7 +663,7 @@ export class VoiceService {
     if (/\b(escalate|supervisor)\b/.test(text) || collecting?.kind === 'ESCALATE') {
       const task = selected || visibleTasks.find(t => t.id === collecting?.taskIds[0]);
       if (!task) return 'Please specify the room or patient to flag for supervisor review.';
-      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || this.reviewNote(raw,collecting) || null;
+      const note = raw.match(/\b(?:because|note(?: is)?)[,: ]+(.+)/i)?.[1]?.trim() || (semantic?null:this.reviewNote(raw,collecting)) || null;
       return this.stage(state, { kind: 'ESCALATE', taskIds: [task.id], handoffId: null, conflictId: null, finalStatus: null,
         note, ready: Boolean(note), version: '', expiresAt: 0, prompt: note
           ? `Save a local escalation for ${task.patientName}, ${task.roomNumber}: “${note}”? Say “confirm” or “cancel”.`
@@ -688,7 +721,7 @@ export class VoiceService {
       const conflicts = selected ? r.conflicts.filter(c => c.taskId === selected.id) : r.conflicts;
       if (selected) state.selectedTaskId = selected.id;
       return conflicts.length ? conflicts.map(c => `${c.patientName}, ${c.patientRoom}: ${c.systemAName} says ${c.systemAVal}; ${c.systemBName} says ${c.systemBVal}.`).join(' ') +
-        ' These records disagree and need your review.'
+        ' These records disagree. What status did you verify, and what did you check? I’ll ask you to confirm before saving the review.'
         : 'No unresolved discrepancy was returned for the requested tasks.';
     }
     const plural = listQuery;

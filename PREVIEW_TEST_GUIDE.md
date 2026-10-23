@@ -80,6 +80,7 @@ For opt-in **paid, live Bedrock** question testing:
 ```sh
 npm run test:preview-questions-live
 npm run test:preview-questions-live -- --edge-cases
+npm run test:preview-questions-live -- --jordan-review
 ```
 
 The live script provisions a new temporary SQLite database from bundled synthetic fixtures. It sends questions through the actual Streamable HTTP MCP server and configured Bedrock adapter, tests confirmation/cancellation against stored values, and removes the temporary database afterward. It never mutates the configured application database. A provider failure is a failed question check, even when safely handled. The script does not call ElevenLabs or live Epic.
@@ -88,8 +89,8 @@ For the hosted external endpoint, use the compiled independent client described 
 
 ## Verification for this change
 
-- Production frontend/backend build, root typecheck and 216 isolated regression checks passed after the conversation fix.
-- All 18 hospital checks passed, exercising all 15 preview MCP tools, state updates, retries, source restrictions and the six scenarios.
+- Production frontend/backend build, root typecheck and 220 isolated regression checks passed after the conversation/review fixes.
+- All 20 hospital checks passed, exercising all 15 preview MCP tools, state updates, retries, source restrictions and the six scenarios.
 - Headless browser verified database-derived suggestions, no auto-send, larger transcript and guide/transcript separation at desktop size. Screenshots were inspected at 1536x864 and 1280x720.
 - Earlier live runs exposed eager hospital refresh/context loading and a clinical-refusal validation mismatch. Those runs failed; they are not counted as successful verification.
 - After the fix, the full **21-question live Bedrock → MCP → synthetic SQLite sequence passed**, including an MCP explanation, general conversation after nurse selection, missing patient, indirect handoff, treatment refusal, cancellation, completion and self-assignment. The script verifies that general conversation and clinical refusal do not create hospital-refresh operations. Most model-backed turns in this run were about 1.3–2.3 seconds; the first greeting was 4.4 seconds. This is a measured run, not a latency guarantee or proof that upstream services cannot fail.
@@ -97,3 +98,11 @@ For the hosted external endpoint, use the compiled independent client described 
 - Safe clinical refusal wording is accepted or normalized to the enforced clinical boundary. Unsourced patient claims and clinical instructions remain blocked; no evidence rule is bypassed merely because a response contains a refusal.
 - Compiled production provisioning/server/independent-client runtime checks passed. Source isolation passed all 11 checks using controlled Epic HTTP contracts, not new live Epic authorization.
 - Existing headless voice regression passed, including transcription-to-MCP-to-playback wiring, follow-ups, barge-in, error recovery and queued speech. Speech recognition and playback adapters were simulated. No deployment, physical voice test or new live Epic verification is claimed.
+
+## Receiving nurse and discrepancy review replay
+
+The opt-in `--jordan-review` live sequence passed all 13 questions through Bedrock and real Streamable HTTP MCP against isolated synthetic SQLite. It includes noisy transcription, incoming-nurse questions, discrepancy guidance, a verified status, an exact human review note, and explicit confirmation. Intermediate runs exposed routing and pending-state defects; those failed runs are not counted as passes. One intermediate run also encountered an upstream timeout/reset, so this is not a guarantee of provider availability.
+
+Try “My name is Jordan Lee. What are my tasks?”, “Who is the incoming nurse?”, “Review discrepancies”, and “What do you need from me?”. A receiving nurse is reported only from a saved outgoing handoff. For a discrepancy, check the underlying records before supplying the verified status and your own explanation of what you checked. The assistant collects both and requests confirmation before saving. Asking for help while collecting these fields preserves the unfinished review.
+
+Displayed tasks are SQLite records, not a static list in the UI. Bedrock interprets the request; workflow speech currently uses controlled templates filled with backend results. Those templates explain the consistent wording, but do not substitute static answers for database queries.

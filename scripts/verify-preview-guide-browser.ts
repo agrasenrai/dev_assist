@@ -32,6 +32,8 @@ try{
   const openingGuide=await page.locator('#preview-guide').boundingBox();assert(openingGuide);
   assert(Math.abs(openingGuide.x+openingGuide.width/2-1536/2)<2,'Opening guide should be centered');
   assert.equal(await page.locator('#preview-guide').evaluate((el:Element)=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+  assert.equal(await page.locator('#preview-guide').evaluate((el:Element)=>getComputedStyle(el).scrollbarColor),'rgb(102, 113, 168) rgb(20, 23, 44)');
+  assert.equal(await page.locator('#st').evaluate((el:Element)=>getComputedStyle(el).colorScheme),'dark');
   assert.equal(await page.locator('#preview-guide details[open]').count(),2);
   assert((await page.locator('#preview-guide button').count())>=11,'Keep all example categories and questions available');
   const mark=await page.locator('.assistant-mark').evaluate((el:Element)=>el.outerHTML);
