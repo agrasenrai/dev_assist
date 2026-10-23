@@ -84,6 +84,24 @@ footer{position:absolute;left:56px;right:56px;top:1044px;text-align:center;color
 #preview-guide button:hover{background:#30375f}#preview-guide button:focus-visible,#preview-guide summary:focus-visible{outline:3px solid var(--dy);outline-offset:2px}
 #preview-guide a{font-size:21px;color:#b9c4ff}
 
+/* One guide, two positions: open welcome space becomes the workflow companion. */
+#st[data-preview=true] #preview-guide{right:auto;left:1452px;transition:left .75s cubic-bezier(.65,.05,.2,1),width .75s cubic-bezier(.65,.05,.2,1),top .75s ease,background-color .75s ease,border-color .75s ease,padding .75s ease}
+#preview-guide .question-list{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}
+#preview-guide .question-list button{margin-top:0}
+#st[data-preview=true][data-stage=welcome] #preview-guide{left:400px;top:104px;width:1120px;max-height:610px;padding:16px 24px;background:transparent;border-color:transparent;box-shadow:none}
+#st[data-preview=true][data-stage=welcome] #preview-guide h2{text-align:center;font-size:52px;margin-bottom:12px}
+#st[data-preview=true][data-stage=welcome] #preview-guide > p:not(.guide-note){max-width:760px;text-align:center;margin:0 auto 24px}
+#st[data-preview=true][data-stage=welcome] #preview-guide .question-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+#st[data-preview=true][data-stage=welcome] #preview-guide details{border-color:transparent;padding:8px 0}
+#preview-guide .guide-note{font-size:19px;color:var(--mu)}
+#st[data-preview=true][data-stage=workflow] #lm svg{animation:workflow-arrive .6s .8s both}
+#st[data-preview=true][data-stage=workflow] #lm .workflow-line{stroke-dasharray:1200;animation:workflow-draw 1.1s .85s both}
+#st[data-preview=true][data-stage=workflow] #pn.in{animation:pin .55s .9s both}
+#st[data-preview=true] #pn{top:536px}
+#st[data-preview=true] #talk{height:140px}
+@keyframes workflow-arrive{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes workflow-draw{from{stroke-dashoffset:1200}to{stroke-dashoffset:0}}
+
 /* Voice-first controls: the assistant stays centered; typing opens on demand. */
 .voice-microphone{width:88px;height:88px;padding:5px;border-radius:50%;background:#11152bf2;box-shadow:0 10px 35px #0006,0 0 35px #8ea0ff18}
 .voice-microphone .assistant-voice-button{position:relative;width:76px;height:76px;min-height:76px;padding:0;display:grid;place-items:center;border:1px solid #8ea0ff80;border-radius:50%;color:#ffdab0;background:radial-gradient(circle at 35% 25%,#4c507f,#25294e 55%,#101528);transition:box-shadow .2s,background .2s}
