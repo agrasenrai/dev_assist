@@ -1,1 +1,0 @@
-{"commands":["sed -i 's/^DOMAIN=.*/DOMAIN=32.189.84.182.nip.io/' /mnt/shiftweave/.env.deploy","grep DOMAIN /mnt/shiftweave/.env.deploy","cd /mnt/shiftweave && docker compose --env-file .env.deploy up -d --remove-orphans 2>&1 | tail -5","echo RESTARTED"]}
