@@ -87,7 +87,12 @@ try {
   console.log('PASS default voice workspace and lower-center microphone placement');
   assert.equal(await page.locator('#chip').count(),0);
   assert.equal(await page.getByRole('button',{name:/Say:/}).count(),0);
-  assert.equal(await page.getByRole('textbox',{name:'Type to Medi'}).inputValue(),'');
+  assert.equal(await page.locator('#in').inputValue(),'');
+  assert.equal(await page.locator('#in').isVisible(),false);
+  await page.getByRole('button',{name:'Show keyboard',exact:true}).click();
+  assert.equal(await page.getByRole('textbox',{name:'Type to Medi'}).isVisible(),true);
+  await page.getByRole('button',{name:'Hide keyboard',exact:true}).click();
+  assert.equal(await page.locator('#in').isVisible(),false);
   assert.equal(await page.getByRole('button',{name:'Start microphone',exact:true}).evaluate((button:HTMLElement)=>Boolean(button.closest('#st'))),false);
   await page.evaluate(()=>{(window as any).denyMicrophone=true;});
   await page.getByRole('button', {name:'Start microphone', exact:true}).click();
@@ -102,6 +107,8 @@ try {
   page.on('request',(request:any)=>{if(request.url()===base+'/api/voice' && request.method()==='POST')voiceRequests++;});
   await page.evaluate(()=>(window as any).say('Seema',false));
   await page.getByRole('log',{name:'Your transcript'}).filter({hasText:'Seema'}).waitFor();
+  assert.equal(await page.locator('.voice-microphone').getAttribute('data-activity'),'hearing');
+  assert.equal(await page.locator('.voice-band').first().evaluate((el:Element)=>getComputedStyle(el).animationName),'assistant-wave');
   assert.equal(voiceRequests,0,'Interim speech must be displayed without executing a request');
   assert.equal(await page.evaluate(()=>(window as any).recognition.interimResults),true);
   console.log('PASS external microphone button, permission recovery, live transcription, and no suggested phrases');
@@ -201,7 +208,7 @@ try {
   assert.deepEqual(blank.messages,[]); assert.deepEqual(blank.tasks,[]); assert.deepEqual(blank.handoffs,[]);
   assert.equal(await page.locator('#ast').innerText(),'Ready for your question.');
   assert.equal(await page.getByRole('log',{name:'Your transcript'}).innerText(),'');
-  assert.equal(await page.getByRole('textbox',{name:'Type to Medi'}).inputValue(),'');
+  assert.equal(await page.locator('#in').inputValue(),'');
   assert.equal(await page.getByRole('button',{name:'Start microphone',exact:true}).getAttribute('aria-pressed'),'false');
   assert.equal(await page.getByRole('group',{name:'Shift thread timeline from saved workflow state'}).count(),0);
   assert.equal(await page.evaluate((session:string)=>localStorage.getItem(`shiftweave:voice:pending:${session}`),oldSession),retainedRequest);

@@ -8,6 +8,7 @@ const playbackControl=/^(?:(?:hey )?(?:medi|alexa)[, ]*)?(?:stop|stop speaking|b
 // backend operation to commit; interrupting audio never retries or cancels writes.
 export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>){
   const [enabled,setEnabled]=useState(false),[status,setStatus]=useState('Ready');
+  const [hearing,setHearing]=useState(false);
   const [error,setError]=useState(''),[transcript,setTranscript]=useState('');
   const callback=useRef(onTranscript);callback.current=onTranscript;
   const control=useRef({enabled:false,processing:false,disposed:false,speaking:false,suppressAnswer:false,
@@ -29,7 +30,7 @@ export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>
     c.finalTranscript='';c.interimTranscript='';c.queuedText='';
     const recognition=c.recognition;c.recognition=null;recognition?.abort();
     c.stream?.getTracks().forEach(track=>track.stop());c.stream=null;
-    cancelSpeech();setEnabled(false);setStatus('Paused');
+    cancelSpeech();setHearing(false);setEnabled(false);setStatus('Paused');
   };
   const interrupt=()=>{
     const c=control.current;c.suppressAnswer=true;cancelSpeech();
@@ -63,7 +64,7 @@ export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>
     c.finalTranscript='';c.interimTranscript='';if(c.enabled)listenRef.current();
   };
   const submit=async(raw:string)=>{
-    const text=raw.trim();if(!text)return;const c=control.current;
+    const text=raw.trim();if(!text)return;setHearing(false);const c=control.current;
     if(c.processing){c.queuedText=[c.queuedText,text].filter(Boolean).join(' ');c.suppressAnswer=true;resetCapture();return;}
     cancelSpeech();window.clearTimeout(c.sentenceTimer);c.finalTranscript='';c.interimTranscript='';c.queuedText='';c.suppressAnswer=false;
     const generation=c.generation,turn=++c.turn;c.processing=true;setTranscript(text);setStatus('Working');setError('');
@@ -93,15 +94,15 @@ export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>
     const recognition=new Recognition();c.recognition=recognition;const prefix=c.finalTranscript;let discarded=0,inputStartedDuringPlayback=false;
     recognition.lang=navigator.language||'en-US';recognition.continuous=true;recognition.interimResults=true;
     recognition.onstart=()=>{if(c.recognition===recognition&&!c.speaking&&!c.processing)setStatus('Listening');};
-    recognition.onspeechstart=()=>{if(c.recognition===recognition){window.clearTimeout(c.sentenceTimer);inputStartedDuringPlayback=c.speaking;}};
-    recognition.onspeechend=()=>{if(c.recognition===recognition)waitForSentence();};
+    recognition.onspeechstart=()=>{if(c.recognition===recognition){setHearing(true);window.clearTimeout(c.sentenceTimer);inputStartedDuringPlayback=c.speaking;}};
+    recognition.onspeechend=()=>{if(c.recognition===recognition){setHearing(false);waitForSentence();}};
     recognition.onresult=(event:any)=>{
       if(!c.enabled||c.disposed||c.recognition!==recognition)return;
       const all=Array.from(event.results||[]) as Array<{isFinal:boolean;[index:number]:{transcript:string}}>;
       const results=all.slice(discarded),heard=results.map(result=>result[0]?.transcript||'').join(' ').trim();if(!heard)return;
       const echo=words(heard),spoken=words(c.spokenText);
       if((c.speaking||(inputStartedDuringPlayback&&performance.now()<c.ignoreEchoUntil))&&!playbackControl.test(heard)&&echo&&spoken.includes(echo)){
-        discarded=all.filter(result=>result.isFinal).length;c.finalTranscript='';c.interimTranscript='';return;
+        discarded=all.filter(result=>result.isFinal).length;c.finalTranscript='';c.interimTranscript='';setHearing(false);return;
       }
       const wasSpeaking=c.speaking,wasProcessing=c.processing;
       if(wasSpeaking||c.processing){c.suppressAnswer=true;cancelSpeech();setStatus('Listening');}
@@ -111,9 +112,9 @@ export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>
       window.clearTimeout(c.sentenceTimer);
       c.finalTranscript=[prefix,...results.filter(result=>result.isFinal).map(result=>result[0]?.transcript||'')].filter(Boolean).join(' ').trim();
       c.interimTranscript=results.filter(result=>!result.isFinal).map(result=>result[0]?.transcript||'').join(' ').trim();
-      setTranscript([c.finalTranscript,c.interimTranscript].filter(Boolean).join(' '));setError('');waitForSentence();
+      setHearing(true);setTranscript([c.finalTranscript,c.interimTranscript].filter(Boolean).join(' '));setError('');waitForSentence();
     };
-    recognition.onend=()=>{if(c.recognition!==recognition)return;c.recognition=null;if(!c.sentenceTimer)waitForSentence();
+    recognition.onend=()=>{if(c.recognition!==recognition)return;setHearing(false);c.recognition=null;if(!c.sentenceTimer)waitForSentence();
       if(c.enabled&&!c.disposed)c.timer=window.setTimeout(()=>listenRef.current(),restartDelayMs);};
     recognition.onerror=(event:any)=>{
       if(c.recognition!==recognition||c.disposed||!c.enabled||event.error==='aborted'||event.error==='no-speech')return;
@@ -148,5 +149,5 @@ export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>
     return()=>{abort.abort();c.disposed=true;c.enabled=false;c.generation++;window.clearTimeout(c.timer);window.clearTimeout(c.sentenceTimer);
       const recognition=c.recognition;c.recognition=null;recognition?.abort();c.stream?.getTracks().forEach(track=>track.stop());c.stream=null;cancelSpeech();};
   },[]);
-  return {enabled,status,error,transcript,supported,start,stop,interrupt,submit};
+  return {enabled,status,error,transcript,hearing,supported,start,stop,interrupt,submit};
 }

@@ -64,6 +64,8 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
   const [logs, setLogs] = useState<AuditLogItem[]>([]);
   const [lastHeard, setLastHeard] = useState(''); const [input, setInput] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const [keyboardOpen,setKeyboardOpen]=useState(false);
+  useEffect(()=>{if(keyboardOpen)inputRef.current?.focus();},[keyboardOpen]);
   const [tools, setTools] = useState(false); const [trace, setTrace] = useState(false);
   const [drawer, setDrawer] = useState<Drawer>(null); const [note, setNote] = useState('');
   const [mute, setMute] = useState(false); const [size, setSize] = useState({ w: innerWidth, h: innerHeight });
@@ -89,7 +91,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
     const resize = () => setSize({ w: innerWidth, h: innerHeight }); window.addEventListener('resize', resize);
     return () => { clearInterval(a); clearInterval(b); window.removeEventListener('resize', resize); };
   }, [refresh, refreshTrace]);
-  useEffect(() => { const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDrawer(null); setTools(false); setTrace(false); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, []);
+  useEffect(() => { const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDrawer(null); setTools(false); setTrace(false); setKeyboardOpen(false); } }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, []);
   const submit = (text: string) => { if (!text.trim() || busy) return; if(voice.enabled)voice.interrupt();else voice.stop(); setTools(false); if (mute) void turn(text); else void voice.submit(text); };
   const handoff = display?.handoffs.find(h => h.id === display.selectedHandoffId) || (display?.handoffs.length === 1 ? display.handoffs[0] : undefined);
   const tasks = [...(display?.tasks || []), ...(display?.candidates || [])];
@@ -112,7 +114,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
     <header><div className="brand"><svg viewBox="0 0 40 34" fill="none" strokeWidth="3.5" strokeLinecap="round" aria-hidden="true"><path d="M3 9c10 0 10 16 17 16s9-16 17-16" stroke="#8EA0FF" /><path d="M3 25c10 0 10-16 17-16s9 16 17 16" stroke="#FFB86B" /></svg>ShiftWeave</div>
       <div id="cnt">{display?.nurse && `${display.tasks.filter(t => t.status === 'COMPLETED').length} completed · ${display.tasks.filter(t => ['PENDING', 'IN_PROGRESS'].includes(t.status)).length} unfinished · ${display.conflicts.length} flagged`}</div>{sourceOptions.enabled?<label className="pill">Data source <select aria-label="Hospital data source" value={hospital?'hospital':'epic'} disabled={busy||voice.enabled} onChange={e=>void switchSource(e.target.value as 'hospital'|'epic')}><option value="hospital" disabled={!sourceOptions.provisioned}>Simulation hospital</option><option value="epic">Epic sandbox / existing records</option></select></label>:<span className="pill">Medi · Voice simulation</span>}</header>
     <div id="lm">{display?.nurse && <Thread display={display} onTask={inspect} onHandoff={() => setDrawer('handoffs')} />}</div>
-    {hospital&&!authenticatedStaff&&display&&<PreviewQuestionGuide display={display} onChoose={question=>{setInput(question);inputRef.current?.focus();}}/>}
+    {hospital&&!authenticatedStaff&&display&&<PreviewQuestionGuide display={display} onChoose={question=>{setInput(question);setKeyboardOpen(true);inputRef.current?.focus();}}/>}
     {hasPanel && <section id="pn" className="in" data-t={error || display?.conflicts.length ? 'ro' : handoff?.status === 'FINALIZED' ? 'ok' : 'dy'} aria-label="Current workflow context">
       <div className="t">{error ? 'Request unavailable' : title}</div>
       <h1 className="h">{error ? 'No success claimed' : display?.pending ? (display.pending.ready ? 'Review, then confirm' : 'Your verification is needed') : display?.focus === 'conflicts' ? (conflict ? `${conflict.patientName || 'Patient'} · records disagree` : 'No unresolved discrepancies') : handoff ? `${handoff.outgoingName} → ${handoff.incomingName}` : selected ? selected.patientName : `${display?.nurse?.name} · ${display?.shift?.unit || 'No active shift'}`}</h1>
@@ -143,7 +145,7 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
       {!authenticatedStaff&&<button className="btn" disabled={busy} onClick={() => submit(display?.nurse?.name.toLowerCase().includes('reema') ? 'I am Seema' : 'I am Reema')}>Switch demo nurse</button>}
       <button className="btn g" disabled={busy} onClick={() => submit('End my session')}>End my session</button>
     </nav>
-    <form id="dock" className="ty" onSubmit={e => { e.preventDefault(); if (input.trim()) { submit(input); setInput(''); } }}>
+    <form id="dock" className={keyboardOpen?'ty':''} onSubmit={e => { e.preventDefault(); if (input.trim()) { submit(input); setInput(''); } }}>
       <input id="in" ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="Type a message (or say “Medi”)" aria-label="Type to Medi" autoComplete="off" />
       <button className="btn" id="sd" type="submit" disabled={busy || !input.trim()}>Send</button>
       <button type="button" className="btn ic" aria-label="MCP Telemetry" aria-expanded={trace} onClick={() => { setTrace(!trace); setTools(false); }}>≡</button>
@@ -171,11 +173,18 @@ export function OneThreadWorkspace({authenticatedStaff}:{authenticatedStaff?:{id
       {drawer === 'history' && <>{!display?.messages.length && <p>No conversation in this session.</p>}{display?.messages.map((m, i) => <article key={i}><small>{m.role === 'nurse' ? 'You' : 'Assistant'}</small><p>{m.text}</p></article>)}</>}
       {drawer === 'recovery' && (authenticatedStaff?<article><h3>Saved request recovery</h3><p>Your signed-in voice session is restored from durable checkpoints. For an uncertain voice response, type “Retry last request” to use the saved request key. The staff workspace Recovery panel shows your persisted workflow runs.</p><button className="btn" onClick={()=>{submit('Retry last request');setDrawer(null);}}>Retry saved voice request</button></article>:<ChaosControlBar onRefreshAll={async () => { await refresh(); await refreshTrace(); }} />)}
     </section></div>}
-  </main><section className="voice-microphone" aria-label="Microphone controls">
-    <button type="button" aria-pressed={voice.enabled}
+  </main><section className="voice-microphone" data-activity={voice.hearing?'hearing':mode} aria-label="Microphone controls">
+    <button type="button" className="assistant-voice-button" aria-pressed={voice.enabled}
+      aria-label={voice.status === 'Speaking' ? 'Interrupt and listen' : voice.enabled ? 'Stop microphone' : 'Start microphone'}
+      title={voice.status === 'Speaking' ? 'Interrupt and listen' : voice.enabled ? 'Stop microphone' : 'Start microphone'}
       onClick={() => voice.status === 'Speaking' ? voice.interrupt() : voice.enabled ? voice.stop() : void voice.start()}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0014 0v-2M12 19v3M8 22h8"/></svg>
-      {voice.status === 'Speaking' ? 'Interrupt and listen' : voice.enabled ? 'Stop microphone' : 'Start microphone'}
+      <svg className="assistant-mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <circle className="assistant-ring" cx="32" cy="32" r="27" stroke="#b2bcff" strokeWidth="2" strokeDasharray="42 12 64 52"/>
+        {[19,25.5,32,38.5,45].map((x,i)=><line className="voice-band" key={x} x1={x} x2={x} y1={[28,23,19,23,28][i]} y2={[36,41,45,41,36][i]} stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" style={{animationDelay:`${i*-.13}s`}}/>)}
+      </svg>
+    </button>
+    <button type="button" className="voice-keyboard-button" aria-label={keyboardOpen?'Hide keyboard':'Show keyboard'} aria-expanded={keyboardOpen} aria-controls="in" title={keyboardOpen?'Hide keyboard':'Type a message'} onClick={()=>setKeyboardOpen(!keyboardOpen)}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M5 9h2m3 0h2m3 0h4M5 12h2m3 0h2m3 0h4M7 15h10"/></svg>
     </button>
     <span role="status">{voice.status}</span>
     {voice.error && <p role="alert">{voice.error}</p>}
