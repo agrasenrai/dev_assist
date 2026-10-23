@@ -1,1 +1,0 @@
-{"commands":["cat /mnt/shiftweave/deploy/Caddyfile 2>/dev/null || cat /mnt/shiftweave/Caddyfile 2>/dev/null || echo NOT_FOUND"]}
