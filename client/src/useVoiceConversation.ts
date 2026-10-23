@@ -17,6 +17,10 @@ export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>
     playback:0,finishSpeech:null as (()=>void)|null,ttsEnabled:false});
   const Recognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;
   const supported=Boolean(Recognition);
+  // Android recognition owns the hardware microphone through its native speech
+  // service. A parallel getUserMedia capture competes with that service, and
+  // forwarding its track to recognition is not supported on Android.
+  const nativeMicrophone=/Android/i.test(navigator.userAgent)||(navigator as any).userAgentData?.platform==='Android';
   const listenRef=useRef<()=>void>(()=>{}),submitRef=useRef<(text:string)=>Promise<void>>(async()=>{});
   const cancelSpeech=()=>{
     const c=control.current;c.playback++;c.speaking=false;
@@ -125,16 +129,19 @@ export function useVoiceConversation(onTranscript:(text:string)=>Promise<string>
         network:'The browser’s speech recognition service could not connect. Check your connection and try again.'};
       setError(errors[event.error]||`Speech recognition stopped: ${event.error}. Try the microphone again.`);
     };
-    try{const track=c.stream?.getAudioTracks?.()[0];try{track?recognition.start(track):recognition.start();}
+    try{const track=nativeMicrophone?undefined:c.stream?.getAudioTracks?.()[0];try{track?recognition.start(track):recognition.start();}
       catch(e){if(track&&e instanceof Error&&['TypeError','NotSupportedError'].includes(e.name))recognition.start();else throw e;}
     }catch(e){stop();setError(e instanceof Error?e.message:String(e));}
   };
   const start=async()=>{
     if(!window.isSecureContext){setError('Microphone access requires HTTPS or localhost.');return;}
-    if(!supported||!navigator.mediaDevices?.getUserMedia){setError('Speech recognition is unavailable. Open the voice workspace in Chrome or Edge.');return;}
+    if(!supported||(!nativeMicrophone&&!navigator.mediaDevices?.getUserMedia)){setError('Speech recognition is unavailable. Open the voice workspace in Chrome or Edge.');return;}
     const c=control.current;if(c.enabled||c.disposed)return;const generation=c.generation;
     c.enabled=true;setEnabled(true);setError('');setTranscript('');setStatus('Requesting microphone');c.finalTranscript='';c.interimTranscript='';
     try{
+      // Start directly from the tap; recognition handles Android's permission
+      // prompt itself. Do not acquire a second stream, even as a permission probe.
+      if(nativeMicrophone){c.stream?.getTracks().forEach(track=>track.stop());c.stream=null;listenRef.current();return;}
       const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
       if(c.generation!==generation||c.disposed||!c.enabled){stream.getTracks().forEach(track=>track.stop());return;}
       c.stream=stream;listenRef.current();

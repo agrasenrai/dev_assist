@@ -35,18 +35,22 @@ try {
   page.on('requestfailed', (request: any) => console.error('Browser request failed:', request.url(), request.failure()?.errorText));
   page.on('response', (response: any) => { if(response.status() >= 400) console.error('Browser HTTP error:', response.status(),response.url()); });
   await page.addInitScript('globalThis.__name = (target) => target');
-  await page.addInitScript(() => {
+  const installSpeechAdapters=() => {
     const w = window as any;
-    w.spoken = []; w.recognitionStarts = 0; w.probeStopped = 0;w.speechCancellations=0;w.cloudPlays=0;w.cloudPauses=0;
+    w.spoken = []; w.recognitionStarts = 0; w.probeStopped = 0;w.captureRequests=0;w.speechCancellations=0;w.cloudPlays=0;w.cloudPauses=0;
     Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {value:async (constraints:any) => {
-      w.captureConstraints=constraints;
+      w.captureRequests++;w.captureConstraints=constraints;
       if(w.denyMicrophone) throw new DOMException('Blocked by test','NotAllowedError');
       return {getTracks:() => [{stop:() => {w.probeStopped++;}}]};
     }});
     class Recognition {
       onstart: any; onresult: any; onend: any; onerror: any;
       results: any[] = [];
-      start() { w.recognition = this; w.recognitionStarts++; this.onstart?.(); }
+      start(...args:any[]) {
+        if(/Android/i.test(navigator.userAgent)&&(w.captureRequests||args.length))throw new DOMException('Chrome is already recording or audio forwarding is unsupported','NotAllowedError');
+        w.recognition = this; w.recognitionStarts++; this.onstart?.();
+        if(w.denyMicrophone)this.onerror?.({error:'not-allowed'});
+      }
       abort() { this.onend?.(); }
     }
     w.SpeechRecognition = Recognition;
@@ -73,7 +77,8 @@ try {
       w.recognition.onspeechstart?.();
       w.recognition.onresult({results,resultIndex:results.length-1});
     };
-  });
+  };
+  await page.addInitScript(installSpeechAdapters);
   await page.goto(base,{timeout:15000});
   console.log('Browser loaded:', await page.title());
   await page.getByRole('button', {name:'Start microphone', exact:true}).waitFor();
@@ -287,6 +292,35 @@ try {
   await page.waitForFunction(()=>(window as any).spoken.length===1);
   assert.match(await page.evaluate(()=>(window as any).spoken[0]),/Medi.*listening/);
   console.log('PASS immediate manual cloud-audio interruption, stale-event suppression and bounded browser fallback');
+  // Android's native recognizer refuses a competing browser capture. Emulate
+  // that constraint explicitly; desktop emulation alone does not exercise it.
+  const android=await browser.newContext({userAgent:'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36',viewport:{width:412,height:915}});
+  try {
+    const mobile=await android.newPage();mobile.setDefaultTimeout(15000);
+    await mobile.addInitScript('globalThis.__name = (target) => target');
+    await mobile.addInitScript(installSpeechAdapters);
+    await mobile.goto(base);
+    await mobile.getByRole('button',{name:'Start microphone',exact:true}).click();
+    await mobile.waitForFunction(()=>(window as any).recognitionStarts===1);
+    assert.equal(await mobile.evaluate(()=>(window as any).captureRequests),0,'Android recognition must be the only microphone consumer');
+    await mobile.evaluate(()=>(window as any).say('Medi',false));
+    await mobile.getByRole('log',{name:'Your transcript'}).filter({hasText:'Medi'}).waitFor();
+    await mobile.evaluate(()=>(window as any).say('Medi'));
+    await mobile.waitForFunction(()=>(window as any).spoken.length===1);
+    assert.match(await mobile.evaluate(()=>(window as any).spoken[0]),/Medi.*listening/);
+    await mobile.waitForFunction(()=>document.querySelector('#st')?.getAttribute('data-m')==='listening');
+    await mobile.evaluate(()=>(window as any).recognition.onend());
+    await mobile.waitForFunction(()=>(window as any).recognitionStarts>=3);
+    assert.equal(await mobile.evaluate(()=>(window as any).captureRequests),0,'Recognition restarts must not acquire a competing stream');
+    await mobile.evaluate(()=>(window as any).recognition.onerror({error:'not-allowed'}));
+    await mobile.getByRole('alert').filter({hasText:'Microphone permission is blocked'}).waitFor();
+    await mobile.getByRole('button',{name:'Start microphone',exact:true}).click();
+    await mobile.waitForFunction(()=>document.querySelector('#st')?.getAttribute('data-m')==='listening');
+    await mobile.getByRole('button',{name:'Stop microphone',exact:true}).click();
+    await mobile.getByRole('button',{name:'Start microphone',exact:true}).waitFor();
+    assert.equal(await mobile.evaluate(()=>(window as any).captureRequests),0);
+    console.log('PASS Android single microphone ownership, interim transcript, HTTP/MCP reply/playback, recognition restart and permission recovery (simulated Android speech service)');
+  }finally{await android.close();}
 } finally {
   await browser?.close();
   appServer.closeAllConnections();
